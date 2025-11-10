@@ -1,7 +1,8 @@
 import json
 import os
 
-PROCESSED_FILE = "processed_orders.json"
+os.makedirs("data", exist_ok=True)
+PROCESSED_FILE = "data/processed_orders.json"
 
 def load_processed_orders():
     if not os.path.exists(PROCESSED_FILE):
