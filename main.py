@@ -49,14 +49,15 @@ def main():
         return
         
     closed_orders = response.get("result", {}).get("closed", {})
+    # Filter only orders with status "closed"
+    closed_orders = {oid: o for oid, o in closed_orders.items() if o.get("status") == "closed"}
     if not closed_orders:
-        logging.info(f"No closed orders returned.")
+        logging.info("No closed orders returned.")
         return
     
     for order_id, order in closed_orders.items():
-        if order["status"] != "closed" or is_processed(order_id, processed_orders):
-            if is_processed(order_id, processed_orders):
-                logging.info(f"Order {order_id} already processed. Skipping...")
+        if is_processed(order_id, processed_orders):
+            logging.info(f"Order {order_id} already processed. Skipping...")
             continue
         process_order(order_id, order, processed_orders)
     
