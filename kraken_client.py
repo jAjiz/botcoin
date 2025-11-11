@@ -8,20 +8,30 @@ api.secret = KRAKEN_API_SECRET
 def get_balance():
     return api.query_private("Balance")
 
-def place_limit_order(pair, type_, price, volume):
-    return api.query_private("AddOrder", {
-        "pair": pair,
-        "type": type_,
-        "ordertype": "limit",
-        "price": price,
-        "volume": volume,
-    })
-
 def get_open_orders():
     return api.query_private("OpenOrders")
 
 def get_closed_orders(start=0):
     return api.query_private("ClosedOrders", { "start": start })
 
+def place_limit_order(pair, side, price, volume):
+    return api.query_private("AddOrder", {
+        "pair": pair,
+        "type": side,
+        "ordertype": "limit",
+        "price": price,
+        "volume": volume,
+    })
+
+def place_take_profit_limit(pair, side, trigger_price, limit_price, volume):
+    return api.query_private("AddOrder", {
+        "pair": pair,
+        "type": side,
+        "ordertype": "take-profit-limit",
+        "price": str(round(trigger_price, 1)),
+        "price2": str(round(limit_price, 1)),
+        "volume": str(volume)
+    })
+
 if __name__ == "__main__":
-    print(get_balance())
+    print(get_open_orders())
