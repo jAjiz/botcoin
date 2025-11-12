@@ -1,13 +1,10 @@
 import time
-from config import logging
+from config import logging, MARGIN, LIMIT_BUFFER, MAX_OPEN_SELLS
 from kraken_client import get_closed_orders, get_open_orders, get_current_price, place_take_profit_limit, cancel_order
 from processed_orders import load_processed_orders, is_processed, save_processed_orders
 
 ONE_MINUTE_AGO = int(time.time()) - 60
 THREE_MONTHS_AGO = int(time.time()) - (60 * 60 * 24 * 7 * 4 * 3)
-MAX_OPEN_SELLS = 4
-MARGIN = 0.03 # 3%
-LIMIT_BUFFER = 0.015 # 1.5%
 
 def main():
     while True:
