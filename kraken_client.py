@@ -17,7 +17,7 @@ def get_open_orders():
         return open_orders
     except Exception as e:
         logging.error(f"Error fetching open orders: {e}")
-        return e
+        return {}
 
 def get_closed_orders(start, closed_after):
     try:
@@ -32,7 +32,7 @@ def get_closed_orders(start, closed_after):
         return closed_orders
     except Exception as e:
         logging.error(f"Error fetching closed orders: {e}")
-        return e
+        return {}
 
 def get_current_price(pair="XXBTZEUR"):
     response = api.query_public("Ticker", {"pair": pair})
