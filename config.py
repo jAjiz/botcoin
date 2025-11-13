@@ -5,8 +5,6 @@ from logging.handlers import TimedRotatingFileHandler
 
 # Load .env variables
 load_dotenv()
-MARGIN = float(os.getenv("MARGIN"))
-TRAILING_DISTANCE = float(os.getenv("TRAILING_DISTANCE"))
 KRAKEN_API_KEY = os.getenv("KRAKEN_API_KEY")
 KRAKEN_API_SECRET = os.getenv("KRAKEN_API_SECRET")
 

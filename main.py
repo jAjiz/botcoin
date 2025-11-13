@@ -1,7 +1,11 @@
 import time
-from config import logging, MARGIN, TRAILING_DISTANCE
+from config import logging
 from kraken_client import get_closed_orders, get_current_price, place_limit_order
 from trailing_controller import load_trailing_state, save_trailing_state, is_processed
+
+## Trading variables
+MARGIN = 0.03
+TRAILING_DISTANCE = 0.01
 
 def main():
     try:
