@@ -4,8 +4,8 @@ from kraken_client import get_closed_orders, get_current_price, place_limit_orde
 from trailing_controller import load_trailing_state, save_trailing_state, is_processed
 
 ## Trading variables
-MARGIN = 0.03
-TRAILING_DISTANCE = 0.01
+ACTIVATION = 0.035
+STOP = 0.025
 
 def main():
     try:
@@ -39,7 +39,7 @@ def process_order(order_id, order, trailing_state):
     price = float(order["price"])
     side = order["descr"]["type"]
     pair = order["descr"]["pair"]
-    trailing_price = price * (1 + MARGIN) if side == "buy" else price * (1 - MARGIN)
+    trailing_price = price * (1 + ACTIVATION) if side == "buy" else price * (1 - ACTIVATION)
 
     if pair != "XBTEUR" or side not in ["buy", "sell"]:
         logging.info(f"Order {order_id} is not BTC/EUR or not a BUY/SELL order. Skipping...")
@@ -65,13 +65,13 @@ def update_trailing_orders(trailing_state):
     def activate_trailing():
         active = True
         new_trailing = current_price
-        new_stop = current_price * (1 - TRAILING_DISTANCE) if side == "buy" else current_price * (1 + TRAILING_DISTANCE)
+        new_stop = current_price * (1 - STOP) if side == "buy" else current_price * (1 + STOP)
         logging.info(f"⚡[ACTIVE] Trailing activated for order {order_id}: new price at {new_trailing:,.1f}€ | stop at {new_stop:,.1f}€")
         return active, new_trailing, new_stop
     
     def update_stop_price():
         new_trailing = current_price
-        new_stop = current_price * (1 - TRAILING_DISTANCE) if side == "buy" else current_price * (1 + TRAILING_DISTANCE)
+        new_stop = current_price * (1 - STOP) if side == "buy" else current_price * (1 + STOP)
         logging.info(f"📈[UPDATE] Order {order_id}: updated price {trailing_price:,.1f}€ to {new_trailing:,.1f}€ | new stop at {new_stop:,.1f}€")
         return new_trailing, new_stop
 
