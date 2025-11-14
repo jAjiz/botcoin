@@ -10,7 +10,7 @@ TRAILING_DISTANCE = 0.01
 def main():
     try:
         while True:
-            logging.info("🚀 [BoTC] ======== STARTING SESSION ========")
+            logging.info("======== STARTING SESSION ========")
             trailing_state = load_trailing_state()
 
             one_minute_ago = int(time.time()) - 60
@@ -30,7 +30,7 @@ def main():
             logging.info("Sleeping for 1 minute.")
             time.sleep(60)
     except KeyboardInterrupt:
-        logging.info("🛑 Bot stopped manually by user.")
+        logging.info("Bot stopped manually by user.")
 
 def process_order(order_id, order, trailing_state):
     logging.info(f"Processing order {order_id}...")
@@ -55,7 +55,7 @@ def process_order(order_id, order, trailing_state):
         "stop_price": None,
     }
 
-    logging.info(f"[CREATE] New TTP position created for {side.upper()} order {order_id}: Trailing price {trailing_price:,.1f}€")
+    logging.info(f"🆕[CREATE] New trailing position created for {side.upper()} order {order_id}: activation price at {trailing_price:,.1f}€")
     save_trailing_state(trailing_state)
 
 def update_trailing_orders(trailing_state):
@@ -66,18 +66,18 @@ def update_trailing_orders(trailing_state):
         active = True
         new_trailing = current_price
         new_stop = current_price * (1 - TRAILING_DISTANCE) if side == "buy" else current_price * (1 + TRAILING_DISTANCE)
-        logging.info(f"[ACTIVE] Trailing activated for order {order_id}: price at {new_trailing:,.1f}€ | stop at {new_stop:,.1f}€")
+        logging.info(f"⚡[ACTIVE] Trailing activated for order {order_id}: new price at {new_trailing:,.1f}€ | stop at {new_stop:,.1f}€")
         return active, new_trailing, new_stop
     
     def update_stop_price():
         new_trailing = current_price
         new_stop = current_price * (1 - TRAILING_DISTANCE) if side == "buy" else current_price * (1 + TRAILING_DISTANCE)
-        logging.info(f"[UPDATE] Order {order_id}: updated price {trailing_price:,.1f}€ --> {new_trailing:,.1f}€ | stop updated to {new_stop:,.1f}€")
+        logging.info(f"📈[UPDATE] Order {order_id}: updated price {trailing_price:,.1f}€ to {new_trailing:,.1f}€ | new stop at {new_stop:,.1f}€")
         return new_trailing, new_stop
 
     def place_and_remove(new_side):
         try:
-            logging.info(f"[CLOSE] Stop price {stop_price:,.1f}€ hit for order {order_id}: placing LIMIT {new_side.upper()} order")
+            logging.info(f"⛔[CLOSE] Stop price {stop_price:,.1f}€ hit for order {order_id}: placing LIMIT {new_side.upper()} order")
             place_limit_order("XXBTZEUR", new_side, current_price, volume)
 
             if side == "buy":
