@@ -1,9 +1,15 @@
 import krakenex
+from pykrakenapi import KrakenAPI
 from config import KRAKEN_API_KEY, KRAKEN_API_SECRET, logging
+
+## Ignore future warnings
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 api = krakenex.API()
 api.key = KRAKEN_API_KEY
 api.secret = KRAKEN_API_SECRET
+krakenapi = KrakenAPI(api)
 
 def get_balance():
     return api.query_private("Balance")
@@ -60,9 +66,6 @@ def place_limit_order(pair, side, price, volume):
         return response
     except Exception as e:
         logging.error(f"Error creating {side.upper()} order: {e}")
-    finally:
-        if response:
-            logging.info(f"API Response: {response}")
 
 def place_take_profit_limit(pair, side, trigger_price, limit_price, volume):
     try:
@@ -81,9 +84,6 @@ def place_take_profit_limit(pair, side, trigger_price, limit_price, volume):
         return response
     except Exception as e:
         logging.error(f"Error creating {side.upper()} order: {e}")
-    finally:
-        if response:
-            logging.info(f"API Response: {response}")
 
 def cancel_order(order_id):
     try:
@@ -94,6 +94,22 @@ def cancel_order(order_id):
         return response
     except Exception as e:
         logging.error(f"Error cancelling order {order_id}: {e}")
+    
+def get_current_atr(interval=15, period=14):
+    try:
+        df, _ = krakenapi.get_ohlc_data("XXBTZEUR", interval=interval)
+        df = df.sort_index()
+
+        df["H-L"]  = df["high"] - df["low"]
+        df["H-PC"] = (df["high"] - df["close"].shift(1)).abs()
+        df["L-PC"] = (df["low"] - df["close"].shift(1)).abs()
+        df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
+        df["ATR"] = df["TR"].rolling(period).mean()
+
+        return df["ATR"].iloc[-1]
+    except Exception as e:
+        logging.error(f"Error getting ATR: {e}")
+        return None
 
 if __name__ == "__main__":
-    print(get_open_orders())
+    print(get_balance())
