@@ -12,7 +12,14 @@ api.secret = KRAKEN_API_SECRET
 krakenapi = KrakenAPI(api)
 
 def get_balance():
-    return api.query_private("Balance")
+    try:
+        response = api.query_private("Balance")
+        if "error" in response and response["error"]:
+            raise Exception(response["error"])
+        return response.get("result", {})
+    except Exception as e:
+        logging.error(f"Error fetching balance: {e}")
+        return {}
 
 def get_open_orders():
     try:

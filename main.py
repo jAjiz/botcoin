@@ -1,6 +1,6 @@
 import time
 from config import logging
-from kraken_client import get_closed_orders, get_current_price, place_limit_order, get_current_atr
+from kraken_client import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
 from trailing_controller import load_trailing_state, save_trailing_state, is_processed, save_closed_order
 
 # Bot configuration
@@ -9,8 +9,9 @@ SLEEPING_INTERVAL = 60
 # Trading variables
 K_ACT = 5.5
 K_STOP = 2.5
-MIN_MARGIN_PCT = 0.005
+MIN_MARGIN_PCT = 0.01 
 ATR_PCT_MIN = MIN_MARGIN_PCT / (K_ACT - K_STOP)
+MIN_BTC_ALLOCATION_PCT = 0.60
 
 def main():
     try:
@@ -18,19 +19,20 @@ def main():
             logging.info("======== STARTING SESSION ========")
 
             current_price = get_current_price("XXBTZEUR")
-            logging.info(f"Current BTC/EUR price: {current_price:,.1f}€")
             current_atr = get_current_atr()
-            logging.info(f"Current ATR value: {current_atr:,.1f}€")      
+            current_balance = get_balance("XXBTZEUR")
+
+            logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
 
             trailing_state = load_trailing_state()   
             
             one_session_ago = int(time.time()) - SLEEPING_INTERVAL
             one_week_ago = int(time.time()) - (60 * 60 * 24 * 7)
+
             closed_orders = get_closed_orders(one_week_ago, one_session_ago)
             if closed_orders:
                 for order_id, order in closed_orders.items():
                     if is_processed(order_id, trailing_state):
-                        logging.info(f"Order {order_id} already processed. Skipping...")
                         continue
                     process_closed_order(order_id, order, trailing_state, current_atr)                
             else:
@@ -38,15 +40,26 @@ def main():
 
             update_activation_prices(trailing_state, current_atr)
             update_stop_prices(trailing_state, current_atr)
-            update_trailing_state(trailing_state, current_price, current_atr)
+            update_trailing_state(trailing_state, current_price, current_atr, current_balance)
 
-            logging.info(f"Session complete. Sleeping for {SLEEPING_INTERVAL} seconds.\n")
+            logging.info(f"Session complete. Sleeping for {SLEEPING_INTERVAL}s.\n")
             time.sleep(SLEEPING_INTERVAL)   
     except KeyboardInterrupt:
         logging.info("Bot stopped manually by user.")
 
 def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+def calculate_atr_value(price, current_atr):
+    if current_atr is None:
+        atr_value = price * ATR_PCT_MIN # ATR data unavailable, use minimum threshold
+    else:
+        atr_pct = current_atr / price
+        if atr_pct < ATR_PCT_MIN: 
+            atr_value = price * ATR_PCT_MIN # ATR below minimum threshold, use minimum threshold
+        else:
+            atr_value = current_atr
+    return round(atr_value, 1)
 
 def process_closed_order(order_id, order, trailing_state, current_atr):
     logging.info(f"Processing order {order_id}...")
@@ -57,7 +70,6 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
     pair = order["descr"]["pair"]
 
     if pair != "XBTEUR" or side not in ["buy", "sell"]:
-        logging.info(f"Order {order_id} is not BTC/EUR or not a BUY/SELL order. Skipping...")
         return
 
     atr_value = calculate_atr_value(price, current_atr)
@@ -84,20 +96,8 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
         "stop_atr": None
     }
 
-    logging.info(f"🆕[CREATE] New trailing position created for {new_side.upper()} order: activation price at {activation_price:,}€")
+    logging.info(f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: activation at {activation_price:,}€")
     save_trailing_state(trailing_state)
-
-def calculate_atr_value(price, current_atr):
-    if current_atr is None:
-        atr_value = price * ATR_PCT_MIN # ATR data unavailable, use minimum threshold
-    else:
-        atr_pct = current_atr / price
-        if atr_pct < ATR_PCT_MIN: 
-            atr_value = price * ATR_PCT_MIN # ATR below minimum threshold, use minimum threshold
-        else:
-            atr_value = current_atr
-
-    return round(atr_value, 1)
 
 def update_activation_prices(trailing_state, current_atr):
     logging.info("Checking activation prices...")
@@ -148,7 +148,7 @@ def update_stop_prices(trailing_state, current_atr):
 
     save_trailing_state(trailing_state)
 
-def update_trailing_state(trailing_state, current_price, current_atr):
+def update_trailing_state(trailing_state, current_price, current_atr, current_balance):
     logging.info(f"Checking trailing positions...")
     
     def update_prices():
@@ -200,7 +200,21 @@ def update_trailing_state(trailing_state, current_price, current_atr):
             logging.info(f"Trailing position {order_id} closed and removed.")
         except Exception as e:
             logging.error(f"Failed to close trailing position {order_id}: {e}")
+        
+    def can_execute_sell():
+        btc_after_sell = current_balance.get("XXBT") - volume
+        eur_after_sell = current_balance.get("ZEUR") + (volume * current_price)
 
+        total_value_after = (btc_after_sell * current_price) + eur_after_sell
+        if total_value_after == 0: return True
+
+        btc_allocation_after = (btc_after_sell * current_price) / total_value_after
+        
+        if btc_allocation_after < MIN_BTC_ALLOCATION_PCT:
+            logging.warning(f"🛡️[BLOCKED] Sell {order_id} by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_ALLOCATION_PCT:.0%}.")
+            return False
+            
+        return True
 
     for order_id, pos in list(trailing_state.items()):
         side = pos["side"]
@@ -217,7 +231,7 @@ def update_trailing_state(trailing_state, current_price, current_atr):
             elif trailing_price:
                 if current_price > trailing_price:
                     pos["trailing_price"], pos["stop_price"] = update_trailing()
-                if current_price <= stop_price:
+                if current_price <= stop_price and can_execute_sell():
                     cost = volume * current_price
                     close_trailing(side)
 
@@ -232,7 +246,6 @@ def update_trailing_state(trailing_state, current_price, current_atr):
                     close_trailing(side)
     
     save_trailing_state(trailing_state)
-
 
 if __name__ == "__main__":
     main()
