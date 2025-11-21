@@ -60,17 +60,17 @@ def get_current_price(pair="XXBTZEUR"):
 def place_limit_order(pair, side, price, volume):
     try:
         response = api.query_private("AddOrder", {
-        "pair": pair,
-        "type": side,
-        "ordertype": "limit",
-        "price": round(price, 1),
-        "volume": volume,
+            "pair": pair,
+            "type": side,
+            "ordertype": "limit",
+            "price": str(round(price, 1)),
+            "volume": str(volume),
         })
         if "error" in response and response["error"]:
             raise Exception(response["error"])
         new_order = response.get('result', {}).get('txid', [None])[0]
         logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
-        return response
+        return new_order
     except Exception as e:
         logging.error(f"Error creating {side.upper()} order: {e}")
 
@@ -88,7 +88,7 @@ def place_take_profit_limit(pair, side, trigger_price, limit_price, volume):
             raise Exception(response["error"])
         new_order = response.get('result', {}).get('txid', [None])[0]
         logging.info(f"Created TP-LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ trigger {trigger_price:,.1f}€ (limit {limit_price:,.1f}€)")
-        return response
+        return new_order
     except Exception as e:
         logging.error(f"Error creating {side.upper()} order: {e}")
 

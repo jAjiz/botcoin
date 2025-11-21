@@ -20,7 +20,7 @@ def main():
 
             current_price = get_current_price("XXBTZEUR")
             current_atr = get_current_atr()
-            current_balance = get_balance("XXBTZEUR")
+            current_balance = get_balance()
 
             logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
 
@@ -73,7 +73,7 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
     new_side = "buy" if side == "sell" else "sell"
     atr_value = calculate_atr_value(entry_price, current_atr)
     activation_distance = K_ACT * atr_value
-    activation_price = round(entry_price + activation_distance if side == "sell" else entry_price - activation_distance, 1)
+    activation_price = entry_price + activation_distance if new_side == "sell" else entry_price - activation_distance
 
     trailing_state[order_id] = {
         "created_time": now_str(),
@@ -82,14 +82,14 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
         "volume": volume,
         "cost": cost,
         "activation_atr": round(atr_value, 1),
-        "activation_price": activation_price,
+        "activation_price": round(activation_price, 1),
         "activation_time": None,
         "trailing_price": None,
         "stop_price": None,
         "stop_atr": None
     }
 
-    logging.info(f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: activation at {activation_price:,}€")
+    logging.info(f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: activation at {trailing_state[order_id]['activation_price']:,}€")
     save_trailing_state(trailing_state)
 
 def update_trailing_state(trailing_state, current_price, current_atr, current_balance):
@@ -150,7 +150,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
                 pnl = (pos["entry_price"] - stop_price) / pos["entry_price"] * 100
 
             closing_order = place_limit_order("XXBTZEUR", side, stop_price, volume)
-            logging.info(f"[PnL] Closed position at {stop_price:,}€: {pnl:+.2f}% gain before fees")
+            logging.info(f"[PnL] Closed position: {pnl:+.2f}% gain before fees")
 
             pos.update({
                 "cost": cost,
@@ -167,8 +167,8 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             logging.error(f"Failed to close trailing position {order_id}: {e}")
         
     def can_execute_sell(vol_to_sell):
-        btc_after_sell = current_balance.get("XXBT") - vol_to_sell
-        eur_after_sell = current_balance.get("ZEUR") + (vol_to_sell * current_price)
+        btc_after_sell = float(current_balance.get("XXBT")) - vol_to_sell
+        eur_after_sell = float(current_balance.get("ZEUR")) + (vol_to_sell * current_price)
 
         total_value_after = (btc_after_sell * current_price) + eur_after_sell
         if total_value_after == 0: return True
