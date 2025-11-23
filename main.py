@@ -2,6 +2,8 @@ import time
 from kraken_client import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
 from trailing_controller import load_trailing_state, save_trailing_state, is_processed, save_closed_order
 from logger import log_info, log_warning, log_error
+import telegram_interface
+
 
 # Bot configuration
 SLEEPING_INTERVAL = 60
@@ -15,9 +17,8 @@ MIN_BTC_ALLOCATION_PCT = 0.60
 
 def main():
     try:
-        import telegram_interface
         telegram_interface.start_telegram_thread()
-        log_info("🚀 Bot Iniciado y listo.", to_telegram=True)
+        log_info("🤖 BoTC started and running.", to_telegram=True)
 
         while True:
             if telegram_interface.BOT_PAUSED:
@@ -52,7 +53,7 @@ def main():
             log_info(f"Session complete. Sleeping for {SLEEPING_INTERVAL}s.\n")
             time.sleep(SLEEPING_INTERVAL)   
     except KeyboardInterrupt:
-        log_info("Bot stopped manually by user.", to_telegram=True)
+        log_info("BoTC stopped manually by user.", to_telegram=True)
 
 def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())

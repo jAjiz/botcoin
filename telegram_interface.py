@@ -21,36 +21,32 @@ class TelegramInterface:
         self.user_id = user_id
         self.app = ApplicationBuilder().token(token).build()
 
-    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != self.user_id: return
-        await update.message.reply_text("🤖 Bot de Trading Online. Usa /status, /pause, /resume o /logs.")
-
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != self.user_id: return
-        status = "⏸ PAUSADO" if BOT_PAUSED else "▶️ EJECUTANDO"
-        await update.message.reply_text(f"Estado: {status}\nÚltima actividad: {time.strftime('%H:%M:%S')}")
+        status = "⏸ PAUSED" if BOT_PAUSED else "▶️ RUNNING"
+        await update.message.reply_text(f"Status: {status}\nLast activity: {time.strftime('%H:%M:%S')}")
 
     async def pause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != self.user_id: return
         global BOT_PAUSED
         BOT_PAUSED = True
-        await update.message.reply_text("⏸ Bot pausado. No se procesarán nuevas operaciones.")
+        await update.message.reply_text("⏸ BoTC paused. New operations will not be processed.")
 
     async def resume_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != self.user_id: return
         global BOT_PAUSED
         BOT_PAUSED = False
-        await update.message.reply_text("▶️ Bot reanudado.")
+        await update.message.reply_text("▶️ BoTC resumed.")
 
     async def logs_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != self.user_id: return
         try:
             with open("logs/BoTC.log", "r", encoding="utf-8") as f:
-                lines = f.readlines()[-15:]
-            msg = "".join(lines) or "No hay logs recientes."
-            await update.message.reply_text(f"📋 Últimos logs:\n{msg[-4000:]}")
+                lines = f.readlines()[-10:]
+            msg = "".join(lines) or "No recent logs."
+            await update.message.reply_text(f"📋 Latest logs:\n{msg[-4000:]}")
         except Exception as e:
-            await update.message.reply_text(f"Error leyendo logs: {e}")
+            await update.message.reply_text(f"Error reading logs: {e}")
 
     def send_message(self, message):
         try:
@@ -61,7 +57,6 @@ class TelegramInterface:
             logging.error(f"Telegram send error: {e}")
 
     def run(self):
-        self.app.add_handler(CommandHandler("start", self.start_command))
         self.app.add_handler(CommandHandler("status", self.status_command))
         self.app.add_handler(CommandHandler("pause", self.pause_command))
         self.app.add_handler(CommandHandler("resume", self.resume_command))
