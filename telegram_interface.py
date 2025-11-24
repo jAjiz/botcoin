@@ -63,7 +63,6 @@ class TelegramInterface:
         asyncio.set_event_loop(loop)
         
         try:
-            self.app.add_handler(CommandHandler("start", self.start_command))
             self.app.add_handler(CommandHandler("status", self.status_command))
             self.app.add_handler(CommandHandler("pause", self.pause_command))
             self.app.add_handler(CommandHandler("resume", self.resume_command))
