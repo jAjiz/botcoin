@@ -9,11 +9,11 @@ POLL_INTERVAL_SEC = 30
 BOT_PAUSED = False
 
 # Only log warnings and above from telegram library
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
-logging.getLogger("urllib3").setLevel(logging.WARNING)
-logging.getLogger("telegram").setLevel(logging.WARNING)
-logging.getLogger("telegram.bot").setLevel(logging.WARNING)
+# logging.getLogger("httpx").setLevel(logging.WARNING)
+# logging.getLogger("httpcore").setLevel(logging.WARNING)
+# logging.getLogger("urllib3").setLevel(logging.WARNING)
+# logging.getLogger("telegram").setLevel(logging.WARNING)
+# logging.getLogger("telegram.bot").setLevel(logging.WARNING)
 
 class TelegramInterface:
     def __init__(self, token, user_id):
