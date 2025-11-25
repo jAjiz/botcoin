@@ -53,7 +53,7 @@ class TelegramInterface:
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != self.user_id: return
         try:
-            with open("trailing_state.json", "r", encoding="utf-8") as f:
+            with open("data/trailing_state.json", "r", encoding="utf-8") as f:
                 state = json.load(f)
             positions = state.get("positions", [])
             if not positions:
