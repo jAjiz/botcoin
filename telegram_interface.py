@@ -2,6 +2,8 @@ import threading
 import time
 import logging
 import asyncio
+import json
+from kraken_client import get_current_price, get_current_atr
 from config import TELEGRAM_TOKEN, ALLOWED_USER_ID
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
@@ -49,6 +51,36 @@ class TelegramInterface:
         except Exception as e:
             await update.message.reply_text(f"Error reading logs: {e}")
 
+    async def market_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != self.user_id: return
+        try:
+            current_price = get_current_price("XXBTZEUR")
+            current_atr = get_current_atr()
+            await update.message.reply_text(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
+        except Exception as e:
+            await update.message.reply_text(f"Error reading market data: {e}")
+
+    async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != self.user_id: return
+        try:
+            with open("trailing_state.json", "r", encoding="utf-8") as f:
+                state = json.load(f)
+            positions = state.get("positions", [])
+            if not positions:
+                await update.message.reply_text("📊 No active positions.")
+                return
+            
+            msg = "📊 Active Positions:\n\n"
+            for pos in positions:
+                entry = pos.get("entry_price", 0)
+                stop = pos.get("stop_loss", 0)
+                size = pos.get("size", 0)
+                msg += f"Entry: {entry:,.1f}€ | Stop: {stop:,.1f}€ | Size: {size:,.4f}\n"
+            
+            await update.message.reply_text(msg)
+        except Exception as e:
+            await update.message.reply_text(f"Error reading positions: {e}")
+
     def send_message(self, message):
         try:
             import requests
@@ -67,6 +99,8 @@ class TelegramInterface:
             self.app.add_handler(CommandHandler("pause", self.pause_command))
             self.app.add_handler(CommandHandler("resume", self.resume_command))
             self.app.add_handler(CommandHandler("logs", self.logs_command))
+            self.app.add_handler(CommandHandler("market", self.market_command))
+            self.app.add_handler(CommandHandler("positions", self.positions_command))
 
             self.app.run_polling(
                 poll_interval=POLL_INTERVAL_SEC, 

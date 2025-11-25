@@ -9,8 +9,8 @@ import telegram_interface
 SLEEPING_INTERVAL = 60
 
 # Trading variables
-K_ACT = 5.5
-K_STOP = 2.5
+K_ACT = 4.5
+K_STOP = 2
 MIN_MARGIN_PCT = 0.01 
 ATR_PCT_MIN = MIN_MARGIN_PCT / (K_ACT - K_STOP)
 MIN_BTC_ALLOCATION_PCT = 0.60
