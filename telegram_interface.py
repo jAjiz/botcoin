@@ -3,7 +3,6 @@ import time
 import logging
 import asyncio
 import json
-from kraken_client import get_current_price, get_current_atr
 from config import TELEGRAM_TOKEN, ALLOWED_USER_ID
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
@@ -51,15 +50,6 @@ class TelegramInterface:
         except Exception as e:
             await update.message.reply_text(f"Error reading logs: {e}")
 
-    async def market_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.effective_user.id != self.user_id: return
-        try:
-            current_price = get_current_price("XXBTZEUR")
-            current_atr = get_current_atr()
-            await update.message.reply_text(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
-        except Exception as e:
-            await update.message.reply_text(f"Error reading market data: {e}")
-
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != self.user_id: return
         try:
@@ -99,7 +89,6 @@ class TelegramInterface:
             self.app.add_handler(CommandHandler("pause", self.pause_command))
             self.app.add_handler(CommandHandler("resume", self.resume_command))
             self.app.add_handler(CommandHandler("logs", self.logs_command))
-            self.app.add_handler(CommandHandler("market", self.market_command))
             self.app.add_handler(CommandHandler("positions", self.positions_command))
 
             self.app.run_polling(
