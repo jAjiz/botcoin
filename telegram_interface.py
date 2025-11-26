@@ -138,8 +138,8 @@ class TelegramInterface:
                     f"Entry: {entry_price:,.2f}€\n"
                     f"Cost: {pos['cost']:,.2f}€\n"
                     f"Activation: {pos['activation_price']:,.2f}€\n"
-                    f"Trailing: {pos['trailing_price']:,.2f}€\n"
-                    f"Stop: {pos['stop_price']:,.2f}€\n"
+                    f"Trailing: {pos.get('trailing_price', "No active"):,.2f}€\n"
+                    f"Stop: {pos.get('stop_price', "No active"):,.2f}€\n"
                     f"P&L: {pnl_symbol} {pnl_pct:+.2f}%\n\n"
                 )
             await update.message.reply_text(msg[-4000:])
