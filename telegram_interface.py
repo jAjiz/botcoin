@@ -127,20 +127,31 @@ class TelegramInterface:
             msg = f"📊 Open Positions (Current BTC: {current_price:,.2f}€):\n\n"
             
             for pos_id, pos in positions.items():
-                entry_price = pos['entry_price']
-                pnl_pct = ((current_price - entry_price) / entry_price * 100) if pos['side'] == 'buy' else ((entry_price - current_price) / entry_price * 100)
-                pnl_symbol = "🟢" if pnl_pct > 0 else "🔴"
+                trailing_active = pos.get('trailing_price') is not None
+
+                if trailing_active:
+                    trailing_price = pos['trailing_price']
+                    stop_price = pos['stop_price']
+                    entry_price = pos['entry_price']
+                    pnl_pct = ((current_price - entry_price) / entry_price * 100) if pos['side'] == 'buy' else ((entry_price - current_price) / entry_price * 100)
+                    pnl_symbol = "🟢" if pnl_pct > 0 else "🔴"
+                else:
+                    trailing_price = "Not active"
+                    stop_price = "Not active"
+                    pnl_pct = "N/A"
+                    pnl_symbol = ""
                 
                 msg += (
                     f"━━━━━━━━━━━━━━━\n"
                     f"ID: {pos_id}\n"
                     f"Side: {pos['side'].upper()}\n"
-                    f"Entry: {entry_price:,.2f}€\n"
+                    f"Entry: {pos['entry_price']:,.2f}€\n"
+                    f"Volume: {pos['volume']:,.8f} BTC\n"
                     f"Cost: {pos['cost']:,.2f}€\n"
                     f"Activation: {pos['activation_price']:,.2f}€\n"
-                    f"Trailing: {pos.get('trailing_price', "No active"):,.2f}€\n"
-                    f"Stop: {pos.get('stop_price', "No active"):,.2f}€\n"
-                    f"P&L: {pnl_symbol} {pnl_pct:+.2f}%\n\n"
+                    f"Trailing: {trailing_price}\n"
+                    f"Stop: {stop_price}\n"
+                    f"P&L: {pnl_symbol} {pnl_pct if isinstance(pnl_pct, str) else f'{pnl_pct:+.2f}%'}\n\n"
                 )
             await update.message.reply_text(msg[-4000:])
         except FileNotFoundError:
