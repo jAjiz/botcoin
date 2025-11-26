@@ -3,6 +3,7 @@ import time
 import logging
 import asyncio
 import json
+from kraken_client import get_current_price, get_current_atr, get_balance
 from config import TELEGRAM_TOKEN, ALLOWED_USER_ID
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
@@ -27,7 +28,13 @@ class TelegramInterface:
         try:
             await self.app.bot.send_message(
                 chat_id=self.user_id,
-                text="🤖 BoTC started and running. Use /status, /pause, /resume or /logs."
+                text="🤖 BoTC started and running. Use:\n"
+                "/status\n"
+                "/pause\n"
+                "/resume\n"
+                "/logs\n"
+                "/market\n"
+                "/positions"
             )
         except Exception as e:
             logging.error(f"Failed to send startup message: {e}")
@@ -59,26 +66,48 @@ class TelegramInterface:
         except Exception as e:
             await update.message.reply_text(f"Error reading logs: {e}")
 
+    async def market_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.effective_user.id != self.user_id: return
+        try:
+            price = get_current_price()
+            atr = get_current_atr()
+            balance = get_balance()
+            eur_balance = float(balance.get("ZEUR", 0))
+            btc_balance = float(balance.get("XXBT", 0))
+            msg = (
+                f"📈 Market Status:\n"
+                f"Current BTC/EUR Price: {price:,.1f}€\n"
+                f"Current ATR(15m): {atr:,.1f}€\n\n"
+                f"💰 Account Balance:\n"
+                f"EUR: {eur_balance:,.2f}€\n"
+                f"BTC: {btc_balance:,.8f} BTC"
+            )
+            await update.message.reply_text(msg)
+        except Exception as e:
+            await update.message.reply_text(f"Error fetching market status: {e}")
+
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != self.user_id: return
         try:
-            with open("data/trailing_state.json", "r", encoding="utf-8") as f:
-                state = json.load(f)
-            positions = state.get("positions", [])
+            with open("positions.json", "r", encoding="utf-8") as f:
+                positions = json.load(f)
             if not positions:
-                await update.message.reply_text("📊 No active positions.")
+                await update.message.reply_text("No open positions.")
                 return
-            
-            msg = "📊 Active Positions:\n\n"
-            for pos in positions:
-                entry = pos.get("entry_price", 0)
-                stop = pos.get("stop_loss", 0)
-                size = pos.get("size", 0)
-                msg += f"Entry: {entry:,.1f}€ | Stop: {stop:,.1f}€ | Size: {size:,.4f}\n"
-            
-            await update.message.reply_text(msg)
+            msg = "📊 Open Positions:\n"
+            for pos_id, pos in positions.items():
+                msg += (
+                    f"ID: {pos_id}\n"
+                    f"Side: {pos['side']}\n"
+                    f"Entry Price: {pos['entry_price']:,.1f}€\n"
+                    f"Cost: {pos['cost']:,.2f}€\n"
+                    f"Activation Price: {pos['activation_price']:,.1f}€\n"
+                    f"Trailing Price: {pos['trailing_price']:,.1f}€\n"
+                    f"Stop Price: {pos['stop_price']:,.1f}€\n"
+                )
+            await update.message.reply_text(msg[-4000:])
         except Exception as e:
-            await update.message.reply_text(f"Error reading positions: {e}")
+            await update.message.reply_text(f"Error fetching positions: {e}")
 
     def send_message(self, message):
         try:
