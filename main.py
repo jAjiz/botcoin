@@ -1,9 +1,8 @@
 import time
+import log_controller as logging
+import telegram_interface as telegram
 from kraken_client import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
 from trailing_controller import load_trailing_state, save_trailing_state, is_processed, save_closed_order
-from logger import log_info, log_warning, log_error
-import telegram_interface
-
 
 # Bot configuration
 SLEEPING_INTERVAL = 60
@@ -17,21 +16,20 @@ MIN_BTC_ALLOCATION_PCT = 0.60
 
 def main():
     try:
-        telegram_interface.start_telegram_thread()
+        telegram.start_telegram_thread()
 
         while True:
-            if telegram_interface.BOT_PAUSED:
-                log_info("Bot is paused. Sleeping...")
+            if telegram.BOT_PAUSED:
+                logging.info("Bot is paused. Sleeping...")
                 time.sleep(SLEEPING_INTERVAL)
                 continue
 
-            log_info("======== STARTING SESSION ========")
-
+            logging.info("======== STARTING SESSION ========")
             current_price = get_current_price("XXBTZEUR")
             current_atr = get_current_atr()
             current_balance = get_balance()
 
-            log_info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
+            logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
 
             trailing_state = load_trailing_state()   
             
@@ -45,14 +43,14 @@ def main():
                         continue
                     process_closed_order(order_id, order, trailing_state, current_atr)                
             else:
-                log_info("No closed orders returned.")
+                logging.info("No closed orders returned.")
 
             update_trailing_state(trailing_state, current_price, current_atr, current_balance)
 
-            log_info(f"Session complete. Sleeping for {SLEEPING_INTERVAL}s.\n")
+            logging.info(f"Session complete. Sleeping for {SLEEPING_INTERVAL}s.\n")
             time.sleep(SLEEPING_INTERVAL)   
     except KeyboardInterrupt:
-        log_info("BoTC stopped manually by user.", to_telegram=True)
+        logging.info("BoTC stopped manually by user.", to_telegram=True)
 
 def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -69,7 +67,7 @@ def calculate_atr_value(price, current_atr):
     return atr_value
 
 def process_closed_order(order_id, order, trailing_state, current_atr):
-    log_info(f"Processing order {order_id}...")
+    logging.info(f"Processing order {order_id}...")
     entry_price = float(order["price"])
     volume = float(order["vol_exec"])
     cost = float(order["cost"])
@@ -98,11 +96,11 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
         "stop_atr": None
     }
 
-    log_info(f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: activation at {trailing_state[order_id]['activation_price']:,}€", to_telegram=True)
+    logging.info(f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: activation at {trailing_state[order_id]['activation_price']:,}€", to_telegram=True)
     save_trailing_state(trailing_state)
 
 def update_trailing_state(trailing_state, current_price, current_atr, current_balance):
-    log_info(f"Checking trailing positions...")
+    logging.info(f"Checking trailing positions...")
 
     def calculate_stop_price(side, entry_price, trailing_ref_price, atr_val):
         raw_stop = K_STOP * atr_val
@@ -129,7 +127,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             "activation_price": round(activation_price, 1),
             "activation_atr": round(atr_val, 1)
         })
-        log_info(f"♻️[ATR] Position {order_id}: recalibrate activation price to {pos['activation_price']:,}€.")
+        logging.info(f"♻️[ATR] Position {order_id}: recalibrate activation price to {pos['activation_price']:,}€.")
 
     def recalibrate_stop(order_id, pos, atr_val):
         side = pos["side"]
@@ -141,7 +139,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             "stop_price": round(stop_price, 1),
             "stop_atr": round(atr_val, 1)
         })
-        log_info(f"♻️[ATR] Position {order_id}: recalibrate stop price to {pos['stop_price']:,}€.")
+        logging.info(f"♻️[ATR] Position {order_id}: recalibrate stop price to {pos['stop_price']:,}€.")
 
     def close_position(order_id, pos):
         try:
@@ -149,7 +147,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             stop_price = pos["stop_price"]
             volume = pos["volume"]
             cost = pos["cost"]
-            log_warning(f"⛔[CLOSE] Stop price {stop_price:,}€ hit for position {order_id}: placing LIMIT {side.upper()} order", to_telegram=True)
+            logging.warning(f"⛔[CLOSE] Stop price {stop_price:,}€ hit for position {order_id}: placing LIMIT {side.upper()} order", to_telegram=True)
 
             if side == "sell":
                 cost = volume * stop_price
@@ -159,7 +157,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
                 pnl = (pos["entry_price"] - stop_price) / pos["entry_price"] * 100
 
             closing_order = place_limit_order("XXBTZEUR", side, stop_price, volume)
-            log_info(f"[PnL] Closed position: {pnl:+.2f}% gain before fees", to_telegram=True)
+            logging.info(f"[PnL] Closed position: {pnl:+.2f}% gain before fees", to_telegram=True)
 
             pos.update({
                 "cost": cost,
@@ -171,9 +169,9 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             })
             save_closed_order(trailing_state[order_id], order_id)
             del trailing_state[order_id]
-            log_info(f"Trailing position {order_id} closed and removed.")
+            logging.info(f"Trailing position {order_id} closed and removed.")
         except Exception as e:
-            log_error(f"Failed to close trailing position {order_id}: {e}")
+            logging.error(f"Failed to close trailing position {order_id}: {e}")
         
     def can_execute_sell(vol_to_sell):
         btc_after_sell = float(current_balance.get("XXBT")) - vol_to_sell
@@ -185,7 +183,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
         btc_allocation_after = (btc_after_sell * current_price) / total_value_after
         
         if btc_allocation_after < MIN_BTC_ALLOCATION_PCT:
-            log_warning(f"🛡️[BLOCKED] Sell {order_id} by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_ALLOCATION_PCT:.0%}.", to_telegram=True)
+            logging.warning(f"🛡️[BLOCKED] Sell {order_id} by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_ALLOCATION_PCT:.0%}.", to_telegram=True)
             return False
             
         return True
@@ -210,7 +208,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
                     "stop_atr": round(atr_val, 1),
                     "activation_time": now_str()
                 })
-                log_info(f"⚡[ACTIVE] Trailing activated for position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€", to_telegram=True)
+                logging.info(f"⚡[ACTIVE] Trailing activated for position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€", to_telegram=True)
         else:
             if pos["stop_atr"] * 0.8 > atr_val or atr_val > pos["stop_atr"] * 1.2:
                 recalibrate_stop(order_id, pos, atr_val)
@@ -230,7 +228,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
                     "stop_price": round(stop_price, 1),
                     "stop_atr": round(atr_val, 1)
                 })
-                log_info(f"📈[TRAIL] Position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€", to_telegram=True)
+                logging.info(f"📈[TRAIL] Position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€", to_telegram=True)
     
     save_trailing_state(trailing_state)
 

@@ -1,7 +1,7 @@
 import krakenex
+import logging
 from pykrakenapi import KrakenAPI
 from config import KRAKEN_API_KEY, KRAKEN_API_SECRET
-from logger import log_info, log_error
 
 ## Ignore future warnings
 import warnings
@@ -19,7 +19,7 @@ def get_balance():
             raise Exception(response["error"])
         return response.get("result", {})
     except Exception as e:
-        log_error(f"Error fetching balance: {e}")
+        logging.error(f"Error fetching balance: {e}")
         return {}
 
 def get_open_orders():
@@ -30,7 +30,7 @@ def get_open_orders():
         open_orders = response.get("result", {}).get("open", {})
         return open_orders
     except Exception as e:
-        log_error(f"Error fetching open orders: {e}")
+        logging.error(f"Error fetching open orders: {e}")
         return {}
 
 def get_closed_orders(start=0, closed_after=0):
@@ -45,7 +45,7 @@ def get_closed_orders(start=0, closed_after=0):
         }
         return closed_orders
     except Exception as e:
-        log_error(f"Error fetching closed orders: {e}")
+        logging.error(f"Error fetching closed orders: {e}")
         return {}
 
 def get_current_price(pair="XXBTZEUR"):
@@ -55,7 +55,7 @@ def get_current_price(pair="XXBTZEUR"):
             raise Exception(response["error"])
         return float(response["result"][pair]["c"][0])  # 'c' = last trade price
     except Exception as e:
-        log_error(f"Error fetching current price for {pair}: {e}")
+        logging.error(f"Error fetching current price for {pair}: {e}")
         return None
 
 def place_limit_order(pair, side, price, volume):
@@ -70,10 +70,10 @@ def place_limit_order(pair, side, price, volume):
         if "error" in response and response["error"]:
             raise Exception(response["error"])
         new_order = response.get('result', {}).get('txid', [None])[0]
-        log_info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
+        logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
         return new_order
     except Exception as e:
-        log_error(f"Error creating {side.upper()} order: {e}")
+        logging.error(f"Error creating {side.upper()} order: {e}")
 
 def place_take_profit_limit(pair, side, trigger_price, limit_price, volume):
     try:
@@ -88,20 +88,20 @@ def place_take_profit_limit(pair, side, trigger_price, limit_price, volume):
         if "error" in response and response["error"]:
             raise Exception(response["error"])
         new_order = response.get('result', {}).get('txid', [None])[0]
-        log_info(f"Created TP-LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ trigger {trigger_price:,.1f}€ (limit {limit_price:,.1f}€)")
+        logging.info(f"Created TP-LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ trigger {trigger_price:,.1f}€ (limit {limit_price:,.1f}€)")
         return new_order
     except Exception as e:
-        log_error(f"Error creating {side.upper()} order: {e}")
+        logging.error(f"Error creating {side.upper()} order: {e}")
 
 def cancel_order(order_id):
     try:
         response = api.query_private("CancelOrder", {"txid": order_id})
         if "error" in response and response["error"]:
             raise Exception(response["error"])
-        log_info(f"Cancelled order {order_id}")
+        logging.info(f"Cancelled order {order_id}")
         return response
     except Exception as e:
-        log_error(f"Error cancelling order {order_id}: {e}")
+        logging.error(f"Error cancelling order {order_id}: {e}")
     
 def get_current_atr(interval=15, period=14):
     try:
@@ -116,7 +116,7 @@ def get_current_atr(interval=15, period=14):
 
         return df["ATR"].iloc[-1]
     except Exception as e:
-        log_error(f"Error getting ATR: {e}")
+        logging.error(f"Error getting ATR: {e}")
         return None
 
 if __name__ == "__main__":

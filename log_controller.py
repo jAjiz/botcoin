@@ -18,17 +18,17 @@ logging.basicConfig(
     handlers=[file_handler, logging.StreamHandler()]
 )
 
-def log_info(msg, to_telegram=False):
+def info(msg, to_telegram=False):
     logging.info(msg)
     if to_telegram:
         telegram_interface.send_notification(msg)
 
-def log_warning(msg, to_telegram=False):
+def warning(msg, to_telegram=False):
     logging.warning(msg)
     if to_telegram:
         telegram_interface.send_notification("⚠️ " + msg)
 
-def log_error(msg, to_telegram=False):
+def error(msg, to_telegram=False):
     logging.error(msg)
     if to_telegram:
         telegram_interface.send_notification("❌ " + msg)
