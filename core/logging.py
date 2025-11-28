@@ -1,9 +1,8 @@
 import os
 import logging
+import services.telegram as telegram
 from logging.handlers import TimedRotatingFileHandler
-import telegram_interface
 
-# Logging configuration
 os.makedirs("logs", exist_ok=True)
 file_handler = TimedRotatingFileHandler(
     filename="logs/BoTC.log",
@@ -21,14 +20,14 @@ logging.basicConfig(
 def info(msg, to_telegram=False):
     logging.info(msg)
     if to_telegram:
-        telegram_interface.send_notification(msg)
+        telegram.send_notification(msg)
 
 def warning(msg, to_telegram=False):
     logging.warning(msg)
     if to_telegram:
-        telegram_interface.send_notification("⚠️ " + msg)
+        telegram.send_notification("⚠️ " + msg)
 
 def error(msg, to_telegram=False):
     logging.error(msg)
     if to_telegram:
-        telegram_interface.send_notification("❌ " + msg)
+        telegram.send_notification("❌ " + msg)

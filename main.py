@@ -1,24 +1,20 @@
 import time
-import log_controller as logging
-# import telegram_interface as telegram
-from kraken_client import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
-from trailing_controller import load_trailing_state, save_trailing_state, is_processed, save_closed_order
+import core.logging as logging
+# import services.telegram as telegram
+from exchange.kraken import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
+from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_order
+import strategies.multipliers as multipliers_mode
+import strategies.rebuy as rebuy_mode
 
 # Bot configuration
 SLEEPING_INTERVAL = 60
-
-# Trading variables
-K_ACT = 4.5
-K_STOP = 2
-MIN_MARGIN_PCT = 0.01 
-ATR_PCT_MIN = MIN_MARGIN_PCT / (K_ACT - K_STOP)
-MIN_BTC_ALLOCATION_PCT = 0.60
+MODE = "rebuy"  # Options: "multipliers", "rebuy"
 
 def main():
     try:
         # telegram.start_telegram_thread()
 
-        # while True:
+        while True:
         #     if telegram.BOT_PAUSED:
         #         logging.info("Bot is paused. Sleeping...")
         #         time.sleep(SLEEPING_INTERVAL)
@@ -55,17 +51,6 @@ def main():
 def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
-def calculate_atr_value(price, current_atr):
-    if current_atr is None:
-        atr_value = price * ATR_PCT_MIN # ATR data unavailable, use minimum threshold
-    else:
-        atr_pct = current_atr / price
-        if atr_pct < ATR_PCT_MIN: 
-            atr_value = price * ATR_PCT_MIN # ATR below minimum threshold, use minimum threshold
-        else:
-            atr_value = current_atr
-    return atr_value
-
 def process_closed_order(order_id, order, trailing_state, current_atr):
     logging.info(f"Processing order {order_id}...")
     entry_price = float(order["price"])
@@ -77,23 +62,20 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
     if pair != "XBTEUR" or side not in ["buy", "sell"]:
         return
 
-    new_side = "buy" if side == "sell" else "sell"
-    atr_value = calculate_atr_value(entry_price, current_atr)
-    activation_distance = K_ACT * atr_value
-    activation_price = entry_price + activation_distance if new_side == "sell" else entry_price - activation_distance
+    if MODE == "multipliers":
+        new_side, atr_value, activation_price = multipliers_mode.process_order(side, entry_price, current_atr)
+    elif MODE == "rebuy":
+        new_side, atr_value, activation_price = rebuy_mode.process_order(side, entry_price, current_atr, trailing_state)
 
     trailing_state[order_id] = {
+        "mode": MODE,
         "created_time": now_str(),
         "side": new_side,
         "entry_price": entry_price,
         "volume": volume,
         "cost": cost,
         "activation_atr": round(atr_value, 1),
-        "activation_price": round(activation_price, 1),
-        "activation_time": None,
-        "trailing_price": None,
-        "stop_price": None,
-        "stop_atr": None
+        "activation_price": round(activation_price, 1)
     }
 
     logging.info(f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: activation at {trailing_state[order_id]['activation_price']:,}€", to_telegram=True)
@@ -102,25 +84,21 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
 def update_trailing_state(trailing_state, current_price, current_atr, current_balance):
     logging.info(f"Checking trailing positions...")
 
-    def calculate_stop_price(side, entry_price, trailing_ref_price, atr_val):
-        raw_stop = K_STOP * atr_val
-        min_margin_eur = entry_price * MIN_MARGIN_PCT
-        
-        if side == "sell":
-            max_space = (trailing_ref_price - entry_price) - min_margin_eur
-        else:
-            max_space = (entry_price - trailing_ref_price) - min_margin_eur
-
-        stop_distance = min(raw_stop, max(0.0, max_space))
-        stop_price = trailing_ref_price - stop_distance if side == "sell" else trailing_ref_price + stop_distance
-
-        return stop_price
+    def calculate_stop_price(side, entry_price, trailing_price, atr_val):
+        if MODE == "multipliers":
+            return multipliers_mode.calculate_stop_price(side, entry_price, trailing_price, atr_val)
+        elif MODE == "rebuy":
+            return rebuy_mode.calculate_stop_price(side, trailing_price, atr_val)
     
     def recalibrate_activation(order_id, pos, atr_val):
         side = pos["side"]
         entry_price = pos["entry_price"]
 
-        activation_distance = K_ACT * atr_val
+        if MODE == "multipliers":
+            activation_distance = multipliers_mode.calculate_activation_dist(atr_val)
+        elif MODE == "rebuy":
+            activation_distance = rebuy_mode.calculate_activation_dist(atr_val, entry_price)
+
         activation_price = entry_price + activation_distance if side == "sell" else entry_price - activation_distance
 
         pos.update({
@@ -162,7 +140,6 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             pos.update({
                 "cost": cost,
                 "volume": volume,
-                "closing_price": stop_price,
                 "closing_time": now_str(),
                 "closing_order": closing_order,
                 "pnl": round(pnl, 2)
@@ -172,27 +149,12 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             logging.info(f"Trailing position {order_id} closed and removed.")
         except Exception as e:
             logging.error(f"Failed to close trailing position {order_id}: {e}")
-        
-    def can_execute_sell(vol_to_sell):
-        btc_after_sell = float(current_balance.get("XXBT")) - vol_to_sell
-        eur_after_sell = float(current_balance.get("ZEUR")) + (vol_to_sell * current_price)
-
-        total_value_after = (btc_after_sell * current_price) + eur_after_sell
-        if total_value_after == 0: return True
-
-        btc_allocation_after = (btc_after_sell * current_price) / total_value_after
-        
-        if btc_allocation_after < MIN_BTC_ALLOCATION_PCT:
-            logging.warning(f"🛡️[BLOCKED] Sell {order_id} by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_ALLOCATION_PCT:.0%}.", to_telegram=True)
-            return False
-            
-        return True
 
     for order_id, pos in list(trailing_state.items()):
         side = pos["side"]
         entry_price = pos["entry_price"]
-        trailing_active = pos["trailing_price"] is not None
-        atr_val = calculate_atr_value(entry_price, current_atr)
+        trailing_active = pos.get("trailing_price") is not None
+        atr_val = multipliers_mode.calculate_atr_value(entry_price, current_atr) if MODE == "multipliers" else current_atr
 
         if not trailing_active:
             if pos["activation_atr"] * 0.8 > atr_val or atr_val > pos["activation_atr"] * 1.2:
@@ -201,32 +163,34 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             if (side == "sell" and current_price >= pos["activation_price"]) or \
                (side == "buy" and current_price <= pos["activation_price"]):
                 
-                stop_price = calculate_stop_price(side, entry_price, current_price, atr_val)
+                stop_price = calculate_stop_price(side, entry_price, current_price, pos["activation_atr"])
                 pos.update({
                     "trailing_price": current_price,
                     "stop_price": round(stop_price, 1),
-                    "stop_atr": round(atr_val, 1),
+                    "stop_atr": round(pos["activation_atr"], 1),
                     "activation_time": now_str()
                 })
                 logging.info(f"⚡[ACTIVE] Trailing activated for position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€", to_telegram=True)
         else:
-            if pos["stop_atr"] * 0.8 > atr_val or atr_val > pos["stop_atr"] * 1.2:
+            if (pos["stop_atr"] * 0.8 > atr_val or atr_val > pos["stop_atr"] * 1.2) and MODE == "multipliers":
                 recalibrate_stop(order_id, pos, atr_val)
 
-            if (side == "sell" and current_price <= pos["stop_price"] and can_execute_sell(pos["volume"])) or \
+            if (side == "sell" and current_price <= pos["stop_price"]) or \
                (side == "buy" and current_price >= pos["stop_price"]):
                 
+                if MODE == "multipliers" and side == "sell" and not multipliers_mode.can_execute_sell(order_id, pos["volume"], current_balance, current_price):
+                    continue
+
                 close_position(order_id, pos)
                 continue 
 
             if (side == "sell" and current_price > pos["trailing_price"]) or \
                (side == "buy" and current_price < pos["trailing_price"]):
                 
-                stop_price = calculate_stop_price(side, entry_price, current_price, atr_val)
+                stop_price = calculate_stop_price(side, entry_price, current_price, pos["stop_atr"])
                 pos.update({
                     "trailing_price": current_price,
-                    "stop_price": round(stop_price, 1),
-                    "stop_atr": round(atr_val, 1)
+                    "stop_price": round(stop_price, 1)
                 })
                 logging.info(f"📈[TRAIL] Position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€", to_telegram=True)
     

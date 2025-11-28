@@ -1,7 +1,7 @@
 import krakenex
 import logging
 from pykrakenapi import KrakenAPI
-from config import KRAKEN_API_KEY, KRAKEN_API_SECRET
+from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
 ## Ignore future warnings
 import warnings

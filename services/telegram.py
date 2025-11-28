@@ -3,8 +3,8 @@ import time
 import logging
 import asyncio
 import json
-from kraken_client import get_current_price, get_current_atr, get_balance
-from config import TELEGRAM_TOKEN, ALLOWED_USER_ID
+from exchange.kraken import get_current_price, get_current_atr, get_balance
+from core.config import TELEGRAM_TOKEN, ALLOWED_USER_ID
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 
