@@ -105,7 +105,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
         if MODE == "multipliers":
             activation_distance = multipliers_mode.calculate_activation_dist(atr_val)
         elif MODE == "rebuy":
-            activation_distance = rebuy_mode.calculate_activation_dist(atr_val, entry_price)
+            activation_distance = rebuy_mode.calculate_activation_dist(side, atr_val, entry_price)
 
         activation_price = entry_price + activation_distance if side == "sell" else entry_price - activation_distance
 
