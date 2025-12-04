@@ -1,4 +1,4 @@
-K_STOP = 3.0
+from core.config import REBUY_K_STOP as K_STOP
 
 def process_order(side, entry_price, current_atr, trailing_positions):
     atr_value = current_atr

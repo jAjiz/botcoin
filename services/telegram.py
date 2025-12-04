@@ -3,12 +3,14 @@ import time
 import logging
 import asyncio
 import json
+import sys
+import os
 from exchange.kraken import get_current_price, get_current_atr, get_balance
-from core.config import TELEGRAM_TOKEN, ALLOWED_USER_ID
+from core.config import TELEGRAM_TOKEN, ALLOWED_USER_ID, MODE
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 
-POLL_INTERVAL_SEC = 30
+POLL_INTERVAL_SEC = 20
 BOT_PAUSED = False
 
 # Only log warnings and above from telegram library
@@ -47,6 +49,7 @@ class TelegramInterface:
             "/logs - View last 10 log lines\n"
             "/market - Current market data\n"
             "/positions - Open positions\n"
+            "/restart - Restart the application\n"
             "/help - Show this help"
         )
 
@@ -55,6 +58,7 @@ class TelegramInterface:
         status = "⏸ PAUSED" if BOT_PAUSED else "▶️ RUNNING"
         await update.message.reply_text(
             f"Status: {status}\n"
+            f"Mode: {MODE}\n"
             f"Last activity: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
@@ -178,6 +182,19 @@ class TelegramInterface:
         except Exception as e:
             logging.error(f"Telegram send error: {e}")
 
+    async def restart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._check_auth(update): return
+        try:
+            await update.message.reply_text("🔄 Reiniciando BoTC...")
+            logging.info("Restart command initiated by user")
+            
+            await asyncio.sleep(1)
+            
+            os.execv(sys.executable, [sys.executable] + sys.argv)
+        except Exception as e:
+            logging.error(f"Error in restart_command: {e}")
+            await update.message.reply_text(f"❌ Error al reiniciar: {e}")
+
     def run(self):
         # New event loop for this secondary thread
         loop = asyncio.new_event_loop()
@@ -193,6 +210,7 @@ class TelegramInterface:
             self.app.add_handler(CommandHandler("logs", self.logs_command))
             self.app.add_handler(CommandHandler("market", self.market_command))
             self.app.add_handler(CommandHandler("positions", self.positions_command))
+            self.app.add_handler(CommandHandler("restart", self.restart_command))
 
             loop.run_until_complete(self.send_startup_message())
 

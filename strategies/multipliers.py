@@ -1,10 +1,5 @@
 import core.logging as logging
-
-K_ACT = 4.5
-K_STOP = 2
-MIN_MARGIN_PCT = 0.01 
-ATR_PCT_MIN = MIN_MARGIN_PCT / (K_ACT - K_STOP)
-MIN_BTC_ALLOCATION_PCT = 0.60
+from core.config import MULT_K_ACT as K_ACT, MULT_K_STOP as K_STOP, ATR_PCT_MIN, MIN_MARGIN_PCT, MIN_BTC_ALLOCATION_PCT
 
 def process_order(side, entry_price, current_atr):
     new_side = "buy" if side == "sell" else "sell"

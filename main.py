@@ -1,14 +1,11 @@
 import time
 import core.logging as logging
 import services.telegram as telegram
-from exchange.kraken import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
-from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_order
 import strategies.multipliers as multipliers_mode
 import strategies.rebuy as rebuy_mode
-
-# Bot configuration
-SLEEPING_INTERVAL = 60
-MODE = "rebuy"  # Options: "multipliers", "rebuy"
+from exchange.kraken import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
+from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_order
+from core.config import MODE, SLEEPING_INTERVAL
 
 def main():
     try:
