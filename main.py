@@ -4,7 +4,7 @@ import services.telegram as telegram
 import strategies.multipliers as multipliers_mode
 import strategies.rebuy as rebuy_mode
 from exchange.kraken import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
-from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_order
+from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_position
 from core.config import MODE, SLEEPING_INTERVAL
 
 def main():
@@ -62,21 +62,58 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
     if MODE == "multipliers":
         new_side, atr_value, activation_price = multipliers_mode.process_order(side, entry_price, current_atr)
     elif MODE == "rebuy":
-        new_side, atr_value, activation_price = rebuy_mode.process_order(side, entry_price, current_atr, trailing_state)
+        new_side, atr_value, activation_price = rebuy_mode.process_order(order_id, side, entry_price, current_atr)
 
-    trailing_state[order_id] = {
-        "mode": MODE,
-        "created_time": now_str(),
-        "side": new_side,
-        "entry_price": entry_price,
-        "volume": volume,
-        "cost": cost,
-        "activation_atr": round(atr_value, 1),
-        "activation_price": round(activation_price, 1)
-    }
-
-    logging.info(f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: activation at {trailing_state[order_id]['activation_price']:,}€",
-                  to_telegram=True)
+    existing_position = None
+    for existing_id, pos in list(trailing_state.items()):
+        if pos["side"] != new_side or pos.get("trailing_price") is not None:
+            continue
+        
+        price_diff_pct = abs(pos["entry_price"] - entry_price) / pos["entry_price"] * 100        
+        if price_diff_pct <= 1.0:
+            existing_position = (existing_id, pos)
+            break
+    
+    if existing_position:
+        existing_id, existing_pos = existing_position
+        
+        new_volume = existing_pos["volume"] + volume
+        new_cost = existing_pos["cost"] + cost
+        
+        opening_orders = existing_pos.get("opening_order", [])
+        if isinstance(opening_orders, list):
+            opening_orders.append(order_id)
+        else:
+            opening_orders = [opening_orders, order_id]
+        
+        existing_pos["volume"] = round(new_volume, 8)
+        existing_pos["cost"] = round(new_cost, 5)
+        existing_pos["opening_order"] = opening_orders
+        
+        logging.info(
+            f"🔀[MERGE] Unified order {order_id} into existing position {existing_id}: "
+            f"activation at {trailing_state[existing_id]['activation_price']:,}€",
+            to_telegram=True
+        )
+    else:
+        trailing_state[order_id] = {
+            "mode": MODE,
+            "created_time": now_str(),
+            "opening_order": [order_id],
+            "side": new_side,
+            "entry_price": entry_price,
+            "volume": volume,
+            "cost": cost,
+            "activation_atr": round(atr_value, 1),
+            "activation_price": round(activation_price, 1)
+        }
+        
+        logging.info(
+            f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: "
+            f"activation at {trailing_state[order_id]['activation_price']:,}€",
+            to_telegram=True
+        )
+    
     save_trailing_state(trailing_state)
 
 def update_trailing_state(trailing_state, current_price, current_atr, current_balance):
@@ -149,10 +186,9 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
                 "cost": round(cost, 5),
                 "volume": round(volume, 8),
                 "closing_time": now_str(),
-                "closing_order": closing_order,
                 "pnl": round(pnl, 2)
             })
-            save_closed_order(trailing_state[order_id], order_id)
+            save_closed_position(trailing_state[order_id], closing_order)
             del trailing_state[order_id]
             logging.info(f"Trailing position {order_id} closed and removed.")
         except Exception as e:

@@ -1,14 +1,16 @@
 from core.config import REBUY_K_STOP as K_STOP
+from core.state import load_closed_positions
 
-def process_order(side, entry_price, current_atr, trailing_positions):
+def process_order(order_id, side, entry_price, current_atr):
     if side == "buy":
         new_side = "sell"
         atr_value = current_atr        
     else:
         new_side = "buy"
-        for order_id, pos in list(trailing_positions.items()):
-            if pos.get("closing_order") == order_id:
-                atr_value = pos.get("activation_atr")
+        closed_positions = load_closed_positions()
+        for closed_id, pos in list(closed_positions.items()):
+            if closed_id == order_id:
+                atr_value = pos["stop_atr"]
                 break
 
     activation_distance = calculate_activation_dist(new_side, atr_value, entry_price)
