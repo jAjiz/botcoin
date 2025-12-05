@@ -66,7 +66,7 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
 
     existing_position = None
     for existing_id, pos in list(trailing_state.items()):
-        if pos["side"] != new_side or pos.get("trailing_price") is not None:
+        if pos["mode"] != MODE or pos["side"] != new_side or pos.get("trailing_price") is not None:
             continue
         
         price_diff_pct = abs(pos["entry_price"] - entry_price) / pos["entry_price"] * 100        
@@ -170,7 +170,8 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             stop_price = pos["stop_price"]
             volume = pos["volume"]
             cost = pos["cost"]
-            logging.info(f"⛔[CLOSE] Stop price {stop_price:,}€ hit for position {order_id}: placing LIMIT {side.upper()} order", to_telegram=True)
+            logging.info(f"⛔[CLOSE] Stop price {stop_price:,}€ hit for position {order_id}: placing LIMIT {side.upper()} order",
+                          to_telegram=True)
 
             if side == "sell":
                 cost = volume * stop_price
@@ -222,7 +223,8 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             if (side == "sell" and current_price <= pos["stop_price"]) or \
                (side == "buy" and current_price >= pos["stop_price"]):
                 
-                if MODE == "multipliers" and side == "sell" and not multipliers_mode.can_execute_sell(order_id, pos["volume"], current_balance, current_price):
+                if MODE == "multipliers" and side == "sell" \
+                and not multipliers_mode.can_execute_sell(order_id, pos["volume"], current_balance, current_price):
                     continue
 
                 close_position(order_id, pos)
