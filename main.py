@@ -162,7 +162,11 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
         entry_price = pos["entry_price"]
         trailing_price = pos["trailing_price"]
 
-        stop_price = calculate_stop_price(side, entry_price, trailing_price, atr_val)
+        if MODE == "multipliers":
+            stop_price = multipliers_mode.calculate_stop_price(side, entry_price, trailing_price, atr_val)
+        elif MODE == "rebuy":
+            stop_price = rebuy_mode.calculate_stop_price(side, trailing_price, atr_val)
+
         pos.update({
             "stop_price": round(stop_price, 1),
             "stop_atr": round(atr_val, 1)
