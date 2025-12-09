@@ -222,7 +222,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
                 calculate_stop_price(order_id, pos, entry_price, current_price)
 
         else:
-            if (pos["stop_atr"] * 0.8 > atr_val or atr_val > pos["stop_atr"] * 1.2) and MODE == "multipliers":
+            if (pos["stop_atr"] * 0.8 > atr_val or atr_val > pos["stop_atr"] * 1.2):
                 recalibrate_stop(order_id, pos, atr_val)
 
             if (side == "sell" and current_price <= pos["stop_price"]) or \
