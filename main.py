@@ -69,7 +69,7 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
     if MODE == "multipliers":
         new_side, atr_value, activation_price = multipliers_mode.process_order(side, entry_price, current_atr)
     elif MODE == "rebuy":
-        new_side, atr_value, activation_price = rebuy_mode.process_order(order_id, side, entry_price, current_atr)
+        new_side, atr_value, activation_price = rebuy_mode.process_order(side, entry_price, current_atr)
 
     existing_position = None
     for existing_id, pos in list(trailing_state.items()):
