@@ -43,7 +43,6 @@ class TelegramInterface:
             "/logs - View last 10 log lines\n"
             "/market - Current market data\n"
             "/positions - Open positions\n"
-            "/restart - Restart the application\n"
             "/help - Show this help"
         )
 
@@ -174,30 +173,6 @@ class TelegramInterface:
         except Exception as e:
             logging.error(f"Telegram send error: {e}")
 
-    async def restart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._check_auth(update): return
-        try:
-            await update.message.reply_text("🔄 Restarting BoTC...")
-            logging.info("Restart command initiated by user")
-            
-            # Stop telegram bot gracefully
-            await self.app.stop()
-            await self.app.shutdown()
-            
-            await asyncio.sleep(0.5)
-            
-            # Restart using subprocess
-            subprocess.Popen([sys.executable] + sys.argv)
-
-            await asyncio.sleep(0.5)
-            
-            # Exit the current process
-            os._exit(0)
-
-        except Exception as e:
-            logging.error(f"Error in restart_command: {e}")
-            await update.message.reply_text(f"❌ Error restarting: {e}")
-
     def run(self):
         # New event loop for this secondary thread
         loop = asyncio.new_event_loop()
@@ -213,7 +188,6 @@ class TelegramInterface:
             self.app.add_handler(CommandHandler("logs", self.logs_command))
             self.app.add_handler(CommandHandler("market", self.market_command))
             self.app.add_handler(CommandHandler("positions", self.positions_command))
-            self.app.add_handler(CommandHandler("restart", self.restart_command))
 
             loop.run_until_complete(self.send_startup_message())
 
@@ -241,3 +215,18 @@ def start_telegram_thread():
 
 def send_notification(msg):
     tg_interface.send_message(msg)
+
+def stop_telegram_thread():
+    try:
+        if tg_interface and tg_interface.app and tg_interface._loop and tg_interface._loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(tg_interface.app.stop(), tg_interface._loop)
+            try:
+                future.result(timeout=5) # Wait for stop to complete
+            except Exception as e:
+                logging.warning(f"Timeout/err stopping Telegram app: {e}")
+            time.sleep(0.5)
+            logging.info("Telegram thread stopped.")
+        else:
+            logging.info("Telegram app not running or loop not available.")
+    except Exception as e:
+        logging.error(f"Error stopping Telegram thread: {e}")

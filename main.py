@@ -22,6 +22,11 @@ def main():
             current_atr = get_current_atr()
             current_balance = get_balance()
 
+            if current_price is None or current_atr is None or not current_balance:
+                logging.error(f"Could not fetch price, ATR, or balance. Skipping session and retrying in {SLEEPING_INTERVAL}s...")
+                time.sleep(SLEEPING_INTERVAL)
+                continue
+
             logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
 
             trailing_state = load_trailing_state()   
@@ -44,12 +49,14 @@ def main():
             time.sleep(SLEEPING_INTERVAL)   
     except KeyboardInterrupt:
         logging.info("BoTC stopped manually by user.", to_telegram=True)
+    finally:
+        telegram.stop_telegram_thread()
 
 def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
 def process_closed_order(order_id, order, trailing_state, current_atr):
-    logging.info(f"Processing order {order_id}...")
+    logging.info(f"Processing order [{order_id}]...")
     entry_price = float(order["price"])
     volume = float(order["vol_exec"])
     cost = float(order["cost"])
@@ -89,7 +96,7 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
         existing_pos["opening_order"].append(order_id)
         
         logging.info(
-            f"🔀[MERGE] Unified order {order_id} into existing position {existing_id}: "
+            f"🔀|MERGE| Unified order [{order_id}] into existing position [{existing_id}]: "
             f"activation at {trailing_state[existing_id]['activation_price']:,}€",
             to_telegram=True
         )
@@ -107,7 +114,7 @@ def process_closed_order(order_id, order, trailing_state, current_atr):
         }
         
         logging.info(
-            f"🆕[CREATE] New trailing position {order_id} for {new_side.upper()} order: "
+            f"🆕|CREATE| New trailing position [{order_id}] for {new_side.upper()} order: "
             f"activation at {trailing_state[order_id]['activation_price']:,}€",
             to_telegram=True
         )
@@ -130,7 +137,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             "trailing_price": current_price,
             "stop_price": round(stop_price, 1)
         })
-        logging.info(f"📈[TRAIL] Position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€")
+        logging.info(f"📈|TRAIL| Position [{order_id}]: New price {pos['trailing_price']:,}€ - Stop {pos['stop_price']:,}€")
 
     
     def recalibrate_activation(order_id, pos, atr_val):
@@ -148,7 +155,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             "activation_price": round(activation_price, 1),
             "activation_atr": round(atr_val, 1)
         })
-        logging.info(f"♻️[ATR] Position {order_id}: recalibrate activation price to {pos['activation_price']:,}€.")
+        logging.info(f"♻️|ATR| Position [{order_id}]: recalibrate activation price to {pos['activation_price']:,}€.")
 
     def recalibrate_stop(order_id, pos, atr_val):
         side = pos["side"]
@@ -160,7 +167,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             "stop_price": round(stop_price, 1),
             "stop_atr": round(atr_val, 1)
         })
-        logging.info(f"♻️[ATR] Position {order_id}: recalibrate stop price to {pos['stop_price']:,}€.")
+        logging.info(f"♻️|ATR| Position [{order_id}]: recalibrate stop price to {pos['stop_price']:,}€.")
 
     def close_position(order_id, pos):
         try:
@@ -168,7 +175,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             stop_price = pos["stop_price"]
             volume = pos["volume"]
             cost = pos["cost"]
-            logging.info(f"⛔[CLOSE] Stop price {stop_price:,}€ hit for position {order_id}: placing LIMIT {side.upper()} order",
+            logging.info(f"⛔|CLOSE| Stop price {stop_price:,}€ hit for position [{order_id}]: placing LIMIT {side.upper()} order",
                           to_telegram=True)
 
             if side == "sell":
@@ -179,7 +186,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
                 pnl = (pos["entry_price"] - stop_price) / pos["entry_price"] * 100
 
             closing_order = place_limit_order("XXBTZEUR", side, stop_price, volume)
-            logging.info(f"[PnL] Closed position: {pnl:+.2f}% gain before fees", to_telegram=True)
+            logging.info(f"|PnL| Closed position: {pnl:+.2f}% gain before fees", to_telegram=True)
 
             pos.update({
                 "cost": round(cost, 2),
@@ -189,9 +196,9 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             })
             save_closed_position(trailing_state[order_id], closing_order)
             del trailing_state[order_id]
-            logging.info(f"Trailing position {order_id} closed and removed.")
+            logging.info(f"Trailing position [{order_id}] closed and removed.")
         except Exception as e:
-            logging.error(f"Failed to close trailing position {order_id}: {e}")
+            logging.error(f"Failed to close trailing position [{order_id}]: {e}")
 
     for order_id, pos in list(trailing_state.items()):
         side = pos["side"]
@@ -206,7 +213,7 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
             if (side == "sell" and current_price >= pos["activation_price"]) or \
                (side == "buy" and current_price <= pos["activation_price"]):
                 
-                logging.info(f"⚡[ACTIVE] Trailing activated for position {order_id})", to_telegram=True)
+                logging.info(f"⚡|ACTIVE| Trailing activated for position [{order_id}]", to_telegram=True)
                 pos.update({
                     "stop_atr": pos["activation_atr"],
                     "activation_time": now_str()

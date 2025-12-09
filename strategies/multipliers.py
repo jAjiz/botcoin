@@ -48,7 +48,8 @@ def can_execute_sell(order_id, vol_to_sell, current_balance, current_price):
     btc_allocation_after = (btc_after_sell * current_price) / total_value_after
     
     if btc_allocation_after < MIN_BTC_ALLOCATION_PCT:
-        logging.warning(f"🛡️[BLOCKED] Sell {order_id} by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_ALLOCATION_PCT:.0%}.", to_telegram=True)
+        logging.warning(f"🛡️|BLOCKED| Sell [{order_id}] by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_ALLOCATION_PCT:.0%}.",
+                         to_telegram=True)
         return False
         
     return True
