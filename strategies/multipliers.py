@@ -1,5 +1,4 @@
-import core.logging as logging
-from core.config import MULT_K_ACT as K_ACT, MULT_K_STOP as K_STOP, ATR_PCT_MIN, MIN_MARGIN_PCT, MIN_BTC_ALLOCATION_PCT
+from core.config import K_ACT, K_STOP, ATR_MIN_PCT, MIN_MARGIN_PCT
 
 def process_order(side, entry_price, current_atr):
     new_side = "buy" if side == "sell" else "sell"
@@ -10,11 +9,11 @@ def process_order(side, entry_price, current_atr):
 
 def calculate_atr_value(price, current_atr):
     if current_atr is None:
-        atr_value = price * ATR_PCT_MIN # ATR data unavailable, use minimum threshold
+        atr_value = price * ATR_MIN_PCT # ATR data unavailable, use minimum threshold
     else:
         atr_pct = current_atr / price
-        if atr_pct < ATR_PCT_MIN: 
-            atr_value = price * ATR_PCT_MIN # ATR below minimum threshold, use minimum threshold
+        if atr_pct < ATR_MIN_PCT: 
+            atr_value = price * ATR_MIN_PCT # ATR below minimum threshold, use minimum threshold
         else:
             atr_value = current_atr
 
@@ -37,19 +36,3 @@ def calculate_stop_price(side, entry_price, trailing_ref_price, atr_val):
     stop_price = trailing_ref_price - stop_distance if side == "sell" else trailing_ref_price + stop_distance
 
     return stop_price
-
-def can_execute_sell(order_id, vol_to_sell, current_balance, current_price):
-    btc_after_sell = float(current_balance.get("XXBT")) - vol_to_sell
-    eur_after_sell = float(current_balance.get("ZEUR")) + (vol_to_sell * current_price)
-
-    total_value_after = (btc_after_sell * current_price) + eur_after_sell
-    if total_value_after == 0: return True
-
-    btc_allocation_after = (btc_after_sell * current_price) / total_value_after
-    
-    if btc_allocation_after < MIN_BTC_ALLOCATION_PCT:
-        logging.warning(f"🛡️|BLOCKED| Sell [{order_id}] by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_ALLOCATION_PCT:.0%}.",
-                         to_telegram=True)
-        return False
-        
-    return True

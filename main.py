@@ -5,7 +5,7 @@ import strategies.multipliers as multipliers_mode
 import strategies.rebuy as rebuy_mode
 from exchange.kraken import get_balance, get_closed_orders, get_current_price, place_limit_order, get_current_atr
 from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_position
-from core.config import MODE, SLEEPING_INTERVAL
+from core.config import MODE, SLEEPING_INTERVAL, MIN_BTC_PCT
 
 def main():
     try:
@@ -173,6 +173,22 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
         })
         logging.info(f"♻️|ATR| Position [{order_id}]: recalibrate stop price to {pos['stop_price']:,}€.")
 
+    def can_execute_sell(order_id, vol_to_sell, current_balance, current_price):
+        btc_after_sell = float(current_balance.get("XXBT")) - vol_to_sell
+        eur_after_sell = float(current_balance.get("ZEUR")) + (vol_to_sell * current_price)
+
+        total_value_after = (btc_after_sell * current_price) + eur_after_sell
+        if total_value_after == 0: return True
+
+        btc_allocation_after = (btc_after_sell * current_price) / total_value_after
+        
+        if btc_allocation_after < MIN_BTC_PCT:
+            logging.warning(f"🛡️|BLOCKED| Sell [{order_id}] by inventory ratio: {btc_allocation_after:.2%} < min: {MIN_BTC_PCT:.0%}.",
+                            to_telegram=True)
+            return False
+        
+        return True
+
     def close_position(order_id, pos):
         try:
             side = pos["side"]
@@ -216,32 +232,24 @@ def update_trailing_state(trailing_state, current_price, current_atr, current_ba
 
             if (side == "sell" and current_price >= pos["activation_price"]) or \
                (side == "buy" and current_price <= pos["activation_price"]):
-                
                 logging.info(f"⚡|ACTIVE| Trailing activated for position [{order_id}]", to_telegram=True)
                 pos.update({
                     "stop_atr": pos["activation_atr"],
                     "activation_time": now_str()
                 })
-
                 calculate_stop_price(order_id, pos, entry_price, current_price)
 
         else:
             if (pos["stop_atr"] * 0.8 > atr_val or atr_val > pos["stop_atr"] * 1.2):
                 recalibrate_stop(order_id, pos, atr_val)
 
-            if (side == "sell" and current_price <= pos["stop_price"]) or \
+            if (side == "sell" and current_price <= pos["stop_price"] and can_execute_sell(order_id, pos["volume"], current_balance, current_price)) or \
                (side == "buy" and current_price >= pos["stop_price"]):
-                
-                if MODE == "multipliers" and side == "sell" \
-                and not multipliers_mode.can_execute_sell(order_id, pos["volume"], current_balance, current_price):
-                    continue
-
                 close_position(order_id, pos)
                 continue 
 
             if (side == "sell" and current_price > pos["trailing_price"]) or \
                (side == "buy" and current_price < pos["trailing_price"]):
-                
                 calculate_stop_price(order_id, pos, entry_price, current_price)
     
     save_trailing_state(trailing_state)

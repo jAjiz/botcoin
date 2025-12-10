@@ -15,12 +15,14 @@ ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID"))
 MODE = os.getenv("MODE", "multipliers")  # Options: "multipliers", "rebuy"
 SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute
 
-# Multiplier mode Settings
-MULT_K_ACT = float(os.getenv("MULT_K_ACT", 4.5))
-MULT_K_STOP = float(os.getenv("MULT_K_STOP", 2.5))
-MIN_MARGIN_PCT = float(os.getenv("MIN_MARGIN_PCT", 0.01))  # 1%
-ATR_PCT_MIN = MIN_MARGIN_PCT / (MULT_K_ACT - MULT_K_STOP)
-MIN_BTC_ALLOCATION_PCT = float(os.getenv("MIN_BTC_ALLOCATION_PCT", 0.60))  # 60%
+# Trading Settings
+K_ACT = float(os.getenv("K_ACT", 4.5))
 
-# Rebuy mode Settings
-REBUY_K_STOP = float(os.getenv("REBUY_K_STOP", 3))
+K_STOP_SELL = float(os.getenv("K_STOP_SELL", 2.6))
+K_STOP_BUY = float(os.getenv("K_STOP_BUY", 3.6))
+K_STOP = (K_STOP_SELL + K_STOP_BUY) / 2
+
+MIN_MARGIN_PCT = float(os.getenv("MIN_MARGIN", 0.01))  # 1%
+ATR_MIN_PCT = MIN_MARGIN_PCT / (K_ACT - K_STOP)
+
+MIN_BTC_PCT = float(os.getenv("MIN_BTC_PCT", 0.60))  # 60%
