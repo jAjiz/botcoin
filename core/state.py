@@ -21,16 +21,20 @@ def load_closed_positions():
             return json.load(f)
     return {}
 
-def save_closed_position(pos, order_id):
+def save_closed_position(pos, order_id, pair):
     if os.path.exists(CLOSED_FILE):
         with open(CLOSED_FILE, "r") as f:
             closed_positions = json.load(f)
-        closed_positions[order_id] = pos
-        with open(CLOSED_FILE, "w") as fw:
-            json.dump(closed_positions, fw, indent=2)
     else:
-        with open(CLOSED_FILE, "w") as f:
-            json.dump({order_id: pos}, f, indent=2)
+        closed_positions = {}
+    
+    if pair not in closed_positions:
+        closed_positions[pair] = {}
+    
+    closed_positions[pair][order_id] = pos
+    
+    with open(CLOSED_FILE, "w") as f:
+        json.dump(closed_positions, f, indent=2)
 
 def is_processed(order_id, state):
     for pos in state.values():

@@ -1,10 +1,9 @@
-import threading, time, logging, asyncio, json, sys, os, subprocess, requests
-from exchange.kraken import get_current_price, get_current_atr, get_balance
-from core.config import TELEGRAM_TOKEN, ALLOWED_USER_ID, MODE
+import threading, time, logging, asyncio, json, requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
+from exchange.kraken import get_last_price, get_current_atr, get_balance
+from core.config import TELEGRAM_TOKEN, ALLOWED_USER_ID, POLL_INTERVAL_SEC, MODE, PAIRS
 
-POLL_INTERVAL_SEC = 20
 BOT_PAUSED = False
 
 # Only log warnings and above from telegram library
@@ -35,23 +34,27 @@ class TelegramInterface:
     
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
+        pairs_list = ', '.join(PAIRS.keys())
         await update.message.reply_text(
             "📋 Available commands:\n\n"
-            "/status - Bot status\n"
+            "/status - Bot status and configured pairs\n"
             "/pause - Pause bot operations\n"
             "/resume - Resume bot operations\n"
-            "/logs - View last 10 log lines\n"
-            "/market - Current market data\n"
-            "/positions - Open positions\n"
-            "/help - Show this help"
+            "/market [pair] - Current market data (all or specific pair)\n"
+            "/positions [pair] - Open positions (all or specific pair)\n"
+            "/help - Show this help\n\n"
+            f"Configured pairs: {pairs_list}\n"
+            "Example: /market XBTEUR"
         )
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
         status = "⏸ PAUSED" if BOT_PAUSED else "▶️ RUNNING"
+        pairs_list = ', '.join(PAIRS.keys())
         await update.message.reply_text(
             f"Status: {status}\n"
             f"Mode: {MODE}\n"
+            f"Pairs: {pairs_list}\n"
             f"Last activity: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
@@ -73,39 +76,42 @@ class TelegramInterface:
         BOT_PAUSED = False
         await update.message.reply_text("▶️ BoTC resumed.")
 
-    async def logs_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self._check_auth(update): return
-        try:
-            with open("logs/BoTC.log", "r", encoding="utf-8") as f:
-                lines = f.readlines()[-10:]
-            msg = "".join(lines) or "No recent logs."
-            # Telegram message limit is 4096 characters
-            await update.message.reply_text(f"📋 Latest logs:\n```\n{msg[-3900:]}\n```", parse_mode="Markdown")
-        except FileNotFoundError:
-            await update.message.reply_text("❌ Log file not found.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error reading logs: {e}")
-
     async def market_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
         try:
-            price = get_current_price()
-            atr = get_current_atr()
-            balance = get_balance()
-            eur_balance = float(balance.get("ZEUR", 0))
-            btc_balance = float(balance.get("XXBT", 0))
-            btc_value_eur = btc_balance * price
-            total_value = eur_balance + btc_value_eur
+            # Check if a specific pair was requested
+            pair_filter = context.args[0].upper() if context.args else None
+            if pair_filter and pair_filter not in PAIRS:
+                await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
+                return
             
-            msg = (
-                f"📈 Market Status:\n"
-                f"BTC/EUR: {price:,.2f}€\n"
-                f"ATR(15m): {atr:,.2f}€\n\n"
-                f"💰 Account Balance:\n"
-                f"EUR: {eur_balance:,.2f}€\n"
-                f"BTC: {btc_balance:.8f} ({btc_value_eur:,.2f}€)\n"
-                f"Total: {total_value:,.2f}€"
-            )
+            balance = get_balance()
+            pairs_to_show = [pair_filter] if pair_filter else list(PAIRS.keys())
+            
+            msg = "📈 Market Status:\n\n"
+            
+            for pair in pairs_to_show:
+                try:
+                    price = get_last_price(PAIRS[pair]['primary'])
+                    atr = get_current_atr(pair)
+                    asset = PAIRS[pair]['base']
+                    asset_balance = float(balance.get(asset, 0))
+                    asset_value_eur = asset_balance * price
+                    
+                    msg += (
+                        f"━━━ {pair} ━━━\n"
+                        f"Price: {price:,.2f}€\n"
+                        f"ATR(15m): {atr:,.2f}€\n"
+                        f"Balance: {asset_balance:.8f} ({asset_value_eur:,.2f}€)\n\n"
+                    )
+                    if len(pairs_to_show) > 1:
+                        await asyncio.sleep(1)  # Delay to avoid rate limits
+                except Exception as e:
+                    msg += f"━━━ {pair} ━━━\n❌ Error: {e}\n\n"
+            
+            fiat_balance = float(balance.get("ZEUR", 0))
+            msg += f"💵 EUR Balance: {fiat_balance:,.2f}€"
+            
             await update.message.reply_text(msg)
         except Exception as e:
             logging.error(f"Error in market_command: {e}")
@@ -114,43 +120,62 @@ class TelegramInterface:
     async def positions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
         try:
-            with open("data/trailing_state.json", "r", encoding="utf-8") as f:
-                positions = json.load(f)
-            if not positions:
-                await update.message.reply_text("ℹ️ No open positions.")
+            # Check if a specific pair was requested
+            pair_filter = context.args[0].upper() if context.args else None
+            if pair_filter and pair_filter not in PAIRS:
+                await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
                 return
             
-            current_price = get_current_price()
-            msg = f"📊 Open Positions (Current BTC: {current_price:,.2f}€):\n\n"
+            with open("data/trailing_state.json", "r", encoding="utf-8") as f:
+                all_positions = json.load(f)
             
-            for pos_id, pos in positions.items():
-                trailing_active = pos.get('trailing_price') is not None
-
-                if trailing_active:
-                    trailing_price = pos['trailing_price']
-                    stop_price = pos['stop_price']
-                    entry_price = pos['entry_price']
-                    pnl_pct = ((stop_price - entry_price) / entry_price * 100) if pos['side'] == 'sell' else ((entry_price - stop_price) / entry_price * 100)
-                    pnl_symbol = "🟢" if pnl_pct > 0 else "🔴"
-                else:
-                    trailing_price = "Not active"
-                    stop_price = "Not active"
-                    pnl_pct = "N/A"
-                    pnl_symbol = ""
+            pairs_to_show = [pair_filter] if pair_filter else list(PAIRS.keys())
+            msg = "📊 Open Positions:\n\n"
+            total_positions = 0
+            
+            for pair in pairs_to_show:
+                pair_positions = all_positions.get(pair, {})
+                if not pair_positions:
+                    continue
                 
-                msg += (
-                    f"━━━━━━━━━━━━━━━\n"
-                    f"ID: {pos_id}\n"
-                    f"Side: {pos['side'].upper()}\n"
-                    f"Entry: {pos['entry_price']:,.2f}€\n"
-                    f"Volume: {pos['volume']:,.8f} BTC\n"
-                    f"Cost: {pos['cost']:,.2f}€\n"
-                    f"Activation: {pos['activation_price']:,.2f}€\n"
-                    f"Trailing: {trailing_price}\n"
-                    f"Stop: {stop_price}\n"
-                    f"P&L: {pnl_symbol} {pnl_pct if isinstance(pnl_pct, str) else f'{pnl_pct:+.2f}%'}\n\n"
-                )
-            await update.message.reply_text(msg[-4000:])
+                try:
+                    current_price = get_last_price(PAIRS[pair]['primary'])
+                    msg += f"━━━ {pair} (Price: {current_price:,.2f}€) ━━━\n"
+                    
+                    for pos_id, pos in pair_positions.items():
+                        total_positions += 1
+                        trailing_active = pos.get('trailing_price') is not None
+
+                        if trailing_active:
+                            trailing_price = pos['trailing_price']
+                            stop_price = pos['stop_price']
+                            entry_price = pos['entry_price']
+                            pnl_pct = ((stop_price - entry_price) / entry_price * 100) if pos['side'] == 'sell' else ((entry_price - stop_price) / entry_price * 100)
+                            pnl_symbol = "🟢" if pnl_pct > 0 else "🔴"
+                        else:
+                            trailing_price = "Not active"
+                            stop_price = "Not active"
+                            pnl_pct = "N/A"
+                            pnl_symbol = ""
+                        
+                        msg += (
+                            f"ID: {pos_id}\n"
+                            f"Side: {pos['side'].upper()} | Entry: {pos['entry_price']:,.2f}€\n"
+                            f"Volume: {pos['volume']:,.8f} | Cost: {pos['cost']:,.2f}€\n"
+                            f"Activation: {pos['activation_price']:,.2f}€\n"
+                            f"Trailing: {trailing_price} | Stop: {stop_price}\n"
+                            f"P&L: {pnl_symbol} {pnl_pct if isinstance(pnl_pct, str) else f'{pnl_pct:+.2f}%'}\n\n"
+                        )
+                    
+                    if len(pairs_to_show) > 1:
+                        await asyncio.sleep(1)  # Delay to avoid rate limits
+                except Exception as e:
+                    msg += f"❌ Error fetching {pair}: {e}\n\n"
+            
+            if total_positions == 0:
+                await update.message.reply_text("ℹ️ No open positions.")
+            else:
+                await update.message.reply_text(msg[-4000:])
         except FileNotFoundError:
             await update.message.reply_text("ℹ️ No positions file found.")
         except Exception as e:
@@ -181,11 +206,9 @@ class TelegramInterface:
         
         try:
             self.app.add_handler(CommandHandler("help", self.help_command))
-            self.app.add_handler(CommandHandler("start", self.help_command))
             self.app.add_handler(CommandHandler("status", self.status_command))
             self.app.add_handler(CommandHandler("pause", self.pause_command))
             self.app.add_handler(CommandHandler("resume", self.resume_command))
-            self.app.add_handler(CommandHandler("logs", self.logs_command))
             self.app.add_handler(CommandHandler("market", self.market_command))
             self.app.add_handler(CommandHandler("positions", self.positions_command))
 
