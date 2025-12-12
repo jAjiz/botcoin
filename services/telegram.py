@@ -53,9 +53,9 @@ class TelegramInterface:
         pairs_list = ', '.join(PAIRS.keys())
         await update.message.reply_text(
             f"Status: {status}\n"
-            f"Mode: {MODE}\n"
+            f"Last activity: {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            f"Mode: {MODE.upper()}\n"
             f"Pairs: {pairs_list}\n"
-            f"Last activity: {time.strftime('%Y-%m-%d %H:%M:%S')}"
         )
 
     async def pause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -88,30 +88,46 @@ class TelegramInterface:
             balance = get_balance()
             pairs_to_show = [pair_filter] if pair_filter else list(PAIRS.keys())
             
-            msg = "📈 Market Status:\n\n"
-            
+            # Build market status section
+            market_lines = ["📈 Market Status:"]
+            total_assets_value_eur = 0.0
+            assets_seen = []
+
             for pair in pairs_to_show:
                 try:
+                    wsname = PAIRS[pair]['wsname'] or pair
                     price = get_last_price(PAIRS[pair]['primary'])
-                    atr = get_current_atr(pair)
+                    atr = get_current_atr(PAIRS[pair]['wsname'] or pair)
+                    market_lines.append(f"{wsname}: {price:,.2f}€ | ATR(15m): {atr:,.2f}€")
+                    # Accumulate asset value for totals
                     asset = PAIRS[pair]['base']
                     asset_balance = float(balance.get(asset, 0))
-                    asset_value_eur = asset_balance * price
-                    
-                    msg += (
-                        f"━━━ {pair} ━━━\n"
-                        f"Price: {price:,.2f}€\n"
-                        f"ATR(15m): {atr:,.2f}€\n"
-                        f"Balance: {asset_balance:.8f} ({asset_value_eur:,.2f}€)\n\n"
-                    )
+                    total_assets_value_eur += asset_balance * price
+                    assets_seen.append((asset, asset_balance, price))
                     if len(pairs_to_show) > 1:
                         await asyncio.sleep(1)  # Delay to avoid rate limits
                 except Exception as e:
-                    msg += f"━━━ {pair} ━━━\n❌ Error: {e}\n\n"
-            
-            fiat_balance = float(balance.get("ZEUR", 0))
-            msg += f"💵 EUR Balance: {fiat_balance:,.2f}€"
-            
+                    market_lines.append(f"{pair}: ❌ Error: {e}")
+
+            # Build account balance section
+            balance_lines = ["", "💰 Account Balance:"]
+            eur_balance = float(balance.get("ZEUR", 0))
+            balance_lines.append(f"EUR: {eur_balance:,.2f}€")
+            # Deduplicate assets and print their EUR value
+            printed_assets = set()
+            for asset, amount, price in assets_seen:
+                if asset in printed_assets:
+                    continue
+                printed_assets.add(asset)
+                asset_value_eur = amount * price
+                # Pretty name: strip leading 'X'/'Z'
+                pretty = asset.replace('X', '').replace('Z', '')
+                balance_lines.append(f"{pretty}: {amount:.8f} ({asset_value_eur:,.2f}€)")
+
+            total_value_eur = eur_balance + total_assets_value_eur
+            balance_lines.append(f"Total: {total_value_eur:,.2f}€")
+
+            msg = "\n".join(market_lines + balance_lines)
             await update.message.reply_text(msg)
         except Exception as e:
             logging.error(f"Error in market_command: {e}")
@@ -146,26 +162,46 @@ class TelegramInterface:
                         total_positions += 1
                         trailing_active = pos.get('trailing_price') is not None
 
-                        if trailing_active:
-                            trailing_price = pos['trailing_price']
-                            stop_price = pos['stop_price']
-                            entry_price = pos['entry_price']
-                            pnl_pct = ((stop_price - entry_price) / entry_price * 100) if pos['side'] == 'sell' else ((entry_price - stop_price) / entry_price * 100)
-                            pnl_symbol = "🟢" if pnl_pct > 0 else "🔴"
+                        side = pos.get('side', '').lower()
+                        entry_price = pos.get('entry_price')
+                        activation_price = pos.get('activation_price')
+
+                        # Header with active icon if trailing is active
+                        active_icon = "⚡" if trailing_active else ""  # highlight active
+
+                        # Base lines
+                        base_lines = [
+                            f"{active_icon} ID: {pos_id}",
+                            f"Side: {pos['side'].upper()} | Entry: {entry_price:,.2f}€",
+                        ]
+
+                        # Show either volume or cost depending on side
+                        if side == 'sell':
+                            base_lines.append(f"Volume: {pos['volume']:,.8f}")
+                        elif side == 'buy':
+                            base_lines.append(f"Cost: {pos['cost']:,.2f}€")
+
+                        if not trailing_active:
+                            # Not active: show activation only
+                            base_lines.append(f"Activation: {activation_price:,.2f}€")
+                            msg += "\n".join(base_lines) + "\n\n"
                         else:
-                            trailing_price = "Not active"
-                            stop_price = "Not active"
-                            pnl_pct = "N/A"
-                            pnl_symbol = ""
-                        
-                        msg += (
-                            f"ID: {pos_id}\n"
-                            f"Side: {pos['side'].upper()} | Entry: {pos['entry_price']:,.2f}€\n"
-                            f"Volume: {pos['volume']:,.8f} | Cost: {pos['cost']:,.2f}€\n"
-                            f"Activation: {pos['activation_price']:,.2f}€\n"
-                            f"Trailing: {trailing_price} | Stop: {stop_price}\n"
-                            f"P&L: {pnl_symbol} {pnl_pct if isinstance(pnl_pct, str) else f'{pnl_pct:+.2f}%'}\n\n"
-                        )
+                            # Active: show full trailing info and P&L
+                            trailing_price = pos.get('trailing_price')
+                            stop_price = pos.get('stop_price')
+                            if side == 'sell':
+                                pnl_pct = ((stop_price - entry_price) / entry_price * 100)
+                            else:
+                                pnl_pct = ((entry_price - stop_price) / entry_price * 100)
+                            pnl_symbol = "🟢" if pnl_pct > 0 else "🔴"
+
+                            base_lines.extend([
+                                f"Activation: {activation_price:,.2f}€",
+                                f"Trailing: {trailing_price:,.2f}€",
+                                f"Stop: {stop_price:,.2f}€",
+                                f"P&L: {pnl_symbol} {pnl_pct:+.2f}%",
+                            ])
+                            msg += "\n".join(base_lines) + "\n\n"
                     
                     if len(pairs_to_show) > 1:
                         await asyncio.sleep(1)  # Delay to avoid rate limits
