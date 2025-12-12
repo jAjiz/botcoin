@@ -88,46 +88,30 @@ class TelegramInterface:
             balance = get_balance()
             pairs_to_show = [pair_filter] if pair_filter else list(PAIRS.keys())
             
-            # Build market status section
-            market_lines = ["📈 Market Status:"]
-            total_assets_value_eur = 0.0
-            assets_seen = []
-
+            msg = "📈 Market Status:\n\n"
+            
             for pair in pairs_to_show:
                 try:
-                    wsname = PAIRS[pair]['wsname'] or pair
                     price = get_last_price(PAIRS[pair]['primary'])
-                    atr = get_current_atr(PAIRS[pair]['wsname'] or pair)
-                    market_lines.append(f"{wsname}: {price:,.2f}€ | ATR(15m): {atr:,.2f}€")
-                    # Accumulate asset value for totals
+                    atr = get_current_atr(pair)
                     asset = PAIRS[pair]['base']
                     asset_balance = float(balance.get(asset, 0))
-                    total_assets_value_eur += asset_balance * price
-                    assets_seen.append((asset, asset_balance, price))
+                    asset_value_eur = asset_balance * price
+                    
+                    msg += (
+                        f"━━━ {pair} ━━━\n"
+                        f"Price: {price:,.2f}€\n"
+                        f"ATR(15m): {atr:,.2f}€\n"
+                        f"Balance: {asset_balance:.8f} ({asset_value_eur:,.2f}€)\n\n"
+                    )
                     if len(pairs_to_show) > 1:
                         await asyncio.sleep(1)  # Delay to avoid rate limits
                 except Exception as e:
-                    market_lines.append(f"{pair}: ❌ Error: {e}")
-
-            # Build account balance section
-            balance_lines = ["", "💰 Account Balance:"]
-            eur_balance = float(balance.get("ZEUR", 0))
-            balance_lines.append(f"EUR: {eur_balance:,.2f}€")
-            # Deduplicate assets and print their EUR value
-            printed_assets = set()
-            for asset, amount, price in assets_seen:
-                if asset in printed_assets:
-                    continue
-                printed_assets.add(asset)
-                asset_value_eur = amount * price
-                # Pretty name: strip leading 'X'/'Z'
-                pretty = asset.replace('X', '').replace('Z', '')
-                balance_lines.append(f"{pretty}: {amount:.8f} ({asset_value_eur:,.2f}€)")
-
-            total_value_eur = eur_balance + total_assets_value_eur
-            balance_lines.append(f"Total: {total_value_eur:,.2f}€")
-
-            msg = "\n".join(market_lines + balance_lines)
+                    msg += f"━━━ {pair} ━━━\n❌ Error: {e}\n\n"
+            
+            fiat_balance = float(balance.get("ZEUR", 0))
+            msg += f"💵 EUR Balance: {fiat_balance:,.2f}€"
+            
             await update.message.reply_text(msg)
         except Exception as e:
             logging.error(f"Error in market_command: {e}")
