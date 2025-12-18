@@ -11,7 +11,9 @@ from core.config import (
     ASSET_MIN_ALLOCATION,
     POLL_INTERVAL_SEC,
     SLEEPING_INTERVAL,
-    ATR_DATA_DAYS
+    ATR_DATA_DAYS,
+    ATR_INTERVAL,
+    ATR_PERIOD
 )
 
 def validate_common_params(errors):
@@ -114,7 +116,7 @@ def log_configuration_summary():
     logging.info(f"Mode: {MODE}")
     logging.info(f"Session interval: {SLEEPING_INTERVAL}s")
     logging.info(f"Telegram polling interval: {POLL_INTERVAL_SEC}s")
-    logging.info(f"ATR data days: {ATR_DATA_DAYS}")
+    logging.info(f"ATR: {ATR_INTERVAL}min candles | {ATR_PERIOD} period | {ATR_DATA_DAYS} days data")
     logging.info("-" * 60)
     
     # Trading parameters per pair

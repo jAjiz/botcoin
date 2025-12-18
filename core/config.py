@@ -16,6 +16,8 @@ POLL_INTERVAL_SEC = int(os.getenv("POLL_INTERVAL_SEC", 20))
 MODE = os.getenv("MODE")  # Options: "onek", "dualk"
 SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute
 ATR_DATA_DAYS = int(os.getenv("ATR_DATA_DAYS", 60)) # 60 days
+ATR_INTERVAL = int(os.getenv("ATR_INTERVAL", 15))  # ATR chart timeframe in minutes
+ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))  # ATR calculation period in candles
 
 # Pairs names map and info
 PAIRS = {pair: {} for pair in os.getenv("PAIRS", "").split(",")}
@@ -51,13 +53,13 @@ def _build_trading_params():
                     "K_ACT": float(os.getenv(f"{pair}_SELL_K_ACT", SELL_K_ACT)),
                     "K_STOP": float(os.getenv(f"{pair}_SELL_K_STOP", SELL_K_STOP)),
                     "MIN_MARGIN": float(os.getenv(f"{pair}_SELL_MIN_MARGIN", SELL_MIN_MARGIN)),
-                    "ATR_MIN": None  # Calculated in validation.py
+                    "ATR_MIN": None  # Calculated in validation
                 },
                 "buy": {
                     "K_ACT": float(os.getenv(f"{pair}_BUY_K_ACT", BUY_K_ACT)),
                     "K_STOP": float(os.getenv(f"{pair}_BUY_K_STOP", BUY_K_STOP)),
                     "MIN_MARGIN": float(os.getenv(f"{pair}_BUY_MIN_MARGIN", BUY_MIN_MARGIN)),
-                    "ATR_MIN": None  # Calculated in validation.py
+                    "ATR_MIN": None  # Calculated in validation
                 }
             }
 

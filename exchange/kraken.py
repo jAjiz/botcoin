@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from datetime import datetime, timedelta
 from pykrakenapi import KrakenAPI
-from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET, ATR_DATA_DAYS
+from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET, ATR_DATA_DAYS, ATR_INTERVAL, ATR_PERIOD
 
 ## Ignore future warnings
 import warnings
@@ -92,9 +92,9 @@ def place_limit_order(pair, side, price, volume):
     except Exception as e:
         logging.error(f"Error creating {side.upper()} order: {e}")
     
-def get_current_atr(pair, interval=15, period=14):
+def get_current_atr(pair):
     try:
-        atr_file = f"data/{pair}_atr_data_{interval}min.csv"
+        atr_file = f"data/{pair}_atr_data_{ATR_INTERVAL}min.csv"
         since_param = None
         existing_df = None
         
@@ -107,7 +107,7 @@ def get_current_atr(pair, interval=15, period=14):
             except Exception as e:
                 existing_df = None
         
-        df, _ = krakenapi.get_ohlc_data(pair, interval=interval, since=since_param)
+        df, _ = krakenapi.get_ohlc_data(pair, interval=ATR_INTERVAL, since=since_param)
         df = df.sort_index()
         
         if existing_df is not None and not existing_df.empty:
@@ -122,7 +122,7 @@ def get_current_atr(pair, interval=15, period=14):
         df["H-PC"] = (df["high"] - df["close"].shift(1)).abs()
         df["L-PC"] = (df["low"] - df["close"].shift(1)).abs()
         df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
-        df["ATR"] = df["TR"].rolling(period).mean()       
+        df["ATR"] = df["TR"].rolling(ATR_PERIOD).mean()       
         df.to_csv(atr_file)
         
         current_atr = df["ATR"].iloc[-1]
