@@ -100,7 +100,7 @@ def process_closed_order(order_id, order, pair_state, current_atr, pair):
         
         reference_price = pos.get("reference_price", pos["entry_price"])
         price_diff_pct = abs(reference_price - entry_price) / reference_price * 100        
-        if price_diff_pct <= 1.0:
+        if price_diff_pct < 0.5:  # 0.5% threshold to consider merging
             existing_position = (existing_id, pos)
             break
     
