@@ -22,7 +22,7 @@ ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))  # ATR calculation period in candl
 # Pairs names map and info
 PAIRS = {pair: {} for pair in os.getenv("PAIRS", "").split(",")}
 
-# Trading params - defaults (can be overridden per pair)
+# Trading params (using -1 as default to detect missing env vars)
 SELL_K_ACT = float(os.getenv("SELL_K_ACT", -1))
 SELL_K_STOP = float(os.getenv("SELL_K_STOP", -1))
 SELL_MIN_MARGIN = float(os.getenv("SELL_MIN_MARGIN", -1))
@@ -75,3 +75,15 @@ def _build_asset_min_allocation():
     return allocations
 
 ASSET_MIN_ALLOCATION = _build_asset_min_allocation()
+
+# Recenter settings
+def _build_recenter_params():
+    params = {}
+    for pair in PAIRS.keys():
+        params[pair] = {
+            "ATR_MULT": float(os.getenv(f"{pair}_RECENTER_ATR_MULT", 0)),
+            "PRICE_PCT": float(os.getenv(f"{pair}_RECENTER_PRICE_PCT", 0))
+        }
+    return params
+
+RECENTER_PARAMS = _build_recenter_params()

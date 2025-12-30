@@ -6,7 +6,7 @@ import strategies.dualk as dualk_mode
 import strategies.onek as onek_mode
 from exchange.kraken import get_balance, get_last_price, get_current_atr, get_closed_orders, place_limit_order
 from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_position
-from core.config import PAIRS, SLEEPING_INTERVAL, MODE, ASSET_MIN_ALLOCATION
+from core.config import PAIRS, SLEEPING_INTERVAL, MODE, ASSET_MIN_ALLOCATION, RECENTER_PARAMS
 from core.validation import validate_config
 
 def main():
@@ -75,6 +75,9 @@ def main():
 def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
+def get_reference_price(pos):
+    return pos.get("reference_price", pos["entry_price"])
+
 def process_closed_order(order_id, order, pair_state, current_atr, pair):
     logging.info(f"Processing order {order_id}...")
     entry_price = float(order["price"])
@@ -95,7 +98,8 @@ def process_closed_order(order_id, order, pair_state, current_atr, pair):
         if pos["mode"] != MODE or pos["side"] != new_side or pos.get("trailing_price") is not None:
             continue
         
-        price_diff_pct = abs(pos["entry_price"] - entry_price) / pos["entry_price"] * 100        
+        reference_price = pos.get("reference_price", pos["entry_price"])
+        price_diff_pct = abs(reference_price - entry_price) / reference_price * 100        
         if price_diff_pct <= 1.0:
             existing_position = (existing_id, pos)
             break
@@ -121,10 +125,10 @@ def process_closed_order(order_id, order, pair_state, current_atr, pair):
         )
     else:
         pair_state[order_id] = {
+            "side": new_side,
             "mode": MODE,
             "created_time": now_str(),
             "opening_order": [order_id],
-            "side": new_side,
             "entry_price": entry_price,
             "volume": volume,
             "cost": round(cost, 2),
@@ -141,56 +145,48 @@ def process_closed_order(order_id, order, pair_state, current_atr, pair):
 def update_trailing_state(pair_state, pair, current_price, current_atr, current_balance):
     logging.info(f"Checking trailing positions...")
 
-    def calculate_stop_price(order_id, pos, entry_price, trailing_price):
+    def calculate_activation_price(pos, atr_val):
         side = pos["side"]
-        atr_val = pos["stop_atr"]
+        reference_price = get_reference_price(pos)
 
         if MODE == "onek":
-            stop_price = onek_mode.calculate_stop_price(side, trailing_price, atr_val, pair)
-        elif MODE == "dualk":
-            stop_price = dualk_mode.calculate_stop_price(side, entry_price, trailing_price, atr_val, pair)
-        
-        pos.update({
-            "trailing_price": current_price,
-            "stop_price": round(stop_price, 1)
-        })
-        logging.info(f"📈[TRAIL] Position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€")
-
-    
-    def recalibrate_activation(order_id, pos, atr_val):
-        side = pos["side"]
-        entry_price = pos["entry_price"]
-
-        if MODE == "onek":
-            activation_distance = onek_mode.calculate_activation_dist(side, atr_val, entry_price, pair)
+            activation_distance = onek_mode.calculate_activation_dist(side, atr_val, reference_price, pair)
         elif MODE == "dualk":
             activation_distance = dualk_mode.calculate_activation_dist(side, atr_val, pair)
 
-        activation_price = entry_price + activation_distance if side == "sell" else entry_price - activation_distance
+        activation_price = reference_price + activation_distance if side == "sell" else reference_price - activation_distance
 
         pos.update({
             "activation_price": round(activation_price, 1),
             "activation_atr": round(atr_val, 1)
         })
-        logging.info(f"♻️[ATR] Position {order_id}: recalibrate activation price to {pos['activation_price']:,}€.")
 
-    def recalibrate_stop(order_id, pos, atr_val):
+    def calculate_stop_price(pos, atr_val, trailing_price):
         side = pos["side"]
-        entry_price = pos["entry_price"]
-        trailing_price = pos["trailing_price"]
+        reference_price = get_reference_price(pos)
 
         if MODE == "onek":
             stop_price = onek_mode.calculate_stop_price(side, trailing_price, atr_val, pair)
         elif MODE == "dualk":
-            stop_price = dualk_mode.calculate_stop_price(side, entry_price, trailing_price, atr_val, pair)
-
+            stop_price = dualk_mode.calculate_stop_price(side, reference_price, trailing_price, atr_val, pair)
+        
         pos.update({
+            "trailing_price": trailing_price,
             "stop_price": round(stop_price, 1),
             "stop_atr": round(atr_val, 1)
         })
-        logging.info(f"♻️[ATR] Position {order_id}: recalibrate stop price to {pos['stop_price']:,}€.")
+        
+    def check_recenter_activation(pos, atr_val, current_price):
+        atr_threshold = float(RECENTER_PARAMS[pair]["ATR_MULT"]) * atr_val
+        price_threshold = float(RECENTER_PARAMS[pair]["PRICE_PCT"]) * current_price
+        max_threshold = max(atr_threshold, price_threshold)
 
-    def can_execute_sell(order_id, vol_to_sell, current_balance, current_price, pair):
+        # If both RECENTER_PARAMS are set to 0, skip recentering
+        if max_threshold > 0 and abs(pos["activation_price"] - current_price) > max_threshold:
+            return True
+        return False
+
+    def can_execute_sell(order_id, vol_to_sell, current_balance, current_price):
         asset = PAIRS[pair]["base"]
         fiat = PAIRS[pair]["quote"]
         
@@ -213,6 +209,7 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
     def close_position(order_id, pos):
         try:
             side = pos["side"]
+            entry_price = pos["entry_price"]
             stop_price = pos["stop_price"]
             volume = pos["volume"]
             cost = pos["cost"]
@@ -221,15 +218,14 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
 
             if side == "sell":
                 cost = volume * stop_price
-                pnl = (stop_price - pos["entry_price"]) / pos["entry_price"] * 100
+                pnl = (stop_price - entry_price) / entry_price * 100
             else:
                 volume = cost / stop_price
-                pnl = (pos["entry_price"] - stop_price) / pos["entry_price"] * 100
+                pnl = (entry_price - stop_price) / entry_price * 100
 
             closing_order = place_limit_order(pair, side, stop_price, volume)
             if not closing_order:
-                logging.error(f"Failed to place closing order for position {order_id}. Aborting close.",
-                               to_telegram=True)
+                logging.error(f"Failed to place closing order for position {order_id}. Aborting close.", to_telegram=True)
                 return
             
             logging.info(f"💸[PnL] Closed position: {pnl:+.2f}% result", to_telegram=True)
@@ -247,15 +243,20 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
 
     for order_id, pos in list(pair_state.items()):
         side = pos["side"]
-        entry_price = pos["entry_price"]
         trailing_active = pos.get("trailing_price") is not None
         atr_val = current_atr 
         if MODE == "dualk":
-            atr_val = dualk_mode.calculate_atr_value(side, entry_price, current_atr, pair)
+            atr_val = dualk_mode.calculate_atr_value(side, current_price, current_atr, pair)
 
         if not trailing_active:
+            if check_recenter_activation(pos, atr_val, current_price):
+                pos["reference_price"] = current_price
+                calculate_activation_price(pos, atr_val)
+                logging.info(f"🔄[RECENTER] Position {order_id}: recentered activation price to {pos['activation_price']:,}€.")
+
             if pos["activation_atr"] * 0.8 > atr_val or atr_val > pos["activation_atr"] * 1.2:
-                recalibrate_activation(order_id, pos, atr_val)
+                calculate_activation_price(pos, atr_val)
+                logging.info(f"♻️[ATR] Position {order_id}: recalibrate activation price to {pos['activation_price']:,}€.")
 
             if (side == "sell" and current_price >= pos["activation_price"]) or \
                (side == "buy" and current_price <= pos["activation_price"]):
@@ -264,20 +265,23 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
                     "stop_atr": pos["activation_atr"],
                     "activation_time": now_str()
                 })
-                calculate_stop_price(order_id, pos, entry_price, current_price)
+                calculate_stop_price(pos, atr_val, current_price)
+                logging.info(f"📈[TRAIL] Position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€")
 
         else:
             if (pos["stop_atr"] * 0.8 > atr_val or atr_val > pos["stop_atr"] * 1.2):
-                recalibrate_stop(order_id, pos, atr_val)
+                calculate_stop_price(pos, atr_val, pos["trailing_price"])
+                logging.info(f"♻️[ATR] Position {order_id}: recalibrate stop price to {pos['stop_price']:,}€.")
 
-            if (side == "sell" and current_price <= pos["stop_price"] and can_execute_sell(order_id, pos["volume"], current_balance, current_price, pair)) or \
+            if (side == "sell" and current_price <= pos["stop_price"] and can_execute_sell(order_id, pos["volume"], current_balance, current_price)) or \
                (side == "buy" and current_price >= pos["stop_price"]):
                 close_position(order_id, pos)
                 continue 
 
             if (side == "sell" and current_price > pos["trailing_price"]) or \
                (side == "buy" and current_price < pos["trailing_price"]):
-                calculate_stop_price(order_id, pos, entry_price, current_price)
+                calculate_stop_price(pos, atr_val, current_price)
+                logging.info(f"📈[TRAIL] Position {order_id}: New price {pos['trailing_price']:,}€ | Stop {pos['stop_price']:,}€")
                 
     
 if __name__ == "__main__":
