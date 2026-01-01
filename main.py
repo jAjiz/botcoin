@@ -1,6 +1,7 @@
 import time
 import sys
 import core.logging as logging
+import core.runtime as runtime
 import services.telegram as telegram
 import strategies.dualk as dualk_mode
 import strategies.onek as onek_mode
@@ -31,6 +32,8 @@ def main():
                 logging.error(f"Could not fetch balance. Skipping session and retrying in {SLEEPING_INTERVAL}s.\n")
                 time.sleep(SLEEPING_INTERVAL)
                 continue
+            else:
+                runtime.update_balance(current_balance)
             
             two_session_ago = int(time.time()) - SLEEPING_INTERVAL * 2
             one_week_ago = int(time.time()) - (60 * 60 * 24 * 7)
@@ -42,6 +45,8 @@ def main():
                 if current_price is None or current_atr is None:
                     logging.error(f"Could not fetch price or ATR for {pair}. Skipping this pair.\n")
                     continue
+                else:
+                    runtime.update_pair_data(pair, price=current_price, atr=current_atr)
 
                 logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
                 
@@ -170,10 +175,20 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
         elif MODE == "dualk":
             stop_price = dualk_mode.calculate_stop_price(side, reference_price, trailing_price, atr_val, pair)
         
+        # Calculate PnL and update cost/volume based on stop_price
+        entry_price = pos["entry_price"]
+        if side == "sell":
+            pnl = (stop_price - entry_price) / entry_price * 100
+            pos["cost"] = round(pos["volume"] * stop_price, 2)
+        else:
+            pnl = (entry_price - stop_price) / entry_price * 100
+            pos["volume"] = round(pos["cost"] / stop_price, 8)
+    
         pos.update({
             "trailing_price": trailing_price,
             "stop_price": round(stop_price, 1),
-            "stop_atr": round(atr_val, 1)
+            "stop_atr": round(atr_val, 1),
+            "pnl": round(pnl, 2)
         })
         
     def check_recenter_activation(pos, atr_val, current_price):
@@ -209,32 +224,19 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
     def close_position(order_id, pos):
         try:
             side = pos["side"]
-            entry_price = pos["entry_price"]
             stop_price = pos["stop_price"]
-            volume = pos["volume"]
-            cost = pos["cost"]
+            pnl = pos["pnl"]
+            
             logging.info(f"⛔[CLOSE] Stop price {stop_price:,}€ hit for position {order_id}: placing LIMIT {side.upper()} order",
                           to_telegram=True)
 
-            if side == "sell":
-                cost = volume * stop_price
-                pnl = (stop_price - entry_price) / entry_price * 100
-            else:
-                volume = cost / stop_price
-                pnl = (entry_price - stop_price) / entry_price * 100
-
-            closing_order = place_limit_order(pair, side, stop_price, volume)
+            closing_order = place_limit_order(pair, side, stop_price, pos["volume"])
             if not closing_order:
                 logging.error(f"Failed to place closing order for position {order_id}. Aborting close.", to_telegram=True)
                 return
             
+            pos["closing_time"] = now_str()
             logging.info(f"💸[PnL] Closed position: {pnl:+.2f}% result", to_telegram=True)
-            pos.update({
-                "cost": round(cost, 2),
-                "volume": round(volume, 8),
-                "closing_time": now_str(),
-                "pnl": round(pnl, 2)
-            })
             save_closed_position(pos, closing_order, pair)
             del pair_state[order_id]
             logging.info(f"Trailing position {order_id} closed and removed.")
