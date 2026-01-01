@@ -3,10 +3,9 @@ import numpy as np
 import sys
 import os
 from scipy.signal import argrelextrema
+from core.config import ATR_INTERVAL
 
 DEFAULT_ORDER = 20
-DATA_DIR = 'data'
-DATA_EXTENSION = 'atr_data_15min.csv'
 
 def get_args():
     args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER}
@@ -27,23 +26,19 @@ def get_args():
     return args
 
 def load_data(pair):
-    file_path = os.path.join(DATA_DIR, f'{pair}_{DATA_EXTENSION}')
-    
-    if not os.path.exists(file_path):
-        print(f"Error: File not found: {file_path}")
-        sys.exit(1)
+    atr_file = f"data/{pair}_atr_data_{ATR_INTERVAL}min.csv"
+    if not os.path.exists(atr_file):
+        raise FileNotFoundError(f"File not found: {atr_file}")
     
     try:
-        df = pd.read_csv(file_path)
+        df = pd.read_csv(atr_file)
         df.columns = [c.strip().lower() for c in df.columns]
     except Exception as e:
-        print(f"Error reading file: {e}")
-        sys.exit(1)
+        raise Exception(f"Error reading file: {e}")
     
     required_cols = {'low', 'high', 'dtime', 'atr'}
     if not required_cols.issubset(set(df.columns)):
-        print(f"Error: Missing required columns. Need: {required_cols}")
-        sys.exit(1)
+        raise ValueError(f"Missing required columns. Need: {required_cols}")
     
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
@@ -111,7 +106,8 @@ def calculate_noise_between_pivots(df, pivot_pair):
         'start_dtime': start_dtime,
         'end_dtime': end_dtime,
         'price_change': price_change,
-        'k_value': k_value
+        'k_value': k_value,
+        'atr_at_max': atr_at_max
     }
 
 def analyze_structural_noise(pair, order=DEFAULT_ORDER, show_events=False):

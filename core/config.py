@@ -18,6 +18,8 @@ SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute
 ATR_DATA_DAYS = int(os.getenv("ATR_DATA_DAYS", 60)) # 60 days
 ATR_INTERVAL = int(os.getenv("ATR_INTERVAL", 15))  # ATR chart timeframe in minutes
 ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))  # ATR calculation period in candles
+ATR_MIN_PERCENTILE = float(os.getenv("ATR_MIN_PERCENTILE", 0.20))
+ATR_MIN_SESSIONS = int(os.getenv("ATR_MIN_SESSIONS", 720))
 
 # Pairs names map and info
 PAIRS = {pair: {} for pair in os.getenv("PAIRS", "").split(",")}

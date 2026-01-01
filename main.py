@@ -5,9 +5,10 @@ import core.runtime as runtime
 import services.telegram as telegram
 import strategies.dualk as dualk_mode
 import strategies.onek as onek_mode
+import utils.atr_manager as atr_manager
 from exchange.kraken import get_balance, get_last_price, get_current_atr, get_closed_orders, place_limit_order
 from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_position
-from core.config import PAIRS, SLEEPING_INTERVAL, MODE, ASSET_MIN_ALLOCATION, RECENTER_PARAMS
+from core.config import PAIRS, SLEEPING_INTERVAL, MODE, ASSET_MIN_ALLOCATION, RECENTER_PARAMS, ATR_MIN_SESSIONS
 from core.validation import validate_config
 
 def main():
@@ -17,6 +18,7 @@ def main():
     
     try:
         telegram.initialize_telegram()
+        session_count = 0
 
         while True:
             if telegram.BOT_PAUSED:
@@ -25,6 +27,13 @@ def main():
                 continue
 
             logging.info("======== STARTING SESSION ========")
+
+            # Calculate ATR miniums every ATR_MIN_SESSIONS
+            if session_count % ATR_MIN_SESSIONS == 0:
+                logging.info("🔄 Calculating ATR miniums...")
+                for pair in PAIRS.keys():
+                    PAIRS[pair]["atr_min"] = atr_manager.calculate_atr_min(pair)
+            
             trailing_state = load_trailing_state()
             current_balance = get_balance()
             
@@ -48,6 +57,11 @@ def main():
                 else:
                     logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
                     runtime.update_pair_data(pair, price=current_price, atr=current_atr)
+
+                    atr_min_val = PAIRS[pair].get("atr_min", 0.0)
+                    effective_atr = max(current_atr, atr_min_val)
+                    if current_atr < atr_min_val:
+                        logging.info(f"[{pair}] ATR ({current_atr:.4f}) < Min ({atr_min_val:.4f}). Using min.")
                 
                 if pair not in trailing_state:
                     trailing_state[pair] = {}
@@ -61,14 +75,15 @@ def main():
                             continue
                         if is_processed(order_id, pair_state):
                             continue
-                        process_closed_order(order_id, order, pair_state, current_atr, pair)
+                        process_closed_order(order_id, order, pair_state, effective_atr, pair)
                 
-                update_trailing_state(pair_state, pair, current_price, current_atr, current_balance)
+                update_trailing_state(pair_state, pair, current_price, effective_atr, current_balance)
                 time.sleep(1)  # To avoid hitting rate limits
             
             save_trailing_state(trailing_state)
             runtime.update_trailing_state(trailing_state)
 
+            session_count += 1
             logging.info(f"Session complete. Sleeping for {SLEEPING_INTERVAL}s.\n")
             time.sleep(SLEEPING_INTERVAL)
 
