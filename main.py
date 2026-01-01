@@ -46,9 +46,8 @@ def main():
                     logging.error(f"Could not fetch price or ATR for {pair}. Skipping this pair.\n")
                     continue
                 else:
+                    logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
                     runtime.update_pair_data(pair, price=current_price, atr=current_atr)
-
-                logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
                 
                 if pair not in trailing_state:
                     trailing_state[pair] = {}
@@ -227,7 +226,7 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
             side = pos["side"]
             stop_price = pos["stop_price"]
             pnl = pos["pnl"]
-            
+
             logging.info(f"⛔[CLOSE] Stop price {stop_price:,}€ hit for position {order_id}: placing LIMIT {side.upper()} order",
                           to_telegram=True)
 
@@ -235,9 +234,9 @@ def update_trailing_state(pair_state, pair, current_price, current_atr, current_
             if not closing_order:
                 logging.error(f"Failed to place closing order for position {order_id}. Aborting close.", to_telegram=True)
                 return
-            
-            pos["closing_time"] = now_str()
             logging.info(f"💸[PnL] Closed position: {pnl:+.2f}% result", to_telegram=True)
+
+            pos["closing_time"] = now_str()
             save_closed_position(pos, closing_order, pair)
             del pair_state[order_id]
             logging.info(f"Trailing position {order_id} closed and removed.")
