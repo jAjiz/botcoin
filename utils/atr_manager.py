@@ -30,14 +30,14 @@ def calculate_atr_min(pair):
             
     if not ratios:
         return ATR_MIN_COEFF_MIN * atr_median # Default to lower bound if no events found
-
+    
     # Calculate percentile
-    floor_coeff = np.percentile(ratios, ATR_MIN_PERCENTILE * 100)
+    min_coeff = np.percentile(ratios, ATR_MIN_PERCENTILE * 100)
     
     # Clamp to configured range
-    floor_coeff = np.clip(floor_coeff, ATR_MIN_COEFF_MIN, ATR_MIN_COEFF_MAX)
+    min_coeff = np.clip(min_coeff, ATR_MIN_COEFF_MIN, ATR_MIN_COEFF_MAX)
 
-    atr_min = floor_coeff * atr_median
-    logging.info(f"[{pair}] ATR Min Calculation: Median ATR={atr_median:.4f}, Coeff={floor_coeff:.4f}, ATR Min={atr_min:.4f}")
+    atr_min = min_coeff * atr_median
+    logging.info(f"[{pair}] ATR Min Calculation: Median={atr_median:.4f}, Coeff={min_coeff:.4f}, Min={atr_min:.4f}")
     
     return atr_min
