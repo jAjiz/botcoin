@@ -28,9 +28,9 @@ def main():
 
             logging.info("======== STARTING SESSION ========")
 
-            # Calculate ATR miniums every ATR_MIN_SESSIONS
+            # Calculate ATR minimums every ATR_MIN_SESSIONS
             if session_count % ATR_MIN_SESSIONS == 0:
-                logging.info("Calculating ATR miniums...")
+                logging.info("Calculating ATR minimums...")
                 for pair in PAIRS.keys():
                     PAIRS[pair]["atr_min"] = atr_manager.calculate_atr_min(pair)
             
