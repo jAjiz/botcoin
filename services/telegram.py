@@ -4,7 +4,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 
 from core.config import TELEGRAM_TOKEN, ALLOWED_USER_ID, POLL_INTERVAL_SEC, MODE, PAIRS
-from core.runtime import get_last_balance, get_pair_data
+from core.runtime import get_last_balance, get_pair_data, get_trailing_state
 
 BOT_PAUSED = False
 
@@ -130,9 +130,7 @@ class TelegramInterface:
                 await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
                 return
             
-            with open("data/trailing_state.json", "r", encoding="utf-8") as f:
-                all_positions = json.load(f)
-            
+            all_positions = get_trailing_state()
             pairs_to_show = [pair_filter] if pair_filter else list(PAIRS.keys())
             msg = "📊 Open Positions:\n\n"
             

@@ -68,6 +68,7 @@ def main():
                 time.sleep(1)  # To avoid hitting rate limits
             
             save_trailing_state(trailing_state)
+            runtime.update_trailing_state(trailing_state)
 
             logging.info(f"Session complete. Sleeping for {SLEEPING_INTERVAL}s.\n")
             time.sleep(SLEEPING_INTERVAL)
