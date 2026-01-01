@@ -36,5 +36,8 @@ def calculate_atr_min(pair):
     
     # Clamp to configured range
     floor_coeff = np.clip(floor_coeff, ATR_MIN_COEFF_MIN, ATR_MIN_COEFF_MAX)
+
+    atr_min = floor_coeff * atr_median
+    logging.info(f"[{pair}] ATR Min Calculation: Median ATR={atr_median:.4f}, Coeff={floor_coeff:.4f}, ATR Min={atr_min:.4f}")
     
-    return floor_coeff * atr_median
+    return atr_min
