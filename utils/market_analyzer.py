@@ -2,10 +2,17 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+from pathlib import Path
 from scipy.signal import argrelextrema
-from core.config import ATR_INTERVAL
 
-DEFAULT_ORDER = 20
+# Ensure sibling packages are importable when running as a script.
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from core.config import MARKET_ANALYZER, ATR_INTERVAL
+
+DEFAULT_ORDER = MARKET_ANALYZER["DEFAULT_ORDER"]
 
 def get_args():
     args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER}
@@ -44,7 +51,7 @@ def load_data(pair):
     df.reset_index(drop=True, inplace=True)
     return df
 
-def detect_pivots(df, order):
+def detect_pivots(df, order=DEFAULT_ORDER):
     ilocs_min = argrelextrema(df['low'].values, np.less_equal, order=order)[0]
     ilocs_max = argrelextrema(df['high'].values, np.greater_equal, order=order)[0]
     
@@ -68,9 +75,11 @@ def detect_pivots(df, order):
                 del pivots[i + 1]
             else:
                 del pivots[i]
-        else:
-            i += 1
-
+        elif curr_price != next_price:
+            if abs(curr_price - next_price) / curr_price < 0.01:  # 1% threshold
+                del pivots[i + 1]
+            else:
+                i += 1
     return pivots
     
 def calculate_noise_between_pivots(df, pivot_pair):
@@ -106,8 +115,9 @@ def calculate_noise_between_pivots(df, pivot_pair):
         'start_dtime': start_dtime,
         'end_dtime': end_dtime,
         'price_change': price_change,
-        'k_value': k_value,
-        'atr_at_max': atr_at_max
+        'max_value': max_value,
+        'atr_at_max': atr_at_max,
+        'k_value': k_value
     }
 
 def analyze_structural_noise(pair, order=DEFAULT_ORDER, show_events=False):
@@ -151,19 +161,20 @@ def print_statistics(events, title):
     print(f"Percentile 75%: {s.quantile(0.75):.2f} ATR (Standard)")
     print(f"Percentile 90%: {s.quantile(0.90):.2f} ATR (Safe)")
     print(f"Percentile 95%: {s.quantile(0.95):.2f} ATR (Protected)")
+    print(f"Percentile 100%: {s.quantile(1.00):.2f} ATR (Extreme)")
 
 def print_events_detail(events, title):
     if not events:
         return
     
     print(f"\n=== {title} ===")
-    print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'K Value':>10}")
-    print("-" * 70)
+    print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'Max Value':>11} | {'ATR':>9} | {'K Value':>10}")
+    print("-" * 105)
     
     for event in events:
         change_pct = event['price_change'] * 100
         print(f"{str(event['start_dtime']):<20} | {str(event['end_dtime']):<20} "
-              f"| {change_pct:>9.2f}% | {event['k_value']:>9.2f}")
+              f"| {change_pct:>9.2f}% | {event['max_value']:>11.4f} | {event['atr_at_max']:>9.4f} | {event['k_value']:>9.2f}")
 
 if __name__ == "__main__":
     args = get_args()

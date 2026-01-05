@@ -89,3 +89,8 @@ def _build_recenter_params():
     return params
 
 RECENTER_PARAMS = _build_recenter_params()
+
+# Market analyzer settings
+MARKET_ANALYZER = {
+    "DEFAULT_ORDER": 20
+}

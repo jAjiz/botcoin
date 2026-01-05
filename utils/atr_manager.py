@@ -1,6 +1,6 @@
 import numpy as np
 import logging
-from utils.market_noise_analyzer import load_data, detect_pivots, calculate_noise_between_pivots, DEFAULT_ORDER
+from utils.market_analyzer import load_data, detect_pivots, calculate_noise_between_pivots
 from core.config import ATR_MIN_PERCENTILE
 
 # ATR minimum coefficient range
@@ -19,7 +19,7 @@ def calculate_atr_min(pair):
         logging.error(f"Invalid ATR median for {pair}: {atr_median}")
         return 0
 
-    pivots = detect_pivots(df, DEFAULT_ORDER)
+    pivots = detect_pivots(df)
     
     ratios = []
     for i in range(1, len(pivots)):
