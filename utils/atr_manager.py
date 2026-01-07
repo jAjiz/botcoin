@@ -1,11 +1,6 @@
 import numpy as np
 import logging
-from utils.market_analyzer import load_data, detect_pivots, calculate_noise_between_pivots
-from core.config import ATR_MIN_PERCENTILE
-
-# ATR minimum coefficient range
-ATR_MIN_COEFF_MIN = 0.7
-ATR_MIN_COEFF_MAX = 0.9
+from utils.market_analyzer import load_data
 
 def calculate_atr_min(pair):
     try:
@@ -19,25 +14,25 @@ def calculate_atr_min(pair):
         logging.error(f"Invalid ATR median for {pair}: {atr_median}")
         return 0
 
-    pivots = detect_pivots(df)
+    # pivots = detect_pivots(df)
     
-    ratios = []
-    for i in range(1, len(pivots)):
-        event = calculate_noise_between_pivots(df, (pivots[i-1], pivots[i]))
-        if event and event.get('atr_at_max'):
-            ratio = event['atr_at_max'] / atr_median
-            ratios.append(ratio)
+    # ratios = []
+    # for i in range(1, len(pivots)):
+    #     event = calculate_noise_between_pivots(df, (pivots[i-1], pivots[i]))
+    #     if event and event.get('atr_at_max'):
+    #         ratio = event['atr_at_max'] / atr_median
+    #         ratios.append(ratio)
             
-    if not ratios:
-        return ATR_MIN_COEFF_MIN * atr_median # Default to lower bound if no events found
+    # if not ratios:
+    #     return ATR_MIN_COEFF_MIN * atr_median # Default to lower bound if no events found
     
-    # Calculate percentile
-    min_coeff = np.percentile(ratios, ATR_MIN_PERCENTILE * 100)
+    # # Calculate percentile
+    # min_coeff = np.percentile(ratios, ATR_MIN_PERCENTILE * 100)
     
-    # Clamp to configured range
-    min_coeff = np.clip(min_coeff, ATR_MIN_COEFF_MIN, ATR_MIN_COEFF_MAX)
+    # # Clamp to configured range
+    # min_coeff = np.clip(min_coeff, ATR_MIN_COEFF_MIN, ATR_MIN_COEFF_MAX)
 
-    atr_min = min_coeff * atr_median
-    logging.info(f"[{pair}] ATR Min Calculation: Median={atr_median:.4f}, Coeff={min_coeff:.4f}, Min={atr_min:.4f}")
+    # atr_min = min_coeff * atr_median
+    # logging.info(f"[{pair}] ATR Min Calculation: Median={atr_median:.4f}, Coeff={min_coeff:.4f}, Min={atr_min:.4f}")
     
-    return atr_min
+    return atr_median

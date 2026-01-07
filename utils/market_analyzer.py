@@ -76,7 +76,7 @@ def detect_pivots(df, order=DEFAULT_ORDER):
             else:
                 del pivots[i]
         elif curr_price != next_price:
-            if abs(curr_price - next_price) / curr_price < 0.01:  # 1% threshold
+            if abs(curr_price - next_price) / curr_price < 0.015:  # 1.5% threshold
                 del pivots[i + 1]
             else:
                 i += 1
@@ -108,6 +108,8 @@ def calculate_noise_between_pivots(df, pivot_pair):
         return None
     
     atr_at_max = segment.loc[idx_max, 'atr']
+    atr_min = df['atr'].median()
+    atr_at_max = max(atr_at_max, atr_min)
     k_value = max_value / atr_at_max if atr_at_max > 0 else 0
     
     return {

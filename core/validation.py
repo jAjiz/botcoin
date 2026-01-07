@@ -85,12 +85,13 @@ def validate_dualk_params(errors):
             errors.append(f"{pair}_SELL_K_STOP is missing or invalid")
         if sell_min_margin < 0:
             errors.append(f"{pair}_SELL_MIN_MARGIN is missing or invalid")
-        
-        # Check K_ACT > K_STOP for valid ATR_MIN calculation
-        if sell_k_act <= sell_k_stop:
-            errors.append(f"{pair}_SELL_K_ACT ({sell_k_act}) must be > {pair}_SELL_K_STOP ({sell_k_stop})")
-        else:
-            sell_params["ATR_MIN"] = sell_min_margin / (sell_k_act - sell_k_stop)
+
+        if sell_min_margin > 0:
+            # Check K_ACT > K_STOP for valid ATR_MIN calculation
+            if sell_k_act <= sell_k_stop:
+                errors.append(f"{pair}_SELL_K_ACT ({sell_k_act}) must be > {pair}_SELL_K_STOP ({sell_k_stop})")
+            else:
+                sell_params["ATR_MIN"] = sell_min_margin / (sell_k_act - sell_k_stop)
         
         # Validate BUY side
         buy_params = params.get("buy", {})
@@ -105,11 +106,12 @@ def validate_dualk_params(errors):
         if buy_min_margin < 0:
             errors.append(f"{pair}_BUY_MIN_MARGIN is missing or invalid")
         
-        # Check K_ACT > K_STOP for valid ATR_MIN calculation
-        if buy_k_act <= buy_k_stop:
-            errors.append(f"{pair}_BUY_K_ACT ({buy_k_act}) must be > {pair}_BUY_K_STOP ({buy_k_stop})")
-        else:
-            buy_params["ATR_MIN"] = buy_min_margin / (buy_k_act - buy_k_stop)
+        if buy_min_margin > 0:
+            # Check K_ACT > K_STOP for valid ATR_MIN calculation
+            if buy_k_act <= buy_k_stop:
+                errors.append(f"{pair}_BUY_K_ACT ({buy_k_act}) must be > {pair}_BUY_K_STOP ({buy_k_stop})")
+            else:
+                buy_params["ATR_MIN"] = buy_min_margin / (buy_k_act - buy_k_stop)
 
 def log_configuration_summary():
     logging.info("=" * 60)

@@ -1,6 +1,6 @@
 from core.config import TRADING_PARAMS as PARAMS
 
-def process_order(side, entry_price, current_atr, pair):
+def process_order(side, entry_price, atr_val, pair):
     if side == "buy":
         new_side = "sell"
         sign = 1
@@ -8,9 +8,9 @@ def process_order(side, entry_price, current_atr, pair):
         new_side = "buy"
         sign = -1
 
-    activation_distance = calculate_activation_dist(new_side, current_atr, entry_price, pair)
+    activation_distance = calculate_activation_dist(new_side, atr_val, entry_price, pair)
     activation_price = entry_price + sign * activation_distance
-    return new_side, current_atr, activation_price
+    return new_side, activation_price
 
 def calculate_activation_dist(side, atr_val, entry_price, pair):
     k_stop = PARAMS[pair][side]["K_STOP"]
