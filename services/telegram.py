@@ -94,6 +94,7 @@ class TelegramInterface:
                     pair_data = get_pair_data(pair)
                     price = pair_data.get('last_price')
                     atr = pair_data.get('atr')
+                    volatility_level = pair_data.get('volatility_level', 'N/A')
 
                     asset = PAIRS[pair].get('base')
                     asset_balance = float(balance.get(asset, 0))
@@ -102,7 +103,7 @@ class TelegramInterface:
                     msg += (
                         f"━━━ {pair} ━━━\n"
                         f"Price: {price:,.2f}€\n"
-                        f"ATR(15m): {atr:,.2f}€\n"
+                        f"ATR(15m): {atr:,.2f}€ ({volatility_level})\n"
                         f"Balance: {asset_balance:.8f} ({asset_value_eur:,.2f}€)\n\n"
                     )
                     if len(pairs_to_show) > 1:

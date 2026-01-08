@@ -49,19 +49,22 @@ def calculate_trading_parameters(pair):
     logging.info(f"K_STOP_SELL → LV:{fmt(sell_k_stops['LV'])} | MV:{fmt(sell_k_stops['MV'])} | HV:{fmt(sell_k_stops['HV'])} | EV:{fmt(sell_k_stops['EV'])}")
     logging.info(f"K_STOP_BUY  → LV:{fmt(buy_k_stops['LV'])} | MV:{fmt(buy_k_stops['MV'])} | HV:{fmt(buy_k_stops['HV'])} | EV:{fmt(buy_k_stops['EV'])}")
 
-def get_k_stop(pair, side, atr_val):
+def get_volatility_level(pair, atr_val):
     atr_median = PAIRS[pair].get('atr_median')
     if atr_median is None:
         raise ValueError(f"ATR_MEDIAN not calculated for {pair}")
     
     if atr_val < atr_median:
-        vol = "LV"
+        return "LV"
     elif atr_val < atr_median * 1.5:
-        vol = "MV"
+        return "MV"
     elif atr_val < atr_median * 3:
-        vol = "HV"
+        return "HV"
     else:
-        vol = "EV"
+        return "EV"
+
+def get_k_stop(pair, side, atr_val):
+    vol = get_volatility_level(pair, atr_val)
     
     k_stop = TRADING_PARAMS[pair][side]["K_STOP"].get(vol)
     if k_stop is not None:

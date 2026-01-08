@@ -3,7 +3,7 @@ import sys
 import core.logging as logging
 import core.runtime as runtime
 import services.telegram as telegram
-from trading.parameters_manager import calculate_trading_parameters
+from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
 from trading.positions_manager import calculate_activation_price, calculate_stop_price
 from exchange.kraken import get_balance, get_last_price, get_current_atr, get_closed_orders, place_limit_order
 from core.state import load_trailing_state, save_trailing_state, is_processed, save_closed_position
@@ -41,6 +41,10 @@ def main():
             closed_orders = get_closed_orders(one_week_ago, two_session_ago)
             
             for pair in PAIRS.keys():
+                if session_count % PARAM_SESSIONS == 0:
+                    logging.info(f"Calculating trading parameters for {pair}...")
+                    calculate_trading_parameters(pair)
+
                 current_price = get_last_price(PAIRS[pair]["primary"])
                 current_atr = get_current_atr(pair)
 
@@ -48,14 +52,10 @@ def main():
                     logging.error(f"Could not fetch price or ATR for {pair}. Skipping this pair.")
                     continue
                 else:
-                    logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€")
-                    runtime.update_pair_data(pair, price=current_price, atr=current_atr)
+                    vol_level = get_volatility_level(pair, current_atr)
+                    logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
+                    runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
 
-                    # Calculate trading parameters every PARAM_SESSIONS
-                    if session_count % PARAM_SESSIONS == 0:
-                        logging.info(f"Calculating trading parameters...")
-                        calculate_trading_parameters(pair)
-                
                 if pair not in trailing_state:
                     trailing_state[pair] = {}
                 pair_state = trailing_state[pair]
