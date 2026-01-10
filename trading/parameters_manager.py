@@ -13,10 +13,10 @@ def calculate_k_stops(pair, events_data):
     atr_80pct = PAIRS[pair]['atr_80pct']
     atr_95pct = PAIRS[pair]['atr_95pct']
 
-    lv = [e for e in events_data if e['atr_at_max'] <= atr_50pct]
-    mv = [e for e in events_data if atr_50pct < e['atr_at_max'] <= atr_80pct]
-    hv = [e for e in events_data if atr_80pct < e['atr_at_max'] <= atr_95pct]
-    ev = [e for e in events_data if e['atr_at_max'] > atr_95pct]
+    lv = [e for e in events_data if e['atr_at_max'] < atr_50pct]
+    mv = [e for e in events_data if atr_50pct <= e['atr_at_max'] < atr_80pct]
+    hv = [e for e in events_data if atr_80pct <= e['atr_at_max'] < atr_95pct]
+    ev = [e for e in events_data if e['atr_at_max'] >= atr_95pct]
     
     def get_pct_k_value(events, pct):
         if not events:
@@ -61,11 +61,11 @@ def get_volatility_level(pair, atr_val):
     atr_80pct = PAIRS[pair]['atr_80pct']
     atr_95pct = PAIRS[pair]['atr_95pct']
     
-    if atr_val <= atr_50pct:
+    if atr_val < atr_50pct:
         return "LV"
-    elif atr_val <= atr_80pct:
+    elif atr_val < atr_80pct:
         return "MV"
-    elif atr_val <= atr_95pct:
+    elif atr_val < atr_95pct:
         return "HV"
     else:
         return "EV"

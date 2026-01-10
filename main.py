@@ -56,6 +56,10 @@ def main():
                     logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
                     runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
 
+                    if vol_level == "LV":
+                        current_atr = PAIRS[pair]['atr_50pct']
+                        logging.info(f"[{pair}] Low volatility level. Using ATR floor (median): {current_atr:,.1f}€")
+
                 if pair not in trailing_state:
                     trailing_state[pair] = {}
                 pair_state = trailing_state[pair]
