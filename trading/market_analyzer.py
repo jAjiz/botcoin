@@ -16,7 +16,7 @@ DEFAULT_ORDER = MARKET_ANALYZER["DEFAULT_ORDER"]
 MINIMUM_CHANGE_PCT = MARKET_ANALYZER["MINIMUM_CHANGE_PCT"]
 
 def get_args():
-    args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER}
+    args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER, 'volatility_level': None}
 
     for arg in sys.argv[1:]:
         if arg.startswith('PAIR='):
@@ -25,10 +25,13 @@ def get_args():
             args['order'] = int(arg.split('=')[1])
         elif arg == 'SHOW_EVENTS':
             args['show_events'] = True
+        elif arg.startswith('Volatility='):
+            args['volatility_level'] = arg.split('=')[1].upper()
     
     if not args['pair']:
         print("Error: PAIR parameter is required.")
-        print("Usage: python market_noise_analyzer.py PAIR=ETHEUR [ORDER=20] [SHOW_EVENTS]")
+        print("Usage: python market_noise_analyzer.py " \
+            "PAIR=ETHEUR [ORDER=20] [SHOW_EVENTS] [Volatility=LV|MV|HV|EV]")
         sys.exit(1)
     
     return args
@@ -123,7 +126,27 @@ def calculate_noise_between_pivots(df, pivot_pair):
         'k_value': k_value
     }
 
-def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_events=False):
+def filter_events_by_volatility(events, volatility_level, atr_50pct, atr_80pct, atr_95pct):
+    """Filter events by volatility level using the same criteria as calculate_k_stops."""
+    if not volatility_level:
+        return events
+    
+    filtered = []
+    for e in events:
+        atr_at_max = e['atr_at_max']
+        if volatility_level == 'LV' and atr_at_max < atr_50pct:
+            filtered.append(e)
+        elif volatility_level == 'MV' and atr_50pct <= atr_at_max < atr_80pct:
+            filtered.append(e)
+        elif volatility_level == 'HV' and atr_80pct <= atr_at_max < atr_95pct:
+            filtered.append(e)
+        elif volatility_level == 'EV' and atr_at_max >= atr_95pct:
+            filtered.append(e)
+    
+    return filtered
+
+def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_events=False,
+                              volatility_level=None):
     # Detect and filter pivots
     pivots = detect_pivots(df, order)
     
@@ -138,6 +161,15 @@ def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_
                 uptrend_data.append(event)
             else:
                 downtrend_data.append(event)
+    
+    # Apply volatility filter if requested
+    if volatility_level:
+        atr_50pct = np.percentile(df['atr'], 50)
+        atr_80pct = np.percentile(df['atr'], 80)
+        atr_95pct = np.percentile(df['atr'], 95)
+        
+        uptrend_data = filter_events_by_volatility(uptrend_data, volatility_level, atr_50pct, atr_80pct, atr_95pct)
+        downtrend_data = filter_events_by_volatility(downtrend_data, volatility_level, atr_50pct, atr_80pct, atr_95pct)
     
     if print_results:
         print(f"--- Analyzing Market Structure (minimum change {MINIMUM_CHANGE_PCT*100:.2f}%) ---")
@@ -171,7 +203,8 @@ def print_events_detail(events, title):
         return
     
     print(f"\n=== {title} ===")
-    print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'Change K':>9} | {'Max Value':>10} | {'ATR at max':>10} | {'K Value':>8}")
+    print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'Change K':>9} | {'Max Value':>10} "
+          f"| {'ATR at max':>10} | {'K Value':>8}")
     print("-" * 135)
     
     for event in events:
@@ -182,4 +215,10 @@ def print_events_detail(events, title):
 
 if __name__ == "__main__":
     args = get_args()
-    analyze_structural_noise(load_data(args['pair']), args['order'], True, args['show_events'])
+    analyze_structural_noise(
+        load_data(args['pair']), 
+        args['order'], 
+        True, 
+        args['show_events'], 
+        args['volatility_level']
+    )

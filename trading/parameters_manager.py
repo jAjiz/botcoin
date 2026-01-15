@@ -27,10 +27,10 @@ def calculate_k_stops(pair, events_data):
         return math.ceil(value * factor) / factor
     
     return {
-        "LV": get_pct_k_value(lv, 1.00), # Percentile 100 for LV
+        "LV": get_pct_k_value(lv, 0.90), # Percentile 90 for LV
         "MV": get_pct_k_value(mv, 0.90), # Percentile 90 for MV
         "HV": get_pct_k_value(hv, 0.75), # Percentile 75 for HV
-        "EV": get_pct_k_value(ev, 0.50) # Percentile 50 for EV
+        "EV": get_pct_k_value(ev, 0.75) # Percentile 75 for EV
     }
 
 def calculate_trading_parameters(pair):

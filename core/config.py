@@ -60,5 +60,5 @@ ASSET_ALLOCATION = _build_asset_allocation()
 # Market analyzer settings
 MARKET_ANALYZER = {
     "DEFAULT_ORDER": 20,
-    "MINIMUM_CHANGE_PCT": 0.02  # 2%
+    "MINIMUM_CHANGE_PCT": float(os.getenv("MINIMUM_CHANGE_PCT", 0.02))  # Default 2%
 }
