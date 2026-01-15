@@ -10,13 +10,12 @@ def create_position(pair, balance, last_prices, atr_val, trailing_state):
     current_price = last_prices[pair]
     side, value = calculate_position(pair, balance, last_prices, trailing_state)
     if value < MIN_VALUE:
-        logging.info(f"[{pair}] Cannot create {side.upper()} position: "
-                     f"value {value:.1f}€ < minimum {MIN_VALUE:.1f}€")
+        logging.info(f"Cannot create {side.upper()} position: value {value:.1f}€ < min {MIN_VALUE:.1f}€")
         return
     
     volume = value / current_price if current_price else 0.0
     if volume <= 0:
-        logging.warning(f"[{pair}] Cannot create {side.upper()} position: volume {volume:.8f} <= 0")
+        logging.warning(f"Cannot create {side.upper()} position: volume {volume:.8f} <= 0")
         return
     
     # Get entry_price from last closed position with opposite side
@@ -39,10 +38,8 @@ def create_position(pair, balance, last_prices, atr_val, trailing_state):
         "creation_time": now_str()
     }
     
-    logging.info(
-        f"[{pair}] 🆕 New {side.upper()} position: activation at {activation_price:,.1f}€",
-        to_telegram=True
-    )  
+    logging.info(f"[{pair}] 🆕 New {side.upper()} position: activation at {activation_price:,.1f}€",
+                  to_telegram=True)  
 
 def calculate_activation_price(pair, side, entry_price, atr_val):
     k_act = TRADING_PARAMS[pair][side]["K_ACT"]
@@ -104,7 +101,7 @@ def close_position(pair, pos, balance, last_prices, trailing_state):
                         to_telegram=True)
         
         def _drop_position(reason: str):
-            logging.warning(f"[{pair}] Dropping {side.upper()} position: {reason}", to_telegram=True)
+            logging.warning(f"Dropping {side.upper()} position: {reason}", to_telegram=True)
             if pair in trailing_state:
                 del trailing_state[pair]
 
@@ -125,9 +122,9 @@ def close_position(pair, pos, balance, last_prices, trailing_state):
 
         closing_order = place_limit_order(pair, side, current_price, volume)
         if not closing_order:
-            logging.error(f"[{pair}] Failed to place closing order. Aborting close.", to_telegram=True)
+            logging.error(f"Failed to place closing order. Aborting close.", to_telegram=True)
             return
-        logging.info(f"[{pair}] 💸 Closed position: {pnl:+.2f}% result", to_telegram=True)
+        logging.info(f"💸 Closed position: {pnl:+.2f}% result", to_telegram=True)
 
         pos.update({
             "volume": round(volume, 8),
@@ -137,4 +134,4 @@ def close_position(pair, pos, balance, last_prices, trailing_state):
             "pnl": round(pnl, 2)
         })
     except Exception as e:
-        logging.error(f"[{pair}] Failed to close trailing position: {e}")
+        logging.error(f"Failed to close trailing position: {e}", to_telegram=True)

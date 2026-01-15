@@ -44,24 +44,24 @@ def main():
                 continue
             
             for pair in PAIRS.keys():
+                logging.info(f"--- Processing pair: [{pair}] ---")
                 if session_count % PARAM_SESSIONS == 0:
-                    logging.info(f"[{pair}] Calculating trading parameters...")
                     calculate_trading_parameters(pair)
 
                 current_price = last_prices.get(pair, None)
                 current_atr = get_current_atr(pair)
 
                 if current_price is None or current_atr is None:
-                    logging.error(f"[{pair}] Could not fetch price or ATR. Skipping this pair.")
+                    logging.error(f"Could not fetch price or ATR. Skipping this pair.")
                     continue
                 else:
                     vol_level = get_volatility_level(pair, current_atr)
-                    logging.info(f"[{pair}] Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
+                    logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
                     runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
 
                     if vol_level == "LV":
                         current_atr = PAIRS[pair]['atr_50pct']
-                        logging.info(f"[{pair}] Low volatility level. Using ATR floor (median): {current_atr:,.1f}€")
+                        logging.info(f"Low volatility level. Using ATR floor (median): {current_atr:,.1f}€")
 
                 if check_closed_positions(pair, trailing_state):
                     create_position(pair, current_balance, last_prices, current_atr, trailing_state)
@@ -95,7 +95,7 @@ def check_closed_positions(pair, trailing_state):
         if status and status not in ["pending", "open"]:
             save_closed_position(pair, trailing_state[pair])
             del trailing_state[pair]
-            logging.info(f"[{pair}] Trailing position removed.")
+            logging.info(f"Trailing position removed for {pair}.")
             return True
         
     return False
@@ -112,7 +112,7 @@ def update_trailing_state(pair, current_balance, last_prices, current_atr, trail
         # Recalibrate activation
         if pos["activation_atr"] < atr_limit_min or pos["activation_atr"] > atr_limit_max:
             update_activation_price(pair, pos, current_atr)
-            logging.info(f"[{pair}] ♻️ Recalibrate {side.upper()} position: activation price to {pos['activation_price']:,}€.")
+            logging.info(f"♻️ Recalibrate {side.upper()} position: activation price to {pos['activation_price']:,}€.")
 
         # Activation check
         if (side == "sell" and current_price >= pos["activation_price"]) or \
@@ -121,13 +121,13 @@ def update_trailing_state(pair, current_balance, last_prices, current_atr, trail
             logging.info(f"[{pair}] ⚡ Activation price {pos['activation_price']:,}€ reached for {side.upper()} position.",
                             to_telegram=True)
             update_stop_price(pair, pos, current_price, current_atr)
-            logging.info(f"[{pair}] 📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
+            logging.info(f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
 
     else:
         # Recalibrate stop
         if pos["stop_atr"] < atr_limit_min or pos["stop_atr"] > atr_limit_max:
             update_stop_price(pair, pos, pos["trailing_price"], current_atr)
-            logging.info(f"[{pair}] ♻️ Recalibrate {side.upper()} position: stop price to {pos['stop_price']:,}€.")
+            logging.info(f"♻️ Recalibrate {side.upper()} position: stop price to {pos['stop_price']:,}€.")
 
         # Stop hit check
         if (side == "sell" and current_price <= pos["stop_price"]) or \
@@ -139,7 +139,7 @@ def update_trailing_state(pair, current_balance, last_prices, current_atr, trail
         if (side == "sell" and current_price > pos["trailing_price"]) or \
             (side == "buy" and current_price < pos["trailing_price"]):
             update_stop_price(pair, pos, current_price, current_atr)
-            logging.info(f"[{pair}] 📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
+            logging.info(f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
 
 
 if __name__ == "__main__":

@@ -34,6 +34,7 @@ def calculate_k_stops(pair, events_data):
     }
 
 def calculate_trading_parameters(pair):
+    logging.info(f"Calculating trading parameters...")
     try:
         df = load_data(pair)
     except Exception as e:
@@ -43,7 +44,7 @@ def calculate_trading_parameters(pair):
     PAIRS[pair]['atr_50pct'] = np.percentile(df['atr'], 50)
     PAIRS[pair]['atr_80pct'] = np.percentile(df['atr'], 80)
     PAIRS[pair]['atr_95pct'] = np.percentile(df['atr'], 95)
-    logging.info(f"[{pair}] ATR percentiles → 50:{PAIRS[pair]['atr_50pct']:,.1f}€ | 80:{PAIRS[pair]['atr_80pct']:,.1f}€ | 95:{PAIRS[pair]['atr_95pct']:,.1f}€")
+    logging.info(f"ATR percentiles → 50:{PAIRS[pair]['atr_50pct']:,.1f}€ | 80:{PAIRS[pair]['atr_80pct']:,.1f}€ | 95:{PAIRS[pair]['atr_95pct']:,.1f}€")
     
     uptrend_data, downtrend_data = analyze_structural_noise(df)
     sell_k_stops = calculate_k_stops(pair, uptrend_data)
@@ -53,8 +54,8 @@ def calculate_trading_parameters(pair):
     TRADING_PARAMS[pair]["buy"]["K_STOP"] = buy_k_stops
     
     fmt = lambda k: f"{k:.2f}" if k is not None else "N/A"
-    logging.info(f"[{pair}] K_STOP_SELL → LV:{fmt(sell_k_stops['LV'])} | MV:{fmt(sell_k_stops['MV'])} | HV:{fmt(sell_k_stops['HV'])} | EV:{fmt(sell_k_stops['EV'])}")
-    logging.info(f"[{pair}] K_STOP_BUY  → LV:{fmt(buy_k_stops['LV'])} | MV:{fmt(buy_k_stops['MV'])} | HV:{fmt(buy_k_stops['HV'])} | EV:{fmt(buy_k_stops['EV'])}")
+    logging.info(f"K_STOP_SELL → LV:{fmt(sell_k_stops['LV'])} | MV:{fmt(sell_k_stops['MV'])} | HV:{fmt(sell_k_stops['HV'])} | EV:{fmt(sell_k_stops['EV'])}")
+    logging.info(f"K_STOP_BUY  → LV:{fmt(buy_k_stops['LV'])} | MV:{fmt(buy_k_stops['MV'])} | HV:{fmt(buy_k_stops['HV'])} | EV:{fmt(buy_k_stops['EV'])}")
 
 def get_volatility_level(pair, atr_val):
     atr_50pct = PAIRS[pair]['atr_50pct']
