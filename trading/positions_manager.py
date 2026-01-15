@@ -54,9 +54,9 @@ def calculate_activation_price(pair, side, entry_price, atr_val):
         activation_distance = k_stop * atr_val + min_margin * entry_price
 
     if side == "sell":
-        activation_price = entry_price - activation_distance
-    else:
         activation_price = entry_price + activation_distance
+    else:
+        activation_price = entry_price - activation_distance
 
     return activation_price
 
