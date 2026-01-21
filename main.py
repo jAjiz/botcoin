@@ -59,10 +59,6 @@ def main():
                     logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
                     runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
 
-                    if vol_level == "LV":
-                        current_atr = PAIRS[pair]['atr_50pct']
-                        logging.info(f"Low volatility level. Using ATR floor (median): {current_atr:,.1f}€")
-
                 if check_closed_positions(pair, trailing_state):
                     create_position(pair, current_balance, last_prices, current_atr, trailing_state)
                 

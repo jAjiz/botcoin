@@ -31,14 +31,12 @@ def _build_trading_params():
     for pair in PAIRS.keys():
         params[pair] = {
             "sell": {
-                "K_STOP": {"LV": None, "MV": None, "HV": None, "EV": None},
-                "K_ACT": os.getenv(f"{pair}_SELL_K_ACT", None),
-                "MIN_MARGIN": os.getenv(f"{pair}_SELL_MIN_MARGIN", 0)
+                "K_ACT": os.getenv(f"{pair}_SELL_K_ACT", os.getenv(f"{pair}_K_ACT", None)),
+                "MIN_MARGIN": os.getenv(f"{pair}_SELL_MIN_MARGIN", os.getenv(f"{pair}_MIN_MARGIN", 0))
             },
             "buy": {
-                "K_STOP": {"LV": None, "MV": None, "HV": None, "EV": None},
-                "K_ACT": os.getenv(f"{pair}_BUY_K_ACT", None),
-                "MIN_MARGIN": os.getenv(f"{pair}_BUY_MIN_MARGIN", 0)
+                "K_ACT": os.getenv(f"{pair}_BUY_K_ACT", os.getenv(f"{pair}_K_ACT", None)),
+                "MIN_MARGIN": os.getenv(f"{pair}_BUY_MIN_MARGIN", os.getenv(f"{pair}_MIN_MARGIN", 0))
             }
         }
     return params
@@ -62,3 +60,18 @@ MARKET_ANALYZER = {
     "DEFAULT_ORDER": 20,
     "MINIMUM_CHANGE_PCT": float(os.getenv("MINIMUM_CHANGE_PCT", 0.02))  # Default 2%
 }
+
+# K_STOP percentiles
+def _build_percentiles():
+    percentiles = {}
+    for pair in PAIRS.keys():
+        percentiles[pair] = {
+            "LL": float(os.getenv(f"{pair}_STOP_PCT_LL", 0.90)),
+            "LV": float(os.getenv(f"{pair}_STOP_PCT_LV", 0.90)),
+            "MV": float(os.getenv(f"{pair}_STOP_PCT_MV", 0.90)),
+            "HV": float(os.getenv(f"{pair}_STOP_PCT_HV", 0.90)),
+            "HH": float(os.getenv(f"{pair}_STOP_PCT_HH", 0.90))
+        }
+    return percentiles
+
+STOP_PCTS = _build_percentiles()
