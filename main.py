@@ -11,6 +11,7 @@ from core.config import SLEEPING_INTERVAL, PAIRS, PARAM_SESSIONS, ATR_DESV_LIMIT
 from core.validation import validate_config
 from core.utils import now_str
 
+
 def main():
     # Validate configuration before starting
     if not validate_config():
@@ -59,10 +60,10 @@ def main():
                     logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
                     runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
 
-                if check_closed_positions(pair, trailing_state):
+                if check_closed_position(pair, trailing_state):
                     create_position(pair, current_balance, last_prices, current_atr, trailing_state)
                 
-                if pair in trailing_state and trailing_state[pair]:
+                if check_open_position(pair, trailing_state):
                     update_trailing_state(pair, current_balance, last_prices, current_atr, trailing_state)
                     
                 time.sleep(1)  # To avoid hitting rate limits
@@ -81,7 +82,8 @@ def main():
     finally:
         telegram.stop_telegram_thread()  
 
-def check_closed_positions(pair, trailing_state):
+
+def check_closed_position(pair, trailing_state):
     if pair not in trailing_state or not trailing_state[pair]:
         return True
     
@@ -95,6 +97,18 @@ def check_closed_positions(pair, trailing_state):
             return True
         
     return False
+
+
+def check_open_position(pair, trailing_state):
+    if pair not in trailing_state or not trailing_state[pair]:
+        return False
+    
+    closing_order = trailing_state[pair].get("closing_order")
+    if closing_order:
+        return False
+    
+    return True
+
 
 def update_trailing_state(pair, current_balance, last_prices, current_atr, trailing_state):
     current_price = last_prices[pair]
