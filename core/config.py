@@ -19,7 +19,6 @@ CANDLE_TIMEFRAME = int(os.getenv("CANDLE_TIMEFRAME", 15))  # Candle timeframe in
 MARKET_DATA_DAYS = int(os.getenv("MARKET_DATA_DAYS", 60)) # 60 days
 ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))  # ATR calculation period in candles
 ATR_DESV_LIMIT = float(os.getenv("ATR_DESV_LIMIT", 0.2))  # ATR recalibration limit (20%)
-FIAT_CODE = os.getenv("FIAT_CODE", "ZEUR")  # Fiat currency code
 MIN_VALUE = float(os.getenv("MIN_VALUE", 10))  # Minimum value operation in fiat
 
 # Pairs names map and info
@@ -58,7 +57,7 @@ ASSET_ALLOCATION = _build_asset_allocation()
 # Market analyzer settings
 MARKET_ANALYZER = {
     "DEFAULT_ORDER": 20,
-    "MINIMUM_CHANGE_PCT": float(os.getenv("MINIMUM_CHANGE_PCT", 0.02))  # Default 2%
+    "MINIMUM_CHANGE_PCT": float(os.getenv("MINIMUM_CHANGE_PCT", 0.02)),  # Default 2%
 }
 
 # K_STOP percentiles
@@ -74,4 +73,8 @@ def _build_percentiles():
         }
     return percentiles
 
-STOP_PCTS = _build_percentiles()
+STOP_PERCENTILES = _build_percentiles()
+
+# CONSTANTS DEFINITION
+FIAT_CODE = "ZEUR"
+VOLATILITY_LEVELS = ("LL", "LV", "MV", "HV", "HH")

@@ -2,11 +2,8 @@ import math
 import logging
 import numpy as np
 import pandas as pd
-from core.config import PAIRS, TRADING_PARAMS, STOP_PCTS
+from core.config import PAIRS, TRADING_PARAMS, STOP_PERCENTILES, VOLATILITY_LEVELS as LEVELS
 from trading.market_analyzer import load_data, analyze_structural_noise
-
-LEVELS = ("LL", "LV", "MV", "HV", "HH")
-ATR_PCTS = (20, 50, 80, 95)
 
 def calculate_k_stops(pair, events):
     if not events:
@@ -29,7 +26,7 @@ def calculate_k_stops(pair, events):
         value = pd.Series(level_values).quantile(pct)
         return math.ceil(value * 10) / 10
 
-    return {lvl: get_pct_k_value(lvl, STOP_PCTS[pair][lvl]) for lvl in LEVELS}
+    return {lvl: get_pct_k_value(lvl, STOP_PERCENTILES[pair][lvl]) for lvl in LEVELS}
 
 def calculate_trading_parameters(pair):
     logging.info(f"Calculating trading parameters...")
@@ -39,18 +36,13 @@ def calculate_trading_parameters(pair):
         logging.error(f"Error loading data for {pair}: {e}")
         raise e
     
-    atr_values = {
-        pct: np.percentile(df["atr"], pct)
-        for pct in ATR_PCTS
-    }
-    PAIRS[pair]["atr_20pct"] = atr_values[20]
-    PAIRS[pair]["atr_50pct"] = atr_values[50]
-    PAIRS[pair]["atr_80pct"] = atr_values[80]
-    PAIRS[pair]["atr_95pct"] = atr_values[95]
+    PAIRS[pair]["atr_20pct"] = np.percentile(df["atr"], 20)
+    PAIRS[pair]["atr_50pct"] = np.percentile(df["atr"], 50)
+    PAIRS[pair]["atr_80pct"] = np.percentile(df["atr"], 80)
+    PAIRS[pair]["atr_95pct"] = np.percentile(df["atr"], 95)
     logging.info(
         "ATR percentiles → P20:{:,.1f}€ | P50:{:,.1f}€ | P80:{:,.1f}€ | P95:{:,.1f}€".format(
-            atr_values[20], atr_values[50], atr_values[80], atr_values[95]
-        )
+            PAIRS[pair]["atr_20pct"], PAIRS[pair]["atr_50pct"], PAIRS[pair]["atr_80pct"], PAIRS[pair]["atr_95pct"])
     )
     
     uptrend_events, downtrend_events = analyze_structural_noise(df)
@@ -67,16 +59,15 @@ def calculate_trading_parameters(pair):
     logging.info(f"K_STOP_BUY  → {buy_msg}")
 
 def get_volatility_level(pair, atr_val):
-    thresholds = [
-        PAIRS[pair]["atr_20pct"],
-        PAIRS[pair]["atr_50pct"],
-        PAIRS[pair]["atr_80pct"],
-        PAIRS[pair]["atr_95pct"],
-    ]
-
-    for lvl, thr in zip(LEVELS, thresholds):
-        if atr_val < thr:
-            return lvl
+    if atr_val < PAIRS[pair]["atr_20pct"]:
+        return "LL"
+    elif atr_val < PAIRS[pair]["atr_50pct"]:
+        return "LV"
+    elif atr_val < PAIRS[pair]["atr_80pct"]:
+        return "MV"
+    elif atr_val < PAIRS[pair]["atr_95pct"]:
+        return "HV"
+    
     return "HH"
 
 def get_k_stop(pair, side, atr_val):
