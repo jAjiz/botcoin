@@ -3,12 +3,13 @@ import sys
 import core.logging as logging
 import core.runtime as runtime
 import services.telegram as telegram
-from exchange.kraken import get_balance, get_last_prices, get_current_atr, get_order_status
+from exchange.kraken import get_balance, get_last_prices, get_order_status
 from core.state import load_trailing_state, save_trailing_state, save_closed_position
 from core.config import SLEEPING_INTERVAL, PAIRS, PARAM_SESSIONS, ATR_DESV_LIMIT
 from core.validation import validate_config
 from core.utils import now_str
 from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
+from trading.market_analyzer import get_current_atr
 from trading.positions_manager import (
     close_position,
     create_position,

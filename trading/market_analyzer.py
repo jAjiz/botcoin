@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import sys
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from scipy.signal import argrelextrema
 
@@ -10,10 +11,54 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import MARKET_ANALYZER, CANDLE_TIMEFRAME
+import core.logging as logging
+from core.config import MARKET_ANALYZER, CANDLE_TIMEFRAME, MARKET_DATA_DAYS, ATR_PERIOD
+from exchange.kraken import fetch_ohlc_data
 
 DEFAULT_ORDER = MARKET_ANALYZER["DEFAULT_ORDER"]
 MINIMUM_CHANGE_PCT = MARKET_ANALYZER["MINIMUM_CHANGE_PCT"]
+
+
+def get_current_atr(pair):
+    try:
+        atr_file = f"data/{pair}_ohlc_data_{CANDLE_TIMEFRAME}min.csv"
+        since_param = None
+        existing_df = None
+
+        if os.path.exists(atr_file):
+            try:
+                existing_df = pd.read_csv(atr_file, index_col=0, parse_dates=True)
+                if not existing_df.empty:
+                    since_param = int(existing_df.index[-1].timestamp())
+            except Exception:
+                existing_df = None
+
+        df = fetch_ohlc_data(pair, CANDLE_TIMEFRAME, since_param)
+        
+        if df is None or df.empty:
+            return None
+
+        if existing_df is not None and not existing_df.empty:
+            df = pd.concat([existing_df, df])
+            df = df[~df.index.duplicated(keep='last')]
+            df = df.sort_index()
+
+        cutoff_date = datetime.now() - timedelta(days=MARKET_DATA_DAYS)
+        df = df[df.index >= cutoff_date]
+
+        df["H-L"] = df["high"] - df["low"]
+        df["H-PC"] = (df["high"] - df["close"].shift(1)).abs()
+        df["L-PC"] = (df["low"] - df["close"].shift(1)).abs()
+        df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
+        df["ATR"] = df["TR"].rolling(ATR_PERIOD).mean()
+        df.to_csv(atr_file)
+
+        current_atr = df["ATR"].iloc[-1]
+        return current_atr
+    except Exception as e:
+        logging.error(f"Error getting ATR for {pair}: {e}")
+        return None
+    
 
 def get_args():
     args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER, 'volatility_level': None}
@@ -54,6 +99,9 @@ def load_data(pair):
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
+
+
+
 
 def detect_pivots(df, order=DEFAULT_ORDER):
     ilocs_min = argrelextrema(df['low'].values, np.less_equal, order=order)[0]
