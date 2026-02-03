@@ -75,11 +75,11 @@ def get_args():
     
     if not args['pair']:
         print("Error: PAIR parameter is required.")
-        print("Usage: python market_noise_analyzer.py " \
-            "PAIR=ETHEUR [ORDER=20] [SHOW_EVENTS] [Volatility=LL|LV|MV|HV|HH|ALL]")
+        print("Use: python market_analyzer.py PAIR=XBTEUR [ORDER=20] [SHOW_EVENTS] [Volatility=LL|LV|MV|HV|HH|ALL]")
         sys.exit(1)
     
     return args
+
 
 def load_data(pair):
     atr_file = f"data/{pair}_ohlc_data_{CANDLE_TIMEFRAME}min.csv"
@@ -99,8 +99,6 @@ def load_data(pair):
     df.dropna(inplace=True)
     df.reset_index(drop=True, inplace=True)
     return df
-
-
 
 
 def detect_pivots(df, order=DEFAULT_ORDER):
@@ -135,7 +133,8 @@ def detect_pivots(df, order=DEFAULT_ORDER):
 
     return pivots
     
-def calculate_noise_between_pivots(df, pivot_pair, atr_20pct, atr_50pct, atr_80pct, atr_95pct):
+
+def calculate_noise_between_pivots(df, pivot_pair, atr_percentiles):
     start_idx, start_type, start_price, start_dtime = pivot_pair[0]
     end_idx, end_type, end_price, end_dtime = pivot_pair[1]
     
@@ -163,11 +162,11 @@ def calculate_noise_between_pivots(df, pivot_pair, atr_20pct, atr_50pct, atr_80p
     # Now find max K for each volatility level
     volatility_levels = {}
     vol_ranges = {
-        'LL': (0, atr_20pct),
-        'LV': (atr_20pct, atr_50pct),
-        'MV': (atr_50pct, atr_80pct),
-        'HV': (atr_80pct, atr_95pct),
-        'HH': (atr_95pct, float('inf'))
+        'LL': (0, atr_percentiles['p20']),
+        'LV': (atr_percentiles['p20'], atr_percentiles['p50']),
+        'MV': (atr_percentiles['p50'], atr_percentiles['p80']),
+        'HV': (atr_percentiles['p80'], atr_percentiles['p95']),
+        'HH': (atr_percentiles['p95'], float('inf'))
     }
     
     for vol_level, (min_atr, max_atr) in vol_ranges.items():
@@ -197,34 +196,29 @@ def calculate_noise_between_pivots(df, pivot_pair, atr_20pct, atr_50pct, atr_80p
         'start_dtime': start_dtime,
         'end_dtime': end_dtime,
         'price_change_pct': price_change_pct,
-        'price_change_k': (end_price - start_price) / segment['atr'].mean(),
         'volatility_levels': volatility_levels
     }
     
     return event
 
-def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_events=False,
-                              volatility_level=None):
-    # Detect and filter pivots
+
+def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_events=False, volatility_level=None):
     pivots = detect_pivots(df, order)
     
     # Calculate ATR percentiles
-    atr_20pct = np.percentile(df['atr'], 20)
-    atr_50pct = np.percentile(df['atr'], 50)
-    atr_80pct = np.percentile(df['atr'], 80)
-    atr_95pct = np.percentile(df['atr'], 95)
+    atr_percentiles = {
+        'p20': np.percentile(df['atr'], 20),
+        'p50': np.percentile(df['atr'], 50),
+        'p80': np.percentile(df['atr'], 80),
+        'p95': np.percentile(df['atr'], 95),
+    }
     
-    # Calculate noise for each pivot pair
-    all_events = []
+    # Calculate noise (events) for each pivot pair
     uptrend_events = []
     downtrend_events = []
-    
     for i in range(1, len(pivots)):
-        event = calculate_noise_between_pivots(
-            df, (pivots[i-1], pivots[i]), atr_20pct, atr_50pct, atr_80pct, atr_95pct
-        )
+        event = calculate_noise_between_pivots(df, (pivots[i-1], pivots[i]), atr_percentiles)
         if event and event['volatility_levels']:
-            all_events.append(event)
             if event['type'] == 'uptrend':
                 uptrend_events.append(event)
             else:
@@ -232,40 +226,41 @@ def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_
     
     if print_results:
         print(f"--- Analyzing Market Structure (minimum change {MINIMUM_CHANGE_PCT*100:.2f}%) ---")
-        print(f"  P20: {atr_20pct:.1f} | P50: {atr_50pct:.1f} | P80: {atr_80pct:.1f} | P95: {atr_95pct:.1f}")
         
         if volatility_level is None:
-            # Solo eventos sin desglose por volatilidad
             print_events_detail(uptrend_events, "UPTREND EVENTS")
             print_events_detail(downtrend_events, "DOWNTREND EVENTS")
-        elif volatility_level == 'ALL':
-            # Todos los niveles con desglose
-            for vol_level in ['LL', 'LV', 'MV', 'HV', 'HH']:
-                uptrend_vol = [e for e in uptrend_events if vol_level in e['volatility_levels']]
-                downtrend_vol = [e for e in downtrend_events if vol_level in e['volatility_levels']]
+
+        else:
+            print("ATR P20: {p20:.1f} | P50: {p50:.1f} | P80: {p80:.1f} | P95: {p95:.1f}".format(**atr_percentiles))
+
+            if volatility_level == 'ALL':
+                for vol_level in ['LL', 'LV', 'MV', 'HV', 'HH']:
+                    uptrend_vol = [e for e in uptrend_events if vol_level in e['volatility_levels']]
+                    downtrend_vol = [e for e in downtrend_events if vol_level in e['volatility_levels']]
+                    
+                    print(f"\n{'='*60}")
+                    print(f"VOLATILITY LEVEL: {vol_level}")
+                    print(f"{'='*60}")
+                    print_statistics(uptrend_vol, vol_level, "UPTREND NOISE (Stop Loss configuration)")
+                    print_statistics(downtrend_vol, vol_level, "DOWNTREND NOISE (Reentry Stop configuration)")
+                    
+                    if show_events:
+                        print_events_detail(uptrend_vol, "UPTREND EVENTS", vol_level)
+                        print_events_detail(downtrend_vol, "DOWNTREND EVENTS", vol_level)
+            else:
+                uptrend_vol = [e for e in uptrend_events if volatility_level in e['volatility_levels']]
+                downtrend_vol = [e for e in downtrend_events if volatility_level in e['volatility_levels']]
                 
-                print(f"\n{'='*60}")
-                print(f"VOLATILITY LEVEL: {vol_level}")
-                print(f"{'='*60}")
-                print_statistics(uptrend_vol, vol_level, "UPTREND NOISE (Stop Loss configuration)")
-                print_statistics(downtrend_vol, vol_level, "DOWNTREND NOISE (Reentry Stop configuration)")
+                print_statistics(uptrend_vol, volatility_level, f"UPTREND NOISE - {volatility_level} (Stop Loss configuration)")
+                print_statistics(downtrend_vol, volatility_level, f"DOWNTREND NOISE - {volatility_level} (Reentry Stop configuration)")
                 
                 if show_events:
-                    print_events_detail(uptrend_vol, "UPTREND EVENTS", vol_level)
-                    print_events_detail(downtrend_vol, "DOWNTREND EVENTS", vol_level)
-        else:
-            # Un nivel específico
-            uptrend_vol = [e for e in uptrend_events if volatility_level in e['volatility_levels']]
-            downtrend_vol = [e for e in downtrend_events if volatility_level in e['volatility_levels']]
-            
-            print_statistics(uptrend_vol, volatility_level, f"UPTREND NOISE - {volatility_level} (Stop Loss configuration)")
-            print_statistics(downtrend_vol, volatility_level, f"DOWNTREND NOISE - {volatility_level} (Reentry Stop configuration)")
-            
-            if show_events:
-                print_events_detail(uptrend_vol, f"UPTREND EVENTS - {volatility_level}", volatility_level)
-                print_events_detail(downtrend_vol, f"DOWNTREND EVENTS - {volatility_level}", volatility_level)
+                    print_events_detail(uptrend_vol, f"UPTREND EVENTS - {volatility_level}", volatility_level)
+                    print_events_detail(downtrend_vol, f"DOWNTREND EVENTS - {volatility_level}", volatility_level)
 
     return uptrend_events, downtrend_events
+
 
 def print_statistics(events, vol_level, title):
     if not events:
@@ -278,7 +273,6 @@ def print_statistics(events, vol_level, title):
         return
     
     s = pd.Series(k_values)
-    
     print(f"\n=== {title} ===")
     print(f"Events: {len(s)} | Average: {s.mean():.2f} ATR")
     print(f"Percentile 50%: {s.quantile(0.50):.2f} ATR (Very Tight)")
@@ -287,33 +281,31 @@ def print_statistics(events, vol_level, title):
     print(f"Percentile 95%: {s.quantile(0.95):.2f} ATR (Protected)")
     print(f"Percentile 100%: {s.quantile(1.00):.2f} ATR (Extreme)")
 
+
 def print_events_detail(events, title, vol_level=None):
     if not events:
         return
-    
     print(f"\n=== {title} ===")
     
     if vol_level is None:
-        # Mostrar solo datos comunes
-        print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'Change K':>9}")
-        print("-" * 70)
+        # Show common data only
+        print(f"{'From':<20} | {'To':<20} | {'Change %':>10}")
+        print("-" * 55)
         for event in events:
             change_pct = event['price_change_pct'] * 100
-            print(f"{str(event['start_dtime']):<20} | {str(event['end_dtime']):<20} "
-                  f"| {change_pct:>9.2f}% | {event['price_change_k']:>9.2f}")
+            print(f"{str(event['start_dtime']):<20} | {str(event['end_dtime']):<20} | {change_pct:>9.2f}%")
     else:
-        # Mostrar datos comunes + específicos del nivel
-        print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'Change K':>9} | {'Max Value':>10} "
-              f"| {'ATR at max':>10} | {'K Value':>8}")
-        print("-" * 135)
+        # Show common + volatility level data
+        print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'Max Value':>10} | {'ATR at max':>10} | {'K Value':>8}")
+        print("-" * 120)
         for event in events:
             if vol_level not in event['volatility_levels']:
                 continue
             change_pct = event['price_change_pct'] * 100
             vol_data = event['volatility_levels'][vol_level]
-            print(f"{str(event['start_dtime']):<20} | {str(event['end_dtime']):<20} "
-                  f"| {change_pct:>9.2f}% | {event['price_change_k']:>9.2f} "
+            print(f"{str(event['start_dtime']):<20} | {str(event['end_dtime']):<20} | {change_pct:>9.2f}% "
                   f"| {vol_data['max_value']:>10.1f} | {vol_data['atr_at_max']:>10.1f} | {vol_data['k_value']:>8.2f}")
+
 
 if __name__ == "__main__":
     args = get_args()
