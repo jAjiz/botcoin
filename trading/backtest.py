@@ -114,6 +114,7 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
     atr_20, atr_50, atr_80, atr_95 = _atr_thresholds(pair)
 
     ops: List[Operation] = []
+    # Track cumulative return in percent (compounded). Start at 0%.
     cum_pnl = 0.0
 
     # Start always with a BUY operation at first valid close
@@ -137,7 +138,9 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
     first_vol = _vol_level_from_atr(first_atr, atr_20, atr_50, atr_80, atr_95)
     first_k = get_k_stop(pair, "buy", first_atr) or 0.0
     first_fee = float(first_price) * float(fee_rate)
-    cum_pnl -= first_fee
+    # Convert the entry fee to percent of entry price and apply to cumulative %
+    # Equivalent to an immediate negative return of fee_rate * 100.
+    cum_pnl -= (float(fee_rate) * 100.0)
     ops.append(
         Operation(
             idx=1,
@@ -217,7 +220,10 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
                 fee = float(exec_price) * float(fee_rate)
                 pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
                 pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                cum_pnl += pnl
+                # Compound cumulative percent: (1+cum%)*(1+op%)-1
+                if pnl_pct is not None:
+                    cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
+                    cum_pnl = (cum_factor - 1.0) * 100.0
                 k_used = get_k_stop(pair, "sell", atr) or 0.0
                 ops.append(
                     Operation(
@@ -256,7 +262,10 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
                 fee = float(exec_price) * float(fee_rate)
                 pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
                 pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                cum_pnl += pnl
+                # Compound cumulative percent: (1+cum%)*(1+op%)-1
+                if pnl_pct is not None:
+                    cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
+                    cum_pnl = (cum_factor - 1.0) * 100.0
                 k_used = get_k_stop(pair, "buy", atr) or 0.0
                 ops.append(
                     Operation(
@@ -320,7 +329,7 @@ def _print_operations(ops: List[Operation], limit: Optional[int] = 100) -> None:
     else:
         title = "\n=== OPERATIONS (all) ==="
     print(title)
-    header = (f"{'#':>3} | {'Time':<20} | {'Side':>4} | {'Price':>10} | {'Vol':>3} | {'K_STOP':>6} | {'Fee€':>9} | {'P&L€':>10} | {'P&L%':>8} | {'Cum€':>10}")
+    header = (f"{'#':>3} | {'Time':<20} | {'Side':>4} | {'Price':>10} | {'Vol':>3} | {'K_STOP':>6} | {'Fee€':>9} | {'P&L€':>10} | {'P&L%':>8} | {'Cum%':>10}")
     print(header)
     print("-" * len(header))
 
@@ -328,7 +337,7 @@ def _print_operations(ops: List[Operation], limit: Optional[int] = 100) -> None:
         fee_abs = "" if op.fee_abs is None else f"{op.fee_abs:>9.2f}"
         pnl_abs = "" if op.pnl_abs is None else f"{op.pnl_abs:>10.2f}"
         pnl_pct = "" if op.pnl_pct is None else f"{op.pnl_pct:>7.2f}%"
-        cum = "" if op.cum_pnl is None else f"{op.cum_pnl:>10.2f}"
+        cum = "" if op.cum_pnl is None else f"{op.cum_pnl:>9.2f}%"
         print(f"{op.idx:>3} | {op.time:<20} | {op.side:>4} | {op.price:>10.1f} | {op.vol:>3} | {op.k_stop:>6.2f} | {fee_abs:>9} | {pnl_abs:>10} | {pnl_pct:>8} | {cum:>10}")
 
 
