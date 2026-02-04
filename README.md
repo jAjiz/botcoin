@@ -587,17 +587,13 @@ All data persists in CSV format for:
 - **Trailing Stop**: Price-following mechanism with volatility adaptation
 - **Balance-Majority Logic**: Portfolio-driven decision making
 
-## 🤝 Contributing
+## 🤝 Contributing & Support
 
-Contributions are welcome! This project is primarily for educational purposes, but improvements and suggestions are appreciated.
-
-Bug reports are also appreciated.
-
-**Contact**: For questions, suggestions, or collaboration opportunities, feel free to open an issue or reach out through GitHub.
+Contributions, bug reports, and suggestions are welcome! This project is primarily for educational purposes.
 
 - **Author**: [jAjiz](https://github.com/jAjiz)
 - **Repository**: [BoTCoin](https://github.com/jAjiz/BoTCoin)
-- **Issues**: [GitHub Issues](https://github.com/jAjiz/BoTCoin/issues)
+- **Contact**: For questions or collaboration, please open a [GitHub Issues](https://github.com/jAjiz/BoTCoin/issues)
 
 ## 📝 License & Disclaimer
 
