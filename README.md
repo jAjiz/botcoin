@@ -375,7 +375,7 @@ jobs:
       uses: actions/checkout@v3
     
     - name: Execute remote deploy script via SSH
-      uses: appleboy/ssh-action@029f5b4aeeeb58fdfe1410a5d31a6cfbfdb0133d  # v0.1.8
+      uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
       with:
         host: ${{ secrets.VM_IP }}
         username: ${{ secrets.VM_USER }}
