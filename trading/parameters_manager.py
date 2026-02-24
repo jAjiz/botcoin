@@ -28,8 +28,11 @@ def calculate_k_stops(pair, events):
 
     return {lvl: get_pct_k_value(lvl, STOP_PERCENTILES[pair][lvl]) for lvl in LEVELS}
 
-def calculate_trading_parameters(pair):
-    logging.info(f"Calculating trading parameters...")
+
+def calculate_trading_parameters(pair, infoLog=True):
+    if infoLog:
+        logging.info(f"Calculating trading parameters for {pair}...")
+
     try:
         df = load_data(pair)
     except Exception as e:
@@ -40,10 +43,12 @@ def calculate_trading_parameters(pair):
     PAIRS[pair]["atr_50pct"] = np.percentile(df["atr"], 50)
     PAIRS[pair]["atr_80pct"] = np.percentile(df["atr"], 80)
     PAIRS[pair]["atr_95pct"] = np.percentile(df["atr"], 95)
-    logging.info(
-        "ATR percentiles → P20:{:,.1f}€ | P50:{:,.1f}€ | P80:{:,.1f}€ | P95:{:,.1f}€".format(
-            PAIRS[pair]["atr_20pct"], PAIRS[pair]["atr_50pct"], PAIRS[pair]["atr_80pct"], PAIRS[pair]["atr_95pct"])
-    )
+
+    if infoLog:
+        logging.info(
+            "ATR percentiles → P20:{:,.1f}€ | P50:{:,.1f}€ | P80:{:,.1f}€ | P95:{:,.1f}€".format(
+                PAIRS[pair]["atr_20pct"], PAIRS[pair]["atr_50pct"], PAIRS[pair]["atr_80pct"], PAIRS[pair]["atr_95pct"])
+        )
     
     uptrend_events, downtrend_events = analyze_structural_noise(df)
     sell_k_stops = calculate_k_stops(pair, uptrend_events)
@@ -55,8 +60,11 @@ def calculate_trading_parameters(pair):
     fmt = lambda k: f"{k:.2f}" if k is not None else "N/A"
     sell_msg = " | ".join(f"{lvl}:{fmt(sell_k_stops[lvl])}" for lvl in LEVELS)
     buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
-    logging.info(f"K_STOP_SELL → {sell_msg}")
-    logging.info(f"K_STOP_BUY  → {buy_msg}")
+
+    if infoLog:
+        logging.info(f"K_STOP_SELL → {sell_msg}")
+        logging.info(f"K_STOP_BUY  → {buy_msg}")
+
 
 def get_volatility_level(pair, atr_val):
     if atr_val < PAIRS[pair]["atr_20pct"]:
@@ -69,6 +77,7 @@ def get_volatility_level(pair, atr_val):
         return "HV"
     
     return "HH"
+
 
 def get_k_stop(pair, side, atr_val):
     vol = get_volatility_level(pair, atr_val)

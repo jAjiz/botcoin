@@ -347,7 +347,7 @@ def main() -> None:
     fee_rate = float(args.get("fee_pct") or 0.0) / 100.0
 
     # Ensure we have thresholds + K_STOP in memory
-    calculate_trading_parameters(pair)
+    calculate_trading_parameters(pair, infoLog=False)
 
     df = load_data(pair)
 

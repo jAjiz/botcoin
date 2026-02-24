@@ -19,9 +19,9 @@ MODES = ("CONSERVATIVE", "AGGRESSIVE", "CURRENT")
 SPLIT_METHODS = ("RESET", "CONTINUE", "BOTH")
 
 # Change these to adjust the search grid.
-STOP_PCT_CHOICES = (0.90, 0.95)
-K_ACT_CHOICES = (0.0,)
-MIN_MARGIN_CHOICES = (0.000,)
+STOP_PCT_CHOICES = (0.20, 0.35, 0.50, 0.65, 0.75, 0.80, 0.90, 0.95)
+K_ACT_CHOICES = (0.0, 1.0, 2.0, 3.0)
+MIN_MARGIN_CHOICES = (0.000, 0.003, 0.006, 0.009)
 
 def _parse_args() -> dict:
     args = {
