@@ -1,6 +1,6 @@
 # BoTCoin V2 – Roadmap
 
-This document outlines the improvement areas and phased plan for the next iteration of BoTCoin. The goal is incremental, practical progress that improves maintainability, reliability, and developer experience without introducing unnecessary architectural complexity.
+This document outlines the improvement areas and phased plan for the next iteration of BoTCoin, with a focus on **Senior Data Engineering and Cloud Architecture** principles. The goal is to evolve the project into a managed data pipeline with professional-grade persistence, observability, and testability.
 
 ---
 
@@ -9,13 +9,13 @@ This document outlines the improvement areas and phased plan for the next iterat
 - [Current State](#-current-state)
 - [Improvement Areas](#-improvement-areas)
 - [Phased Roadmap](#-phased-roadmap)
-  - [Phase 1 – Testing Foundation](#phase-1--testing-foundation)
-  - [Phase 2 – Docker & Local Dev Environment](#phase-2--docker--local-dev-environment)
-  - [Phase 3 – CI/CD Improvements](#phase-3--cicd-improvements)
-  - [Phase 4 – Persistence Improvements](#phase-4--persistence-improvements)
-  - [Phase 5 – Code Quality & Maintainability](#phase-5--code-quality--maintainability)
-  - [Phase 6 – Configuration & Environment](#phase-6--configuration--environment)
-  - [Phase 7 – Documentation & Project Presentation](#phase-7--documentation--project-presentation)
+  - [Phase 1 – Infrastructure First: Docker](#phase-1--infrastructure-first-docker)
+  - [Phase 2 – Managed Execution: Prefect Orchestration](#phase-2--managed-execution-prefect-orchestration)
+  - [Phase 3 – Testing Strategy](#phase-3--testing-strategy)
+  - [Phase 4 – Professional Persistence: PostgreSQL & Redis](#phase-4--professional-persistence-postgresql--redis)
+  - [Phase 5 – Code Quality: Linting & Type Safety](#phase-5--code-quality-linting--type-safety)
+  - [Phase 6 – CI/CD Pipeline](#phase-6--cicd-pipeline)
+  - [Phase 7 – Data Architecture Documentation](#phase-7--data-architecture-documentation)
 - [Out of Scope](#-out-of-scope)
 
 ---
@@ -28,185 +28,236 @@ Key gaps identified before starting V2 work:
 
 | Area | Current Status |
 |---|---|
+| Infrastructure | ❌ No containerization — runs directly on bare VM |
+| Execution model | ⚠️ Unmanaged `while True` loop — no retries, no observability |
 | Testing | ❌ No unit or integration tests |
-| Docker / local dev | ❌ No containerization |
-| CI pipeline | ⚠️ Deploy-only (no test or lint step) |
-| Persistence | ⚠️ JSON + CSV flat files (no migration path) |
-| Type hints | ⚠️ Largely absent across the codebase |
-| Environment setup | ⚠️ No `.env.example` template |
+| Persistence | ⚠️ JSON + CSV flat files — no schema, no history guarantees |
+| Active state store | ⚠️ JSON file on disk — not appropriate for real-time key-value access |
+| CI pipeline | ⚠️ Deploy-only — no lint or test step before production |
 | Code quality tooling | ❌ No linter or formatter configured |
-| Changelog / releases | ❌ No structured release history |
+| Data architecture docs | ❌ No ERD or data model documentation |
 
 ---
 
 ## 🗺️ Improvement Areas
 
-### 1. Testing Strategy
-The project currently has no automated tests. Adding a test suite is the highest-priority improvement because it directly enables safe refactoring, validates correctness of trading logic, and acts as a safety net for all future changes. The backtesting module (`trading/backtest.py`) already demonstrates the intent to validate behavior; this work extends that intent to the source modules themselves.
+### 1. Infrastructure First: Docker
+All development, testing, and production execution must happen inside containers. This eliminates environment drift, makes every dependency explicit, and ensures the same image is tested in CI and deployed to the VM. Docker Compose also acts as the local service registry, co-locating the bot with its database and cache dependencies.
 
-### 2. Docker-based Local Setup
-Running the bot locally currently requires a correctly configured Python environment and live credentials. A Docker-based setup eliminates environment inconsistencies, simplifies onboarding, and makes it possible to run the bot or its components in an isolated, reproducible way without touching production credentials.
+### 2. Managed Execution: Prefect Orchestration
+The current `while True` loop in `main.py` is opaque: failed API calls are swallowed, retries are manual, and there is no execution history. Replacing it with Prefect Flows and Tasks gives every session a structured lifecycle with native retry policies, a real-time execution UI, and logs captured by the orchestration layer rather than scattered across files.
 
-### 3. CI/CD Improvements
-The current pipeline only deploys on push to `main`. There is no validation step—no linting, no tests—before code reaches production. Adding quality gates protects the live deployment and establishes a baseline for code health across every change.
+### 3. Testing Strategy
+No automated tests exist. A two-tier test suite — unit tests for pure trading logic and integration tests for API connectivity and database persistence — provides the confidence needed to refactor safely and deploy reliably. All tests must run inside the Docker environment to ensure parity with production.
 
-### 4. Persistence Improvements
-State is stored as JSON files and historical data as CSV files written directly to the `data/` directory. This is simple and effective for V1, but has limits: no schema enforcement, no migration path, and potential for silent data corruption. V2 should introduce a more robust storage layer while keeping operational simplicity.
+### 4. Professional Persistence: PostgreSQL & Redis
+The flat-file persistence model (JSON for state, CSV for history) has no schema enforcement, no transactional guarantees, and no migration path. V2 adopts a two-tier database architecture aligned with the access patterns of each data category:
+- **PostgreSQL** for structured, queryable historical data (OHLC candles, closed positions)
+- **Redis** for real-time, low-latency key-value access (active trailing stop state, current orders)
 
-### 5. Code Quality & Maintainability
-The codebase lacks type annotations, has some duplicated patterns, and has no consistent formatter or linter enforced. Adding these incrementally improves readability, IDE support, and reduces cognitive overhead when modifying trading logic.
+Both services are defined in `docker-compose.yml`, requiring no external infrastructure.
 
-### 6. Configuration & Environment Setup
-There is no `.env.example` template, making first-time setup harder than it needs to be. Configuration validation (`core/validation.py`) is good; it should be extended and surfaced more clearly to new contributors.
+### 5. Code Quality: Linting & Type Safety
+Consistent formatting and type annotations improve IDE support, reduce cognitive overhead, and make the codebase more accessible for future contributors. `ruff` provides fast, zero-config linting and formatting as a single tool.
 
-### 7. Documentation & Project Presentation
-The `README.md` is thorough. V2 work should supplement it with a structured changelog, contribution guidelines, and clearer onboarding instructions that align with the Docker and testing improvements.
+### 6. CI/CD Pipeline
+The current pipeline deploys on every push to `main` with no validation. Tests must run inside Docker before any deployment step is allowed, ensuring what is tested is exactly what is deployed.
+
+### 7. Data Architecture Documentation
+With a two-tier persistence layer in place, the data model must be documented explicitly. The PostgreSQL schema (ERD) and the Redis key-value structure should be added to `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
 ---
 
 ## 🚀 Phased Roadmap
 
-Phases are ordered by impact and dependency. Each phase is independently releasable.
+Phases are ordered by dependency — each phase is a prerequisite for the next. Each phase is independently releasable.
 
 ---
 
-### Phase 1 – Testing Foundation
+### Phase 1 – Infrastructure First: Docker
 
-**Goal:** Establish a test suite that covers the core trading logic and enables safe refactoring throughout V2.
-
-**Scope:**
-
-- [ ] Add `pytest` as a development dependency
-- [ ] Create a `tests/` directory mirroring the package structure
-- [ ] Write unit tests for pure-logic functions in:
-  - `trading/market_analyzer.py` (ATR calculation, pivot detection)
-  - `trading/parameters_manager.py` (volatility level mapping, parameter calculation)
-  - `trading/positions_manager.py` (position creation, trailing stop updates, close logic)
-  - `trading/inventory_manager.py` (portfolio valuation, balance logic)
-  - `core/validation.py` (configuration validation edge cases)
-  - `core/utils.py` (utility functions)
-- [ ] Use mocking (`unittest.mock`) to isolate exchange API calls from business logic tests
-- [ ] Add a `pytest.ini` or `pyproject.toml` configuration for test discovery and reporting
-
-**Success criteria:** Running `pytest` passes with no external network calls required.
-
----
-
-### Phase 2 – Docker & Local Dev Environment
-
-**Goal:** Allow the bot and its tooling to be run locally in a reproducible, credential-safe environment.
+**Goal:** Establish a fully containerized development and production environment. All subsequent phases build on top of this foundation.
 
 **Scope:**
 
-- [ ] Write a `Dockerfile` targeting the production runtime (Python slim base image)
-- [ ] Write a `docker-compose.yml` for local development that:
-  - Mounts the `data/` directory as a volume for persistence
-  - Loads credentials from a local `.env` file (not baked into the image)
-  - Supports running the bot (`main.py`) and the modules that can be executed directly as scripts (`trading/market_analyzer.py` and `trading/backtest.py`, both of which have `if __name__ == "__main__"` entry points)
-- [ ] Add a `.dockerignore` file to exclude `data/`, `.env`, `__pycache__`, and other non-essential files
+- [ ] Write a `Dockerfile` using a Python slim base image for the production runtime
+- [ ] Write a `docker-compose.yml` that:
+  - Defines the `botcoin` application service (builds from `Dockerfile`)
+  - Mounts the `data/` directory as a named volume for local persistence
+  - Loads credentials from a local `.env` file (never baked into the image)
+  - Includes `postgres` and `redis` service stubs (to be fully configured in Phase 4)
+  - Supports running the bot (`main.py`) and the analysis scripts that have `if __name__ == "__main__"` entry points (`trading/market_analyzer.py`, `trading/backtest.py`)
+- [ ] Add a `.dockerignore` file to exclude `.env`, `__pycache__`, `data/`, and other non-essential files
+- [ ] Add a `.env.example` file documenting every supported environment variable with its type, default value, and a short description
 - [ ] Update the `README.md` Quick Start section with Docker-based instructions
 
-**Success criteria:** `docker compose up` starts the bot with a valid `.env` file, matching current manual setup behavior.
+**Success criteria:** `docker compose up` starts the bot with a valid `.env` file, matching current manual setup behavior. No Python environment setup is required on the host machine.
 
 ---
 
-### Phase 3 – CI/CD Improvements
+### Phase 2 – Managed Execution: Prefect Orchestration
 
-**Goal:** Add quality gates to the CI pipeline so that every push to `main` is validated before deployment.
+**Goal:** Replace the unmanaged `while True` loop in `main.py` with a Prefect-managed data pipeline, giving every session a structured lifecycle with native retries, observability, and graceful shutdown.
 
 **Scope:**
 
-- [ ] Add a `lint` job to the GitHub Actions workflow that runs before deployment:
-  - Use `ruff` for linting and formatting checks (fast, zero-config default)
-- [ ] Add a `test` job that runs the `pytest` suite (from Phase 1)
-- [ ] Make the `deploy` job depend on both `lint` and `test` passing
-- [ ] Pin the GitHub Actions to specific commit SHAs (already done for `ssh-action`; apply consistently)
-- [ ] Add a pull request check workflow that runs `lint` and `test` on every PR (separate from the deploy workflow)
+- [ ] Add `prefect` as a runtime dependency
+- [ ] Refactor `main.py` to use Prefect decorators:
+  - Annotate the top-level trading session as a `@flow` (`botcoin_session_flow`)
+  - Annotate each logical step as a `@task`:
+    - `fetch_balance` – wraps `get_balance()` with Prefect retry policy
+    - `fetch_prices` – wraps `get_last_prices()` with Prefect retry policy
+    - `process_pair` – encapsulates the per-pair analysis, position creation, and trailing stop update logic
+    - `persist_state` – wraps `save_trailing_state()` and runtime state updates
+  - Configure `retry_delay_seconds` and `max_retries` on Kraken API tasks to replace manual error-and-sleep logic
+- [ ] Route all task logs through Prefect's logging layer so execution history is visible in the Prefect UI
+- [ ] Implement graceful shutdown:
+  - Register signal handlers (`SIGTERM`, `SIGINT`) that set a shutdown flag
+  - On shutdown, allow the current session to complete, persist state to the database (Phase 4), and close all database connections cleanly before exiting
+- [ ] Update `docker-compose.yml` to include the Prefect server as an optional local service for UI-based run inspection
 
-**Success criteria:** A PR with a failing test or lint error cannot be merged without addressing the failure. The deploy workflow only triggers on a clean `main`.
+**Success criteria:** The bot runs as a Prefect flow. Individual task failures trigger automatic retries. A clean shutdown persists state and closes connections. Run history is accessible via the Prefect UI.
 
 ---
 
-### Phase 4 – Persistence Improvements
+### Phase 3 – Testing Strategy
 
-**Goal:** Make state storage more robust and introduce a clear data migration path, without adding unnecessary operational complexity.
+**Goal:** Implement a two-tier test suite (unit + integration) that runs entirely inside Docker, ensuring test parity with the production environment.
 
 **Scope:**
 
-- [ ] Migrate active trade state and closed position history from JSON files to a local **SQLite** database (`data/botcoin.db`)
-  - SQLite requires no external service, keeps the GCP free-tier deployment model intact, and adds schema enforcement
-  - Retain CSV export for audit/analysis purposes (write-on-close)
-- [ ] Define a simple schema for open positions and closed position history
-- [ ] Write a one-time migration script (`scripts/migrate_json_to_sqlite.py`) to convert existing `data/trailing_state.json` and `data/closed_positions.json` on upgrade
-- [ ] Update `core/state.py` to use the new storage layer via a thin abstraction so the rest of the codebase remains unchanged
-- [ ] Add `data/botcoin.db` to `.gitignore`
+- [ ] Add `pytest` and `pytest-cov` as development dependencies in `requirements-dev.txt`
+- [ ] Create a `tests/` directory with the following structure:
+  ```
+  tests/
+  ├── unit/
+  │   ├── trading/        # ATR calculation, pivot detection, position logic
+  │   ├── core/           # Validation, utils
+  │   └── conftest.py
+  └── integration/
+      ├── test_kraken.py  # API connectivity (requires live credentials, opt-in)
+      ├── test_postgres.py # Schema creation, read/write round-trips
+      ├── test_redis.py    # Active state set/get operations
+      └── conftest.py
+  ```
+- [ ] **Unit tests** – cover pure-logic functions with no external dependencies:
+  - `trading/market_analyzer.py`: ATR calculation, pivot detection, noise analysis
+  - `trading/parameters_manager.py`: volatility level mapping, K parameter calculation
+  - `trading/positions_manager.py`: position creation, trailing stop updates, close logic
+  - `trading/inventory_manager.py`: portfolio valuation, balance logic
+  - `core/validation.py`: all configuration edge cases
+  - `core/utils.py`: utility functions
+  - Use `unittest.mock` to stub all exchange API calls and database clients
+- [ ] **Integration tests** – verify connectivity and persistence contracts:
+  - Kraken API: authenticated balance fetch, OHLC retrieval (skipped if credentials absent)
+  - PostgreSQL: schema migration applies cleanly; OHLC rows and closed positions round-trip correctly
+  - Redis: active trailing stop state is written and read back correctly
+  - Integration tests use the Docker Compose service network (`postgres`, `redis`) and require the stack to be running
+- [ ] Add a `pytest.ini` or `pyproject.toml` section for test discovery, coverage thresholds, and markers (`unit`, `integration`)
+- [ ] Add a `docker-compose.test.yml` override (or a dedicated `test` service) for running the full suite in CI
 
-**Success criteria:** The bot runs with SQLite as the persistence backend; existing JSON data can be migrated cleanly; the `data/` directory structure is documented.
+**Success criteria:** `docker compose run test pytest tests/unit` passes with no external network calls. `docker compose run test pytest tests/integration` passes with the full stack running.
 
 ---
 
-### Phase 5 – Code Quality & Maintainability
+### Phase 4 – Professional Persistence: PostgreSQL & Redis
 
-**Goal:** Improve long-term maintainability through type hints, consistent formatting, and elimination of redundant patterns.
+**Goal:** Migrate all data storage from flat files to a two-tier database architecture. PostgreSQL handles structured historical data; Redis manages real-time active state.
 
 **Scope:**
 
-- [ ] Add type annotations (`typing` module) to all public functions across:
+#### PostgreSQL (historical data & closed positions)
+- [ ] Define the database schema:
+  - `ohlc_data` table: `(pair, timestamp, open, high, low, close, volume, atr)` — replaces CSV files in `data/`
+  - `closed_positions` table: `(id, pair, side, entry_price, close_price, quantity, pnl, open_time, close_time, metadata jsonb)` — replaces `data/closed_positions.json`
+- [ ] Write an Alembic migration (`scripts/migrations/`) to create both tables with appropriate indexes
+- [ ] Update `trading/market_analyzer.py` to read and write OHLC data from/to PostgreSQL instead of CSV files
+- [ ] Update `core/state.py`'s `save_closed_position` to write to the `closed_positions` table
+- [ ] Write a one-time migration script (`scripts/migrate_to_postgres.py`) to import existing CSV and JSON data into PostgreSQL on upgrade
+
+#### Redis (active trailing stop state)
+- [ ] Define the Redis key-value schema (documented in Phase 7):
+  - Active position: `botcoin:state:{pair}` → JSON-serialised position dict (mirrors current `trailing_state.json` structure per pair)
+  - Bot control flag: `botcoin:control:paused` → `"1"` / `"0"` (replaces `telegram.BOT_PAUSED` in-memory flag)
+- [ ] Update `core/state.py`'s `load_trailing_state` and `save_trailing_state` to read/write from Redis
+- [ ] Update `services/telegram.py` to set and read the pause flag from Redis instead of an in-memory variable
+- [ ] Add `data/` JSON and CSV files to `.gitignore`; document the new `data/` as containing only ephemeral migration inputs
+
+#### docker-compose.yml
+- [ ] Fully configure the `postgres` service with a named volume, health check, and init script for schema creation
+- [ ] Fully configure the `redis` service with a named volume and `appendonly yes` for durability
+- [ ] Add `DATABASE_URL` and `REDIS_URL` to `.env.example`
+
+**Success criteria:** The bot runs with no flat files. OHLC data is queryable from PostgreSQL. Active positions survive a bot restart via Redis. Existing data is migrated cleanly.
+
+---
+
+### Phase 5 – Code Quality: Linting & Type Safety
+
+**Goal:** Enforce consistent formatting and type safety across the entire codebase.
+
+**Scope:**
+
+- [ ] Add `ruff` to `requirements-dev.txt`
+- [ ] Add a `pyproject.toml` configuring `ruff` (line length, enabled rule sets) and `pytest` (test paths, markers, coverage settings)
+- [ ] Add type annotations to all public functions across:
   - `core/` modules
   - `exchange/kraken.py`
   - `trading/` modules
   - `services/telegram.py`
-- [ ] Enforce formatting and linting via `ruff` locally (add `ruff` to `requirements-dev.txt`)
-- [ ] Add a `pyproject.toml` to centralize tool configuration (`ruff`, `pytest`)
-- [ ] Refactor repeated patterns (e.g., ATR file path construction) into shared utilities
-- [ ] Review and align exception handling: distinguish between recoverable errors (log and continue) and fatal errors (log and exit)
+- [ ] Refactor repeated patterns into shared utilities (e.g., database client factory, Redis key builders)
+- [ ] Review and align exception handling: recoverable errors (log and retry via Prefect) vs. fatal errors (log and exit)
 
 **Success criteria:** `ruff check .` and `ruff format --check .` pass cleanly. All public function signatures carry type annotations.
 
 ---
 
-### Phase 6 – Configuration & Environment
+### Phase 6 – CI/CD Pipeline
 
-**Goal:** Make initial setup easier and reduce the risk of misconfiguration.
+**Goal:** Add lint and test quality gates that run inside Docker before any deployment step is allowed.
 
 **Scope:**
 
-- [ ] Add a `.env.example` file documenting every supported environment variable with its type, default value, and a short description
-- [ ] Split `requirements.txt` into `requirements.txt` (runtime) and `requirements-dev.txt` (test, lint tooling)
-- [ ] Validate numeric environment variables at load time with informative error messages (extend `core/validation.py` to cover all config values, including pair-specific params)
-- [ ] Document the `data/` directory layout (what files are created, when, and what they contain) in the README
+- [ ] Add a `ci.yml` GitHub Actions workflow triggered on every pull request that:
+  - Builds the Docker image
+  - Runs `ruff check .` and `ruff format --check .` inside the container
+  - Spins up the full `docker-compose.test.yml` stack and runs `pytest tests/unit` and `pytest tests/integration`
+- [ ] Update the existing `deploy.yml` workflow to:
+  - Depend on the `ci.yml` checks passing (via `workflow_run` trigger or branch protection rules)
+  - Run tests inside the Docker container before executing the SSH deploy step
+- [ ] Pin all GitHub Actions to specific commit SHAs (consistently — the `ssh-action` is already pinned; apply to `actions/checkout` and any new actions)
+- [ ] Add CI status and Python version badges to `README.md`
 
-**Success criteria:** A new developer can clone the repo, copy `.env.example` to `.env`, fill in credentials, and have a working setup with no ambiguity.
+**Success criteria:** A PR with a failing test or lint error is blocked from merging. The deploy workflow only runs after all checks pass on `main`.
 
 ---
 
-### Phase 7 – Documentation & Project Presentation
+### Phase 7 – Data Architecture Documentation
 
-**Goal:** Complement the existing README with structured release notes and contribution guidance.
+**Goal:** Document the V2 data architecture — the PostgreSQL schema and the Redis key-value structure — in `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
 **Scope:**
 
+- [ ] Add a **Data Architecture** section to `README.md` covering:
+  - **PostgreSQL ERD**: Entity-Relationship Diagram showing the `ohlc_data` and `closed_positions` tables, their columns, data types, primary keys, and indexes
+  - **Redis Key-Value Structure**: document every key pattern, its value format (type + JSON schema), TTL policy if any, and which component reads/writes it
+  - **Data Flow Diagram**: illustrate how data moves from the Kraken API → PostgreSQL (OHLC) and Redis (active state) → closed positions (Redis → PostgreSQL on close)
 - [ ] Add a `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, tracking changes from the V2 milestone onwards (V1 history is not retroactively documented)
-- [ ] Add a `CONTRIBUTING.md` with:
-  - How to set up the local dev environment (Docker + `.env.example`)
-  - How to run tests
-  - Branch and PR conventions
-- [ ] Add status badges to `README.md` (CI workflow status, Python version)
-- [ ] Review and update the `README.md` Quick Start to reflect V2 setup (Docker, dev requirements)
+- [ ] Update the `README.md` Quick Start section to reflect the full V2 Docker Compose setup (bot + PostgreSQL + Redis)
 
-**Success criteria:** A contributor unfamiliar with the project can set up, run tests, and submit a PR following only the documentation in the repository.
+**Success criteria:** A developer unfamiliar with the project can understand the full data model and how to query or inspect it using only the repository documentation.
 
 ---
 
 ## 🚫 Out of Scope
 
-The following are intentionally excluded from the V2 roadmap to keep scope realistic and aligned with the current nature of the project:
+The following are intentionally excluded from the V2 roadmap:
 
 - **Multi-exchange support** – Kraken-only scope is maintained for V2
-- **Web dashboard** – Telegram interface remains the primary monitoring surface
-- **Database migration to PostgreSQL or external backends** – SQLite satisfies the reliability need without adding infrastructure
-- **Async rewrite of the main trading loop** – The current threading model is adequate; a full async migration is high effort with limited benefit at this stage
-- **Cloud infrastructure changes** – GCP free-tier VPS deployment model is retained; no Kubernetes or managed services
+- **Web dashboard** – Telegram interface and the Prefect UI remain the primary monitoring surfaces
+- **Managed cloud databases** – PostgreSQL and Redis run as Docker Compose services; no RDS, ElastiCache, or equivalent managed services
+- **Cloud infrastructure changes** – GCP free-tier VPS deployment model is retained; no Kubernetes or container orchestration platforms
+- **Full async rewrite** – Prefect handles concurrency at the flow/task level; a deeper async rewrite of all modules is deferred
 
 ---
 
