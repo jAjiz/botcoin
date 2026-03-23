@@ -7,9 +7,6 @@ on:
         description: 'Milestone number to assign issues to'
         required: false
         default: '1'
-  push:
-    branches:
-      - copilot/create-issues-for-roadmap-phases
 
 permissions:
   issues: write
