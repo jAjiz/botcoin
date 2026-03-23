@@ -1,27 +1,30 @@
-name: Create Roadmap Issues
+#!/usr/bin/env bash
+# Creates one GitHub issue per BoTCoin V2 roadmap phase and assigns each to
+# the "BoTCoin V2" milestone.
+#
+# Prerequisites:
+#   - GitHub CLI (gh) installed and authenticated  (gh auth login)
+#   - The "BoTCoin V2" milestone must already exist in the repository
+#
+# Usage:
+#   chmod +x scripts/create-roadmap-issues.sh
+#   ./scripts/create-roadmap-issues.sh
 
-on:
-  workflow_dispatch:
+set -euo pipefail
 
-permissions:
-  issues: write
+REPO="jAjiz/BoTCoin"
+MILESTONE="BoTCoin V2"
 
-jobs:
-  create-issues:
-    runs-on: ubuntu-latest
+echo "Creating BoTCoin V2 roadmap issues in milestone \"${MILESTONE}\"..."
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Create Phase 1 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 1 – Infrastructure First: Docker" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 1
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 1 – Infrastructure First: Docker" \
+  --body "## Goal
 
 Establish a fully containerized development and production environment. All subsequent phases build on top of this foundation.
 
@@ -40,19 +43,18 @@ Establish a fully containerized development and production environment. All subs
 
 ## Success criteria
 
-\`docker compose up\` starts the bot with a valid \`.env\` file, matching current manual setup behavior. No Python environment setup is required on the host machine.
+\`docker compose up\` starts the bot with a valid \`.env\` file, matching current manual setup behavior. No Python environment setup is required on the host machine."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 1 issue created"
 
-      - name: Create Phase 2 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 2 – Managed Execution: Prefect Orchestration" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 2
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 2 – Managed Execution: Prefect Orchestration" \
+  --body "## Goal
 
 Replace the unmanaged \`while True\` loop in \`main.py\` with a Prefect-managed data pipeline, giving every session a structured lifecycle with native retries, observability, and graceful shutdown.
 
@@ -71,19 +73,18 @@ Replace the unmanaged \`while True\` loop in \`main.py\` with a Prefect-managed 
 
 ## Success criteria
 
-The bot runs as a Prefect flow. Individual task failures trigger automatic retries. A clean shutdown persists state and closes connections. Run history is accessible via the Prefect UI.
+The bot runs as a Prefect flow. Individual task failures trigger automatic retries. A clean shutdown persists state and closes connections. Run history is accessible via the Prefect UI."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 2 issue created"
 
-      - name: Create Phase 3 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 3 – Testing Strategy" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 3
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 3 – Testing Strategy" \
+  --body "## Goal
 
 Implement a two-tier test suite (unit + integration) that runs entirely inside Docker, ensuring test parity with the production environment.
 
@@ -116,19 +117,18 @@ Implement a two-tier test suite (unit + integration) that runs entirely inside D
 
 ## Success criteria
 
-\`docker compose run test pytest tests/unit\` passes with no external network calls. \`docker compose run test pytest tests/integration\` passes with valid Kraken credentials.
+\`docker compose run test pytest tests/unit\` passes with no external network calls. \`docker compose run test pytest tests/integration\` passes with valid Kraken credentials."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 3 issue created"
 
-      - name: Create Phase 4 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 4 – Professional Persistence: PostgreSQL & Redis" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 4
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 4 – Professional Persistence: PostgreSQL & Redis" \
+  --body "## Goal
 
 Migrate all data storage from flat files to a two-tier database architecture. PostgreSQL handles structured historical data; Redis manages real-time active state.
 
@@ -156,19 +156,18 @@ Migrate all data storage from flat files to a two-tier database architecture. Po
 
 ## Success criteria
 
-The bot runs with no flat files. OHLC data is queryable from PostgreSQL. Active positions survive a bot restart via Redis. Existing data is migrated cleanly.
+The bot runs with no flat files. OHLC data is queryable from PostgreSQL. Active positions survive a bot restart via Redis. Existing data is migrated cleanly."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 4 issue created"
 
-      - name: Create Phase 5 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 5 – Code Quality: Linting & Type Safety" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 5
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 5 – Code Quality: Linting & Type Safety" \
+  --body "## Goal
 
 Enforce consistent formatting and type safety across the entire codebase.
 
@@ -186,19 +185,18 @@ Enforce consistent formatting and type safety across the entire codebase.
 
 ## Success criteria
 
-\`ruff check .\` and \`ruff format --check .\` pass cleanly. All public function signatures carry type annotations.
+\`ruff check .\` and \`ruff format --check .\` pass cleanly. All public function signatures carry type annotations."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 5 issue created"
 
-      - name: Create Phase 6 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 6 – CI/CD Pipeline" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 6
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 6 – CI/CD Pipeline" \
+  --body "## Goal
 
 Add lint and test quality gates that run inside Docker before any deployment step is allowed.
 
@@ -216,19 +214,18 @@ Add lint and test quality gates that run inside Docker before any deployment ste
 
 ## Success criteria
 
-A PR with a failing test or lint error is blocked from merging. The deploy workflow only runs after all checks pass on \`main\`.
+A PR with a failing test or lint error is blocked from merging. The deploy workflow only runs after all checks pass on \`main\`."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 6 issue created"
 
-      - name: Create Phase 7 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 7 – Data Architecture Documentation" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 7
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 7 – Data Architecture Documentation" \
+  --body "## Goal
 
 Document the V2 data architecture — the PostgreSQL schema and the Redis key-value structure — in \`README.md\` as the authoritative reference for understanding how the bot stores and accesses data.
 
@@ -243,19 +240,18 @@ Document the V2 data architecture — the PostgreSQL schema and the Redis key-va
 
 ## Success criteria
 
-A developer unfamiliar with the project can understand the full data model and how to query or inspect it using only the repository documentation.
+A developer unfamiliar with the project can understand the full data model and how to query or inspect it using only the repository documentation."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 7 issue created"
 
-      - name: Create Phase 8 issue
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api repos/${{ github.repository }}/issues \
-            -f title="Phase 8 – Observability: Grafana Dashboard" \
-            -F milestone=1 \
-            -f body="## Goal
+# ---------------------------------------------------------------------------
+# Phase 8
+# ---------------------------------------------------------------------------
+gh issue create \
+  --repo "${REPO}" \
+  --milestone "${MILESTONE}" \
+  --title "Phase 8 – Observability: Grafana Dashboard" \
+  --body "## Goal
 
 Integrate Grafana as a persistent observability layer, connected directly to PostgreSQL, so that market, performance, and system metrics are always visible and the environment is fully reproducible.
 
@@ -275,7 +271,9 @@ Integrate Grafana as a persistent observability layer, connected directly to Pos
 
 ## Success criteria
 
-\`docker compose up\` starts the bot, databases, and Grafana. The dashboard loads automatically with no manual configuration. Dashboard state persists across container restarts.
+\`docker compose up\` starts the bot, databases, and Grafana. The dashboard loads automatically with no manual configuration. Dashboard state persists across container restarts."
 
----
-*Part of the [BoTCoin V2 Roadmap](../blob/main/ROADMAP.md)*"
+echo "✓ Phase 8 issue created"
+
+echo ""
+echo "All 8 roadmap issues created successfully."
