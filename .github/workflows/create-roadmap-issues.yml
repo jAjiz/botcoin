@@ -18,11 +18,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 1 – Infrastructure First: Docker" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 1 – Infrastructure First: Docker" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Establish a fully containerized development and production environment. All subsequent phases build on top of this foundation.
 
@@ -50,11 +49,10 @@ Establish a fully containerized development and production environment. All subs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 2 – Managed Execution: Prefect Orchestration" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 2 – Managed Execution: Prefect Orchestration" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Replace the unmanaged \`while True\` loop in \`main.py\` with a Prefect-managed data pipeline, giving every session a structured lifecycle with native retries, observability, and graceful shutdown.
 
@@ -82,11 +80,10 @@ The bot runs as a Prefect flow. Individual task failures trigger automatic retri
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 3 – Testing Strategy" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 3 – Testing Strategy" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Implement a two-tier test suite (unit + integration) that runs entirely inside Docker, ensuring test parity with the production environment.
 
@@ -128,11 +125,10 @@ Implement a two-tier test suite (unit + integration) that runs entirely inside D
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 4 – Professional Persistence: PostgreSQL & Redis" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 4 – Professional Persistence: PostgreSQL & Redis" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Migrate all data storage from flat files to a two-tier database architecture. PostgreSQL handles structured historical data; Redis manages real-time active state.
 
@@ -169,11 +165,10 @@ The bot runs with no flat files. OHLC data is queryable from PostgreSQL. Active 
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 5 – Code Quality: Linting & Type Safety" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 5 – Code Quality: Linting & Type Safety" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Enforce consistent formatting and type safety across the entire codebase.
 
@@ -200,11 +195,10 @@ Enforce consistent formatting and type safety across the entire codebase.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 6 – CI/CD Pipeline" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 6 – CI/CD Pipeline" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Add lint and test quality gates that run inside Docker before any deployment step is allowed.
 
@@ -231,11 +225,10 @@ A PR with a failing test or lint error is blocked from merging. The deploy workf
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 7 – Data Architecture Documentation" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 7 – Data Architecture Documentation" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Document the V2 data architecture — the PostgreSQL schema and the Redis key-value structure — in \`README.md\` as the authoritative reference for understanding how the bot stores and accesses data.
 
@@ -259,11 +252,10 @@ A developer unfamiliar with the project can understand the full data model and h
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --milestone 1 \
-            --title "Phase 8 – Observability: Grafana Dashboard" \
-            --body "## Goal
+          gh api repos/${{ github.repository }}/issues \
+            -f title="Phase 8 – Observability: Grafana Dashboard" \
+            -F milestone=1 \
+            -f body="## Goal
 
 Integrate Grafana as a persistent observability layer, connected directly to PostgreSQL, so that market, performance, and system metrics are always visible and the environment is fully reproducible.
 
