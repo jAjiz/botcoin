@@ -1,0 +1,64 @@
+name: Create Roadmap Phase Issues
+
+on:
+  workflow_dispatch:
+    inputs:
+      milestone:
+        description: 'Milestone number to assign issues to'
+        required: false
+        default: '1'
+
+permissions:
+  issues: write
+
+jobs:
+  create-issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Create roadmap phase issues
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const phases = JSON.parse(
+              fs.readFileSync('.github/roadmap-issues.json', 'utf8')
+            );
+            const milestoneNumber = parseInt(
+              context.payload.inputs?.milestone ?? '1', 10
+            );
+            const MAX_PAGES = 20;
+
+            const existing = [];
+            let page = 1;
+            while (page <= MAX_PAGES) {
+              const response = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'all',
+                per_page: 100,
+                page
+              });
+              if (response.data.length === 0) break;
+              existing.push(...response.data);
+              page++;
+            }
+            const existingTitles = new Set(existing.map(i => i.title));
+
+            for (const phase of phases) {
+              if (existingTitles.has(phase.title)) {
+                console.log(`Skipping (already exists): ${phase.title}`);
+                continue;
+              }
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: phase.title,
+                body: phase.body,
+                milestone: milestoneNumber
+              });
+              console.log(`Created issue #${created.data.number}: ${phase.title}`);
+            }
