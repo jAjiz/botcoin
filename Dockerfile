@@ -11,9 +11,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt /tmp/requirements.txt
 
-# requirements.txt in this repository is UTF-16; convert to UTF-8 for pip.
-RUN python -c "from pathlib import Path; p=Path('/tmp/requirements.txt'); p.write_text(p.read_text(encoding='utf-16'), encoding='utf-8')" \
-    && pip install --upgrade pip \
+RUN pip install --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.txt
 
 FROM python:3.12-slim AS runtime
