@@ -492,6 +492,8 @@ docker compose down
 
 Optional (future data migration with PostgreSQL + Redis):
 
+> **Note:** This also starts the default `botc` service. To start only `postgres`/`redis`, add them explicitly: `docker compose --profile data up -d postgres redis`.
+
 ```bash
 docker compose --profile data up -d
 ```
