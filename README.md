@@ -464,44 +464,61 @@ All logs include timestamps and are organized by:
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Docker
+
+1. Copy the environment template:
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
 ```
 
-**Dependencies**:
-- `pandas` & `numpy`: Data analysis and vectorized calculations
-- `scipy`: Statistical signal processing for pivot detection
-- `krakenex`: Kraken exchange integration
-- `python-telegram-bot`: Telegram bot interface
-- `python-dotenv`: Environment configuration management
+2. Build and start the bot:
 
-### Local Execution
-
-1. **Configure Environment**:
-   
-   Create a `.env` file in the project root with the configuration variables shown in the [Environment Variables](#environment-variables) section above.
-
-2. **Run Bot**:
 ```bash
-python main.py
+docker compose up -d --build
+```
+
+3. Watch logs:
+
+```bash
+docker compose logs -f botc
+```
+
+4. Stop services:
+
+```bash
+docker compose down
+```
+
+Optional (future data migration with PostgreSQL + Redis):
+
+```bash
+docker compose --profile data up -d
 ```
 
 ### Analysis Tools
 
+Run analysis scripts using Docker:
+
 **Market Structure Analysis**:
 ```bash
-python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+docker compose run --rm botc python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
 ```
 
 **Backtest Strategy**:
 ```bash
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
+docker compose run --rm botc python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01
 ```
 
 **Parameter Optimization**:
 ```bash
+docker compose run --rm botc python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
+```
+
+Or run locally with Python:
+```bash
+python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
 python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
 ```
 
