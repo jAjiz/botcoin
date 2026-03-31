@@ -466,6 +466,15 @@ All logs include timestamps and are organized by:
 
 ### Docker
 
+Two Compose files are provided:
+
+| File | Purpose |
+|---|---|
+| `docker-compose.yml` | **Development** – bind-mounts `./data` and `./logs` so you can inspect files directly on the host. |
+| `docker-compose.prod.yml` | **Production (VPS)** – layered override that switches to named volumes (fixes Linux ownership for the non-root container user), enforces `restart: always`, and adds runtime hardening. |
+
+#### Development
+
 1. Copy the environment template:
 
 ```bash
@@ -497,6 +506,23 @@ Optional (future data migration with PostgreSQL + Redis):
 ```bash
 docker compose --profile data up -d
 ```
+
+#### Production (Linux VPS)
+
+Layer the production override on top of the base file:
+
+```bash
+# First deploy
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Watch logs
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f botc
+
+# Stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+```
+
+> **Note:** On production, `./data` and `./logs` are stored in Docker named volumes (`botc_data` and `botc_logs`). To find the exact runtime volume names run `docker volume ls | grep botc`, then inspect with `docker volume inspect <volume-name>` or copy files out with `docker cp`.
 
 ### Analysis Tools
 
