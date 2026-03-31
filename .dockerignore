@@ -1,0 +1,35 @@
+# Git and local metadata
+.git
+.gitignore
+
+# Python cache and virtual envs
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# Local runtime/state folders mounted in compose
+logs/
+data/
+
+# Secrets and local env files
+.env
+.env.*
+
+# Test and build artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+
+# Documentation and planning not needed in runtime image
+README.md
+ROADMAP.md
+plan/

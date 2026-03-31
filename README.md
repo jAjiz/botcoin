@@ -464,44 +464,89 @@ All logs include timestamps and are organized by:
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Docker
+
+Two Compose files are provided:
+
+| File | Purpose |
+|---|---|
+| `docker-compose.yml` | **Development** – bind-mounts `./data` and `./logs` so you can inspect files directly on the host. |
+| `docker-compose.prod.yml` | **Production (VPS)** – layered override that switches to named volumes (fixes Linux ownership for the non-root container user), enforces `restart: always`, and adds runtime hardening. |
+
+#### Development
+
+1. Copy the environment template:
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
 ```
 
-**Dependencies**:
-- `pandas` & `numpy`: Data analysis and vectorized calculations
-- `scipy`: Statistical signal processing for pivot detection
-- `krakenex`: Kraken exchange integration
-- `python-telegram-bot`: Telegram bot interface
-- `python-dotenv`: Environment configuration management
+2. Build and start the bot:
 
-### Local Execution
-
-1. **Configure Environment**:
-   
-   Create a `.env` file in the project root with the configuration variables shown in the [Environment Variables](#environment-variables) section above.
-
-2. **Run Bot**:
 ```bash
-python main.py
+docker compose up -d --build
 ```
+
+3. Watch logs:
+
+```bash
+docker compose logs -f botc
+```
+
+4. Stop services:
+
+```bash
+docker compose down
+```
+
+Optional (future data migration with PostgreSQL + Redis):
+
+> **Note:** This also starts the default `botc` service. To start only `postgres`/`redis`, add them explicitly: `docker compose --profile data up -d postgres redis`.
+
+```bash
+docker compose --profile data up -d
+```
+
+#### Production (Linux VPS)
+
+Layer the production override on top of the base file:
+
+```bash
+# First deploy
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Watch logs
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f botc
+
+# Stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+```
+
+> **Note:** On production, `./data` and `./logs` are stored in Docker named volumes (`botc_data` and `botc_logs`). To find the exact runtime volume names run `docker volume ls | grep botc`, then inspect with `docker volume inspect <volume-name>` or copy files out with `docker cp`.
 
 ### Analysis Tools
 
+Run analysis scripts using Docker:
+
 **Market Structure Analysis**:
 ```bash
-python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+docker compose run --rm botc python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
 ```
 
 **Backtest Strategy**:
 ```bash
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
+docker compose run --rm botc python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01
 ```
 
 **Parameter Optimization**:
 ```bash
+docker compose run --rm botc python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
+```
+
+Or run locally with Python:
+```bash
+python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
 python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
 ```
 
