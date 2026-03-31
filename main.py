@@ -53,11 +53,11 @@ def main():
             
             for pair in PAIRS.keys():
                 logging.info(f"--- Processing pair: [{pair}] ---")
-                if session_count % PARAM_SESSIONS == 0:
-                    calculate_trading_parameters(pair)
-
                 current_price = last_prices.get(pair, None)
                 current_atr = get_current_atr(pair)
+
+                if session_count % PARAM_SESSIONS == 0:
+                    calculate_trading_parameters(pair)
 
                 if current_price is None or current_atr is None:
                     logging.error(f"Could not fetch price or ATR. Skipping this pair.")
