@@ -9,7 +9,8 @@ This document outlines the improvement areas and phased plan for the next iterat
 - [Current State](#-current-state)
 - [Improvement Areas](#-improvement-areas)
 - [Phased Roadmap](#-phased-roadmap)
-  - [Phase 1 – Infrastructure First: Docker](#phase-1--infrastructure-first-docker)
+  - [Phase 0 - Setup AI-Assisted Development Environment (Completed)](#phase-0---setup-ai-assisted-development-environment-completed)
+  - [Phase 1 – Infrastructure First: Docker (Completed)](#phase-1--infrastructure-first-docker-completed)
   - [Phase 2 – Managed Execution: Prefect Orchestration](#phase-2--managed-execution-prefect-orchestration)
   - [Phase 3 – Testing Strategy](#phase-3--testing-strategy)
   - [Phase 4 – Professional Persistence: PostgreSQL & Redis](#phase-4--professional-persistence-postgresql--redis)
@@ -78,22 +79,41 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 1 – Infrastructure First: Docker
+### Phase 0 - Setup AI-Assisted Development Environment (Completed)
+
+**Tracking:** [Issue #19](https://github.com/jAjiz/BoTCoin/issues/19), merged in [PR #20](https://github.com/jAjiz/BoTCoin/pull/20)
+
+**Goal:** Establish a specialized AI-assisted development environment by integrating Awesome-Copilot resources. This ensures architectural consistency, security, and accelerated delivery for all subsequent V2 phases.
+
+**Scope:**
+
+- [x] Create the `.github/` infrastructure for AI assets:
+  - `.github/agents/`
+  - `.github/instructions/`
+  - `.github/skills/`
+- [x] Install and configure Awesome-Copilot recommended agents, instructions, and skills
+
+**Success criteria:** Copilot identifies and applies project-specific rules without manual prompting.
+
+---
+
+### Phase 1 – Infrastructure First: Docker (Completed)
+
+**Tracking:** [Issue #11](https://github.com/jAjiz/BoTCoin/issues/11), merged in [PR #22](https://github.com/jAjiz/BoTCoin/pull/22)
 
 **Goal:** Establish a fully containerized development and production environment. All subsequent phases build on top of this foundation.
 
 **Scope:**
 
-- [ ] Write a `Dockerfile` using a Python slim base image for the production runtime
-- [ ] Write a `docker-compose.yml` that:
-  - Defines the `botcoin` application service (builds from `Dockerfile`)
-  - Mounts the `data/` directory as a named volume for local persistence
+- [x] Write a `Dockerfile` using a Python slim base image for the production runtime
+- [x] Write a `docker-compose.yml` that:
+  - Defines the `botc` application service (builds from `Dockerfile`)
   - Loads credentials from a local `.env` file (never baked into the image)
   - Includes `postgres` and `redis` service stubs (to be fully configured in Phase 4)
-  - Supports running the bot (`main.py`) and the analysis scripts that have `if __name__ == "__main__"` entry points (`trading/market_analyzer.py`, `trading/backtest.py`)
-- [ ] Add a `.dockerignore` file to exclude `.env`, `__pycache__`, `data/`, and other non-essential files
-- [ ] Add a `.env.example` file documenting every supported environment variable with its type, default value, and a short description
-- [ ] Update the `README.md` Quick Start section with Docker-based instructions
+  - Supports running the bot (`main.py`) and the analysis scripts (`trading/market_analyzer.py`, `trading/backtest.py`)
+- [x] Add a `.dockerignore` file to exclude `.env`, `__pycache__`, `data/`, and other non-essential files
+- [x] Add a `.env.example` file documenting every supported environment variable
+- [x] Update the `README.md` Quick Start section with Docker-based instructions
 
 **Success criteria:** `docker compose up` starts the bot with a valid `.env` file, matching current manual setup behavior. No Python environment setup is required on the host machine.
 
