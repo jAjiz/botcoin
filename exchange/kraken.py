@@ -1,5 +1,7 @@
 import krakenex
 import logging
+import threading
+import time
 import pandas as pd
 from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
@@ -7,13 +9,42 @@ from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+## Kraken API rate limit: 1 call per second for public endpoints. 
+# We implement a simple locking mechanism to ensure we respect this limit across all threads.
+KRAKEN_MIN_CALL_INTERVAL_SECONDS = 1.0
+_rate_limit_lock = threading.Lock()
+_last_public_call_ts = 0.0
+
+
+def _wait_rate_limit():
+    global _last_public_call_ts
+
+    _rate_limit_lock.acquire()
+    try:
+        now = time.monotonic()
+        remaining = KRAKEN_MIN_CALL_INTERVAL_SECONDS - (now - _last_public_call_ts)
+        if remaining > 0:
+            time.sleep(remaining)
+        _last_public_call_ts = time.monotonic()
+    finally:
+        _rate_limit_lock.release()
+
+
+def _query_public_limited(method, data=None):
+    _wait_rate_limit()
+    if data is None:
+        return api.query_public(method)
+    return api.query_public(method, data)
+
+
 api = krakenex.API()
 api.key = KRAKEN_API_KEY
 api.secret = KRAKEN_API_SECRET
 
+
 def get_asset_pairs():
     try:
-        response = api.query_public("AssetPairs")
+        response = _query_public_limited("AssetPairs")
         if "error" in response and response["error"]:
             raise Exception(response["error"])
         return response.get("result", {})
@@ -66,7 +97,7 @@ def get_order_status(order_id):
 
 def get_last_prices(pairs_dict):
     try:
-        response = api.query_public("Ticker", {"pair": ",".join(pairs_dict.keys())})
+        response = _query_public_limited("Ticker", {"pair": ",".join(pairs_dict.keys())})
         if "error" in response and response["error"]:
             raise Exception(response["error"])
         prices = {}
@@ -97,14 +128,12 @@ def place_limit_order(pair, side, price, volume):
         return None
     
 
-# Output format: DataFrame indexed by dtime (UTC),
-# columns = time, open, high, low, close, vwap, volume, count
 def fetch_ohlc_data(pair, interval, since=None):
     data = {"pair": pair, "interval": interval}
     if since is not None:
         data["since"] = since
     try:
-        response = api.query_public("OHLC", data=data)
+        response = _query_public_limited("OHLC", data)
         if "error" in response and response["error"]:
             raise Exception(response["error"])
         result_pair = list(response["result"].keys())[0]

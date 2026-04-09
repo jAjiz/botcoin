@@ -12,6 +12,7 @@ This document outlines the improvement areas and phased plan for the next iterat
   - [Phase 0 - Setup AI-Assisted Development Environment (Completed)](#phase-0---setup-ai-assisted-development-environment-completed)
   - [Phase 1 – Infrastructure First: Docker (Completed)](#phase-1--infrastructure-first-docker-completed)
   - [Phase 2 – Managed Execution: Prefect Orchestration](#phase-2--managed-execution-prefect-orchestration)
+    - [Phase 2.1 – API Performance & Data Quality (In Progress)](#phase-21--api-performance--data-quality-in-progress)
   - [Phase 3 – Testing Strategy](#phase-3--testing-strategy)
   - [Phase 4 – Professional Persistence: PostgreSQL & Redis](#phase-4--professional-persistence-postgresql--redis)
   - [Phase 5 – Code Quality: Linting & Type Safety](#phase-5--code-quality-linting--type-safety)
@@ -137,6 +138,18 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 - [ ] Update `docker-compose.yml` to include the Prefect server as an optional local service for UI-based run inspection
 
 **Success criteria:** The bot runs as a Prefect flow. Individual task failures trigger automatic retries. A clean shutdown persists state and closes connections. Run history is accessible via the Prefect UI.
+
+---
+
+#### Phase 2.1 – API Efficiency (Completed)
+
+**Goal:** Improve API efficiency and data reliability by implementing rate limiting on public Kraken calls, ensuring OHLC data excludes incomplete candles, and streamlining the main bot loop.
+
+**Scope:**
+
+- [x] Implement a thread-safe, module-level rate limiter to ensure all public API calls respect the 1-second minimum interval.
+- [x] Use the penultimate ATR value (`iloc[-2]`) instead of the latest value to ensure position calculations are based only on fully closed candles
+- [x] Remove unnecessary blanket delays (`time.sleep(1)`) from the main loop and error handlers.
 
 ---
 

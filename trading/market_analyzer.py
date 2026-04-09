@@ -53,7 +53,7 @@ def get_current_atr(pair):
         df["ATR"] = df["TR"].rolling(ATR_PERIOD).mean()
         df.to_csv(atr_file)
 
-        current_atr = df["ATR"].iloc[-1]
+        current_atr = df["ATR"].iloc[-2]
         return current_atr
     except Exception as e:
         logging.error(f"Error getting ATR for {pair}: {e}")
