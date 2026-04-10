@@ -148,6 +148,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 - [x] Implement a thread-safe, module-level rate limiter to ensure all public API calls respect the 1-second minimum interval.
 - [x] Use the penultimate ATR value (`iloc[-2]`) instead of the latest value to ensure position calculations are based only on fully closed candles
 - [x] Remove unnecessary blanket delays (`time.sleep(1)`) from the main loop and error handlers.
+- [x] Add a `TELEGRAM_ENABLED` flag (`.env`) to disable Telegram initialization and notifications without touching any call site
 
 ---
 
