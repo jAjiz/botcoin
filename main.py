@@ -1,8 +1,10 @@
-import time
 import sys
+import time
 import core.logging as logging
 import core.runtime as runtime
 import services.telegram as telegram
+from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 from exchange.kraken import get_balance, get_last_prices, get_order_status
 from core.state import load_trailing_state, save_trailing_state, save_closed_position
 from core.config import SLEEPING_INTERVAL, PAIRS, PARAM_SESSIONS, ATR_DESV_LIMIT
@@ -18,76 +20,81 @@ from trading.positions_manager import (
     update_stop_price,
 )
 
+_session_count = 0
+
+
+def trading_session():
+    global _session_count
+
+    if telegram.BOT_PAUSED:
+        logging.info("Bot is paused. Skipping session.\n")
+        return
+
+    logging.info("======== STARTING SESSION ========")
+    trailing_state = load_trailing_state()
+
+    current_balance = get_balance()
+    if not current_balance:
+        logging.error("Could not fetch balance. Skipping session.\n")
+        return
+    runtime.update_balance(current_balance)
+
+    last_prices = get_last_prices(PAIRS)
+    if not last_prices:
+        logging.error("Could not fetch prices. Skipping session.\n")
+        return
+
+    for pair in PAIRS.keys():
+        logging.info(f"--- Processing pair: [{pair}] ---")
+        current_price = last_prices.get(pair, None)
+        current_atr = get_current_atr(pair)
+
+        if _session_count % PARAM_SESSIONS == 0:
+            calculate_trading_parameters(pair)
+
+        if current_price is None or current_atr is None:
+            logging.error(f"Could not fetch price or ATR. Skipping this pair.")
+            continue
+
+        vol_level = get_volatility_level(pair, current_atr)
+        logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
+        runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
+
+        if check_closed_position(pair, trailing_state):
+            create_position(pair, current_balance, last_prices, current_atr, trailing_state)
+
+        if check_open_position(pair, trailing_state):
+            update_trailing_state(pair, current_balance, last_prices, current_atr, trailing_state)
+
+    save_trailing_state(trailing_state)
+    runtime.update_trailing_state(trailing_state)
+
+    _session_count += 1
+    logging.info(f"Session complete. Next run in {SLEEPING_INTERVAL}s.\n")
+
 
 def main():
-    # Validate configuration before starting
     if not validate_config():
         sys.exit(1)
-    
+
+    telegram.initialize_telegram()
+
+    scheduler = BlockingScheduler()
+    scheduler.add_job(
+        trading_session,
+        trigger=IntervalTrigger(seconds=SLEEPING_INTERVAL),
+        max_instances=1,
+        next_run_time=__import__("datetime").datetime.now(),
+    )
+
     try:
-        telegram.initialize_telegram()
-        session_count = 0
-
-        while True:
-            if telegram.BOT_PAUSED:
-                logging.info("Bot is paused. Sleeping...\n")
-                time.sleep(SLEEPING_INTERVAL)
-                continue
-
-            logging.info("======== STARTING SESSION ========")
-            trailing_state = load_trailing_state()
-
-            current_balance = get_balance()       
-            if not current_balance:
-                logging.error(f"Could not fetch balance. Skipping session and retrying in {SLEEPING_INTERVAL}s.\n")
-                time.sleep(SLEEPING_INTERVAL)
-                continue
-            else:
-                runtime.update_balance(current_balance)
-
-            last_prices = get_last_prices(PAIRS)
-            if not last_prices:
-                logging.error(f"Could not fetch prices. Skipping session and retrying in {SLEEPING_INTERVAL}s.\n")
-                time.sleep(SLEEPING_INTERVAL)
-                continue
-            
-            for pair in PAIRS.keys():
-                logging.info(f"--- Processing pair: [{pair}] ---")
-                current_price = last_prices.get(pair, None)
-                current_atr = get_current_atr(pair)
-
-                if session_count % PARAM_SESSIONS == 0:
-                    calculate_trading_parameters(pair)
-
-                if current_price is None or current_atr is None:
-                    logging.error(f"Could not fetch price or ATR. Skipping this pair.")
-                    continue
-                else:
-                    vol_level = get_volatility_level(pair, current_atr)
-                    logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
-                    runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
-
-                if check_closed_position(pair, trailing_state):
-                    create_position(pair, current_balance, last_prices, current_atr, trailing_state)
-                
-                if check_open_position(pair, trailing_state):
-                    update_trailing_state(pair, current_balance, last_prices, current_atr, trailing_state)
-                    
-                time.sleep(1)  # To avoid hitting rate limits
-            
-            save_trailing_state(trailing_state)
-            runtime.update_trailing_state(trailing_state)
-
-            session_count += 1
-            logging.info(f"Session complete. Sleeping for {SLEEPING_INTERVAL}s.\n")
-            time.sleep(SLEEPING_INTERVAL)
-
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("BoTC stopped manually by user.\n", to_telegram=True)
     except Exception as e:
         logging.error(f"BoTC encountered an error: {e}\n", to_telegram=True)
-    except KeyboardInterrupt:
-        logging.info("BoTC stopped manually by user.\n", to_telegram=True)
     finally:
-        telegram.stop_telegram_thread()  
+        telegram.stop_telegram_thread()
 
 
 def check_closed_position(pair, trailing_state):
