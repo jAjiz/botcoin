@@ -130,12 +130,12 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 - [ ] Refactor `main.py` to replace the `while True` loop with an APScheduler entrypoint:
   - Create a single `IntervalTrigger` job for the trading session
   - Configure `max_instances=1` to prevent overlapping runs
-  - Keep retry/backoff logic explicit around Kraken API calls
 - [ ] Implement graceful shutdown:
-  - Register signal handlers (`SIGTERM`, `SIGINT`) that call `scheduler.shutdown(wait=True)`
   - Allow the current running job to complete and persist state before exiting
+  - Register signal handlers (`SIGTERM`, `SIGINT`) that call `scheduler.shutdown(wait=True)`
+- [ ] Implement retry logic around read-only API calls (balance, prices, and ATR)
 
-**Success criteria:** The bot runs as a single APScheduler periodic job with no overlapping executions. Transient API failures are retried with backoff. `SIGTERM`/`SIGINT` triggers a clean shutdown that lets the current job finish.
+**Success criteria:** The bot runs as a single APScheduler periodic job with no overlapping executions. Read-only API failures are retried automatically. `SIGTERM`/`SIGINT` triggers a clean shutdown that lets the current job finish.
 
 ---
 
