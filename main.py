@@ -1,5 +1,7 @@
 import sys
 import signal
+import time
+from datetime import datetime
 import core.logging as logging
 import core.runtime as runtime
 import services.telegram as telegram
@@ -25,13 +27,15 @@ READ_ONLY_RETRY_ATTEMPTS = 3
 
 
 def call_with_retry(func, *args):
-    for _ in range(READ_ONLY_RETRY_ATTEMPTS):
+    for attempt in range(READ_ONLY_RETRY_ATTEMPTS):
         try:
             result = func(*args)
             if result is not None:
                 return result
         except Exception:
-            continue
+            pass
+        if attempt < READ_ONLY_RETRY_ATTEMPTS - 1:
+            time.sleep(1)
 
     return None
 
@@ -98,7 +102,7 @@ def main():
         trading_session,
         trigger=IntervalTrigger(seconds=SLEEPING_INTERVAL),
         max_instances=1,
-        next_run_time=__import__("datetime").datetime.now(),
+        next_run_time=datetime.now(),
     )
 
     def _handle_shutdown(signum, _frame):
