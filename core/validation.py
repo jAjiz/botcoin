@@ -3,6 +3,7 @@ from exchange.kraken import build_pairs_map
 from core.config import (
     KRAKEN_API_KEY,
     KRAKEN_API_SECRET,
+    TELEGRAM_ENABLED,
     TELEGRAM_TOKEN,
     TELEGRAM_USER_ID,
     TELEGRAM_POLL_INTERVAL,
@@ -22,15 +23,16 @@ def validate_common_params(errors):
     if not KRAKEN_API_SECRET:
         errors.append("KRAKEN_API_SECRET is missing")
 
-    # Telegram Bot configuration
-    if not TELEGRAM_TOKEN:
-        errors.append("TELEGRAM_TOKEN is missing")
-    if not TELEGRAM_USER_ID:
-        errors.append("TELEGRAM_USER_ID is missing")
-    elif not TELEGRAM_USER_ID.isdigit() or int(TELEGRAM_USER_ID) <= 0:
-        errors.append("TELEGRAM_USER_ID must be a positive integer")
-    if TELEGRAM_POLL_INTERVAL < 0:
-        errors.append("TELEGRAM_POLL_INTERVAL must be a non-negative integer")
+    # Telegram Bot configuration (only when Telegram is enabled)
+    if TELEGRAM_ENABLED:
+        if not TELEGRAM_TOKEN:
+            errors.append("TELEGRAM_TOKEN is missing")
+        if not TELEGRAM_USER_ID:
+            errors.append("TELEGRAM_USER_ID is missing")
+        elif not TELEGRAM_USER_ID.isdigit() or int(TELEGRAM_USER_ID) <= 0:
+            errors.append("TELEGRAM_USER_ID must be a positive integer")
+        if TELEGRAM_POLL_INTERVAL < 0:
+            errors.append("TELEGRAM_POLL_INTERVAL must be a non-negative integer")
 
     # Bot settings
     if SLEEPING_INTERVAL <= 0:

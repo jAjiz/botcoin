@@ -11,7 +11,8 @@ This document outlines the improvement areas and phased plan for the next iterat
 - [Phased Roadmap](#-phased-roadmap)
   - [Phase 0 - Setup AI-Assisted Development Environment (Completed)](#phase-0---setup-ai-assisted-development-environment-completed)
   - [Phase 1 – Infrastructure First: Docker (Completed)](#phase-1--infrastructure-first-docker-completed)
-  - [Phase 2 – Managed Execution: Prefect Orchestration](#phase-2--managed-execution-prefect-orchestration)
+  - [Phase 2 – Managed Execution: APScheduler](#phase-2--managed-execution-apscheduler)
+    - [Phase 2.1 – API Efficiency (Completed)](#phase-21--api-efficiency-completed)
   - [Phase 3 – Testing Strategy](#phase-3--testing-strategy)
   - [Phase 4 – Professional Persistence: PostgreSQL & Redis](#phase-4--professional-persistence-postgresql--redis)
   - [Phase 5 – Code Quality: Linting & Type Safety](#phase-5--code-quality-linting--type-safety)
@@ -46,8 +47,8 @@ Key gaps identified before starting V2 work:
 ### 1. Infrastructure First: Docker
 All development, testing, and production execution must happen inside containers. This eliminates environment drift, makes every dependency explicit, and ensures the same image is tested in CI and deployed to the VM. Docker Compose also acts as the local service registry, co-locating the bot with its database and cache dependencies.
 
-### 2. Managed Execution: Prefect Orchestration
-The current `while True` loop in `main.py` is opaque: failed API calls are swallowed, retries are manual, and there is no execution history. Replacing it with Prefect Flows and Tasks gives every session a structured lifecycle with native retry policies, a real-time execution UI, and logs captured by the orchestration layer rather than scattered across files.
+### 2. Managed Execution: APScheduler
+The current `while True` loop in `main.py` is opaque: failed API calls are swallowed, retries are manual, and there is no execution history. Replacing it with APScheduler gives each run a clear lifecycle with deterministic scheduling, centralized logging, and robust process-level shutdown handling without introducing a full orchestration platform.
 
 ### 3. Testing Strategy
 No automated tests exist. A two-tier test suite — unit tests for pure trading logic and integration tests for API connectivity and database persistence — provides the confidence needed to refactor safely and deploy reliably. All tests must run inside the Docker environment to ensure parity with production.
@@ -119,24 +120,35 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 2 – Managed Execution: Prefect Orchestration
+### Phase 2 – Managed Execution: APScheduler
 
-**Goal:** Replace the unmanaged `while True` loop in `main.py` with a Prefect-managed data pipeline, giving every session a structured lifecycle with native retries, observability, and graceful shutdown.
+**Goal:** Replace the unmanaged `while True` loop in `main.py` with an APScheduler-driven periodic execution model, giving every session predictable scheduling, robust retry control, and graceful shutdown.
 
 **Scope:**
 
-- [ ] Add `prefect` as a runtime dependency
-- [ ] Refactor `main.py` to use Prefect decorators:
-  - Annotate the top-level trading session as a `@flow` (`botcoin_session_flow`)
-  - Annotate each logical step as a `@task`
-  - Configure retries on Kraken API tasks to replace manual error-and-sleep logic
-- [ ] Route all task logs through Prefect's logging layer so execution history is visible in the Prefect UI
+- [ ] Add `apscheduler` as a runtime dependency
+- [ ] Refactor `main.py` to replace the `while True` loop with an APScheduler entrypoint:
+  - Create a single `IntervalTrigger` job for the trading session
+  - Configure `max_instances=1` to prevent overlapping runs
 - [ ] Implement graceful shutdown:
-  - Register signal handlers (`SIGTERM`, `SIGINT`) that set a shutdown flag
-  - On shutdown, allow the current session to complete, persist state to the database (Phase 4), and close all database connections cleanly before exiting
-- [ ] Update `docker-compose.yml` to include the Prefect server as an optional local service for UI-based run inspection
+  - Allow the current running job to complete and persist state before exiting
+  - Register signal handlers (`SIGTERM`, `SIGINT`) that call `scheduler.shutdown(wait=True)`
+- [ ] Implement retry logic around read-only API calls (balance, prices, and ATR)
 
-**Success criteria:** The bot runs as a Prefect flow. Individual task failures trigger automatic retries. A clean shutdown persists state and closes connections. Run history is accessible via the Prefect UI.
+**Success criteria:** The bot runs as a single APScheduler periodic job with no overlapping executions. Read-only API failures are retried automatically. `SIGTERM`/`SIGINT` triggers a clean shutdown that lets the current job finish.
+
+---
+
+#### Phase 2.1 – API Efficiency (Completed)
+
+**Goal:** Improve API efficiency and data reliability by implementing rate limiting on public Kraken calls, ensuring OHLC data excludes incomplete candles, and streamlining the main bot loop.
+
+**Scope:**
+
+- [x] Implement a thread-safe, module-level rate limiter to ensure all public API calls respect the 1-second minimum interval.
+- [x] Use the penultimate ATR value (`iloc[-2]`) instead of the latest value to ensure position calculations are based only on fully closed candles
+- [x] Remove unnecessary blanket delays (`time.sleep(1)`) from the main loop and error handlers.
+- [x] Add a `TELEGRAM_ENABLED` flag (`.env`) to disable Telegram initialization and notifications without touching any call site
 
 ---
 
@@ -219,7 +231,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
   - `trading/` modules
   - `services/telegram.py`
 - [ ] Refactor repeated patterns into shared utilities (e.g., database client factory, Redis key builders)
-- [ ] Review and align exception handling: recoverable errors (log and retry via Prefect) vs. fatal errors (log and exit)
+- [ ] Review and align exception handling: recoverable errors (log and retry/backoff in-session) vs. fatal errors (log and exit)
 
 **Success criteria:** `ruff check .` and `ruff format --check .` pass cleanly. All public function signatures carry type annotations.
 
@@ -276,7 +288,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 - [ ] Create a comprehensive dashboard covering:
   - **Market metrics**: OHLC price history and ATR per pair
   - **Performance metrics**: closed position PnL over time, win/loss ratio, cumulative return
-  - **System metrics**: session execution history (from Prefect), bot uptime, error rate
+  - **System metrics**: scheduler run history (from application logs/postgres events), bot uptime, error rate
 - [ ] Persist the dashboard JSON definition in the repository (`grafana/dashboards/`) so it is provisioned automatically on `docker compose up`
 - [ ] Document the Grafana setup in `README.md` (port, default credentials, how to access)
 
@@ -292,7 +304,7 @@ The following are intentionally excluded from the V2 roadmap:
 - **Trading/management web UI** – Telegram interface remains the primary control surface; Grafana covers observability
 - **Managed cloud databases** – PostgreSQL and Redis run as Docker Compose services; no RDS, ElastiCache, or equivalent managed services
 - **Cloud infrastructure changes** – GCP free-tier VPS deployment model is retained; no Kubernetes or container orchestration platforms
-- **Full async rewrite** – Prefect handles concurrency at the flow/task level; a deeper async rewrite of all modules is deferred
+- **Full async rewrite** – APScheduler covers periodic orchestration needs; a deeper async rewrite of all modules is deferred
 
 ---
 

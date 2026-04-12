@@ -1,6 +1,7 @@
 import os
 import logging
 import services.telegram as telegram
+from core.config import TELEGRAM_ENABLED
 from logging.handlers import TimedRotatingFileHandler
 
 os.makedirs("logs", exist_ok=True)
@@ -19,15 +20,15 @@ logging.basicConfig(
 
 def info(msg, to_telegram=False):
     logging.info(msg)
-    if to_telegram:
+    if to_telegram and TELEGRAM_ENABLED:
         telegram.send_notification(msg)
 
 def warning(msg, to_telegram=False):
     logging.warning(msg)
-    if to_telegram:
+    if to_telegram and TELEGRAM_ENABLED:
         telegram.send_notification("⚠️ " + msg)
 
 def error(msg, to_telegram=False):
     logging.error(msg)
-    if to_telegram:
+    if to_telegram and TELEGRAM_ENABLED:
         telegram.send_notification("❌ " + msg)
