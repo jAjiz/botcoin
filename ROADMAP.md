@@ -15,10 +15,11 @@ This document outlines the improvement areas and phased plan for the next iterat
     - [Phase 2.1 – API Efficiency (Completed)](#phase-21--api-efficiency-completed)
   - [Phase 3 – Testing Strategy](#phase-3--testing-strategy)
   - [Phase 4 – Professional Persistence: PostgreSQL & Redis](#phase-4--professional-persistence-postgresql--redis)
-  - [Phase 5 – Code Quality: Linting & Type Safety](#phase-5--code-quality-linting--type-safety)
-  - [Phase 6 – CI/CD Pipeline](#phase-6--cicd-pipeline)
-  - [Phase 7 – Data Architecture Documentation](#phase-7--data-architecture-documentation)
-  - [Phase 8 – Observability: Grafana Dashboard](#phase-8--observability-grafana-dashboard)
+  - [Phase 5 – REST API Layer: FastAPI](#phase-5--rest-api-layer-fastapi)
+  - [Phase 6 – Code Quality: Linting & Type Safety](#phase-6--code-quality-linting--type-safety)
+  - [Phase 7 – CI/CD Pipeline](#phase-7--cicd-pipeline)
+  - [Phase 8 – Data Architecture Documentation](#phase-8--data-architecture-documentation)
+  - [Phase 9 – Observability: Grafana Dashboard](#phase-9--observability-grafana-dashboard)
 - [Out of Scope](#-out-of-scope)
 
 ---
@@ -60,16 +61,19 @@ The flat-file persistence model (JSON for state, CSV for history) has no schema 
 
 Both services are defined in `docker-compose.yml`, requiring no external infrastructure.
 
-### 5. Code Quality: Linting & Type Safety
+### 5. REST API Layer: FastAPI
+The bot's internal state is currently accessed directly by the Telegram service via shared in-process objects. Introducing a FastAPI service as the single external interface decouples every consumer — Telegram, future UIs, and external integrations — from the bot's internals, making each service independently deployable and testable.
+
+### 6. Code Quality: Linting & Type Safety
 Consistent formatting and type annotations improve IDE support, reduce cognitive overhead, and make the codebase more accessible for future contributors. `ruff` provides fast, zero-config linting and formatting as a single tool.
 
-### 6. CI/CD Pipeline
+### 7. CI/CD Pipeline
 The current pipeline deploys on every push to `main` with no validation. Tests must run inside Docker before any deployment step is allowed, ensuring what is tested is exactly what is deployed.
 
-### 7. Data Architecture Documentation
+### 8. Data Architecture Documentation
 With a two-tier persistence layer in place, the data model must be documented explicitly. The PostgreSQL schema (ERD) and the Redis key-value structure should be added to `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
-### 8. Observability: Grafana Dashboard
+### 9. Observability: Grafana Dashboard
 With structured data in PostgreSQL, a Grafana service can expose market metrics, trading performance, and system health as persistent, queryable dashboards. Running Grafana as a Docker Compose service keeps the observability layer co-located with the rest of the stack and reproducible with a single `docker compose up`.
 
 ---
@@ -217,7 +221,29 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 5 – Code Quality: Linting & Type Safety
+### Phase 5 – REST API Layer: FastAPI
+
+**Goal:** Introduce a FastAPI service as the single interface for all external data access and bot control, decoupling Telegram and any future consumer from the bot's internal state.
+
+**Scope:**
+
+- [ ] Add `fastapi` and `uvicorn` as runtime dependencies
+- [ ] Implement the following endpoints:
+  - `GET /market/{pair}` – current price, ATR, volatility level
+  - `GET /positions` and `GET /positions/{pair}` – open positions with estimated P&L
+  - `GET /balance` – current portfolio balance
+  - `POST /control/pause` and `POST /control/resume` – bot control commands
+- [ ] Store the pause/resume control flag in a `bot_control` table in PostgreSQL, replacing the current in-memory `BOT_PAUSED` variable in `services/telegram.py`
+- [ ] Refactor `services/telegram.py` to consume the FastAPI endpoints instead of reading directly from `core/runtime` shared state
+- [ ] Add the `api` service to `docker-compose.yml` as an independent container
+- [ ] Add the `telegram` service to `docker-compose.yml` as an independent container, separated from the bot service
+- [ ] Document all endpoints via FastAPI's auto-generated Swagger UI
+
+**Success criteria:** Telegram communicates exclusively through the API. The bot, API, and Telegram run as three independent Docker services. A future UI or integration can consume the API with no changes to the bot or Telegram service.
+
+---
+
+### Phase 6 – Code Quality: Linting & Type Safety
 
 **Goal:** Enforce consistent formatting and type safety across the entire codebase.
 
@@ -237,7 +263,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 6 – CI/CD Pipeline
+### Phase 7 – CI/CD Pipeline
 
 **Goal:** Add lint and test quality gates that run inside Docker before any deployment step is allowed.
 
@@ -257,7 +283,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 7 – Data Architecture Documentation
+### Phase 8 – Data Architecture Documentation
 
 **Goal:** Document the V2 data architecture — the PostgreSQL schema and the Redis key-value structure — in `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
@@ -274,7 +300,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 8 – Observability: Grafana Dashboard
+### Phase 9 – Observability: Grafana Dashboard
 
 **Goal:** Integrate Grafana as a persistent observability layer, connected directly to PostgreSQL, so that market, performance, and system metrics are always visible and the environment is fully reproducible.
 
