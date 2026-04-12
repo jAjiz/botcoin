@@ -205,7 +205,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 - [ ] Write a one-time migration script (`scripts/migrate_to_postgres.py`) to import existing CSV and JSON data into PostgreSQL on upgrade
 
 #### Redis (active trailing stop state)
-- [ ] Define the Redis key-value schema (documented in Phase 7):
+- [ ] Define the Redis key-value schema (documented in Phase 8):
   - Active position: `botcoin:state:{pair}` → JSON-serialised position dict (mirrors current `trailing_state.json` structure per pair)
   - Bot control flag: `botcoin:control:paused` → `"1"` / `"0"` (replaces `telegram.BOT_PAUSED` in-memory flag)
 - [ ] Update `core/state.py`'s `load_trailing_state` and `save_trailing_state` to read/write from Redis
