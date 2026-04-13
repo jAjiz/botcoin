@@ -159,7 +159,3 @@ def fetch_ohlc_data(pair, interval, since=None):
     except Exception as e:
         logging.error(f"Error fetching OHLC data for {pair}: {e}")
         return None
-
-
-if __name__ == "__main__":
-    print(get_balance())
