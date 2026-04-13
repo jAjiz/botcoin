@@ -3,13 +3,7 @@ import numpy as np
 import sys
 import os
 from datetime import datetime, timedelta
-from pathlib import Path
 from scipy.signal import argrelextrema
-
-# Ensure sibling packages are importable when running as a script.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 import core.logging as logging
 from core.config import MARKET_ANALYZER, CANDLE_TIMEFRAME, MARKET_DATA_DAYS, ATR_PERIOD
