@@ -36,26 +36,8 @@ services:
     networks:
       - botc_backend
 
-  redis:
-    image: redis:7.2-alpine
-    container_name: botc-redis
-    profiles: ["data"]
-    restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    networks:
-      - botc_backend
-
 volumes:
   pg_data:
-  redis_data:
 
 networks:
   botc_backend:
