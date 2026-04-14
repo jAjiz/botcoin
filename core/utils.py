@@ -1,5 +1,5 @@
 import time
-import pandas as pd
+
 
 def now_str():
     return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
@@ -20,6 +20,7 @@ def print_statistics(events, vol_level, title):
         print(f"\nNo events detected for {title}\n")
         return
 
+    import pandas as pd
     s = pd.Series(k_values)
     print(f"\n=== {title} ===")
     print(f"Events: {len(s)} | Average: {s.mean():.2f} ATR")

@@ -147,7 +147,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 #### Phase 2.1 – API Efficiency (Completed)
 
-**Tracking:** [Issue #23](https://github.com/jAjiz/BoTCoin/issues/12), merged in [PR #24](https://github.com/jAjiz/BoTCoin/pull/24)
+**Tracking:** [Issue #23](https://github.com/jAjiz/BoTCoin/issues/23), merged in [PR #24](https://github.com/jAjiz/BoTCoin/pull/24)
 
 **Goal:** Improve API efficiency and data reliability by implementing rate limiting on public Kraken calls, ensuring OHLC data excludes incomplete candles, and streamlining the main bot loop.
 
