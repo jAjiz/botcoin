@@ -16,6 +16,7 @@ BoTCoin is a 24/7 autonomous digital asset management system that analyzes marke
 - [Configuration & Deployment](#-configuration--deployment)
 - [Quick Start](#-quick-start)
 - [Project Structure](#-project-structure)
+- [Testing](#-testing)
 - [Security Considerations](#-security-considerations)
 - [Performance Metrics](#-performance-metrics)
 - [Technical Highlights](#-technical-highlights)
@@ -285,7 +286,7 @@ The system sends real-time notifications for:
 
 **Usage**:
 ```bash
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01 MAX_OPS=50
+PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01 MAX_OPS=50
 ```
 
 ### Optimizer Module
@@ -304,7 +305,7 @@ python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01
 
 **Usage**:
 ```bash
-python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26 TRAIN_SPLIT=0.7
+PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26 TRAIN_SPLIT=0.7
 ```
 
 ### ⚠️ Transparency Note
@@ -371,6 +372,46 @@ ETHEUR_STOP_PCT_HH=0.90            # Stop percentile for Very High volatility (9
   - Per side: `PAIR_SELL_K_ACT`, `PAIR_BUY_K_ACT`, `PAIR_SELL_MIN_MARGIN`, `PAIR_BUY_MIN_MARGIN`
 - If **K_ACT** is defined, activation uses: `activation_distance = K_ACT * ATR`
 - If **K_ACT** is not defined, activation uses: `activation_distance = K_STOP * ATR + MIN_MARGIN * entry_price`
+
+## 🧪 Testing
+
+The project uses a two-tier pytest strategy with Docker-first execution and an enforced coverage gate.
+
+- **Unit tests** (`tests/unit`): pure logic tests for `core/`, `trading/`, and mocked exchange wrappers in `exchange/`.
+- **Integration tests** (`tests/integration`): optional live Kraken connectivity checks, skipped by default unless explicitly enabled.
+- **Coverage gate**: `pytest.ini` enforces `--cov-fail-under=80` across `core`, `trading`, and `exchange`.
+
+### Local setup (without Docker)
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests
+```
+
+### Docker setup (recommended for parity)
+
+```bash
+docker compose -f docker-compose.test.yml build test
+docker compose -f docker-compose.test.yml run --rm test pytest tests
+```
+
+The dedicated `test` service in `docker-compose.test.yml` sets `PYTHONPATH=/app`, so the container resolves the repo's flat module layout the same way as the local environment.
+
+To run live Kraken integration tests, set:
+
+```bash
+RUN_LIVE_INTEGRATION=true
+KRAKEN_API_KEY=...
+KRAKEN_API_SECRET=...
+```
+
+Or override only for a single Docker run:
+
+```bash
+docker compose -f docker-compose.test.yml run --rm -e RUN_LIVE_INTEGRATION=true test pytest tests/integration
+```
+
+If live credentials are missing, integration tests are skipped automatically.
 
 ### Infrastructure
 
@@ -543,11 +584,11 @@ docker compose run --rm botc python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
 docker compose run --rm botc python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
 ```
 
-Or run locally with Python:
+Or run locally with Python (set `PYTHONPATH` so the flat module layout is resolvable):
 ```bash
-python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
-python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
+PYTHONPATH=. python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
+PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
 ```
 
 ## 📈 Project Structure

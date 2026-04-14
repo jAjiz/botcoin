@@ -1,0 +1,11 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
+    environment:
+      PYTHONPATH: /app
+    working_dir: /app
+    command: ["pytest", "tests"]

@@ -57,12 +57,11 @@ def calculate_trading_parameters(pair, infoLog=True):
     TRADING_PARAMS[pair]["sell"]["K_STOP"] = sell_k_stops
     TRADING_PARAMS[pair]["buy"]["K_STOP"] = buy_k_stops
     
-    fmt = lambda k: f"{k:.2f}" if k is not None else "N/A"
-    sell_msg = " | ".join(f"{lvl}:{fmt(sell_k_stops[lvl])}" for lvl in LEVELS)
-    buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
-
     if infoLog:
+        fmt = lambda k: f"{k:.2f}" if k is not None else "N/A"
+        sell_msg = " | ".join(f"{lvl}:{fmt(sell_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_SELL → {sell_msg}")
+        buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_BUY  → {buy_msg}")
 
 
