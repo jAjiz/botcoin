@@ -16,6 +16,7 @@ BoTCoin is a 24/7 autonomous digital asset management system that analyzes marke
 - [Configuration & Deployment](#-configuration--deployment)
 - [Quick Start](#-quick-start)
 - [Project Structure](#-project-structure)
+- [Testing](#-testing)
 - [Security Considerations](#-security-considerations)
 - [Performance Metrics](#-performance-metrics)
 - [Technical Highlights](#-technical-highlights)
@@ -371,6 +372,46 @@ ETHEUR_STOP_PCT_HH=0.90            # Stop percentile for Very High volatility (9
   - Per side: `PAIR_SELL_K_ACT`, `PAIR_BUY_K_ACT`, `PAIR_SELL_MIN_MARGIN`, `PAIR_BUY_MIN_MARGIN`
 - If **K_ACT** is defined, activation uses: `activation_distance = K_ACT * ATR`
 - If **K_ACT** is not defined, activation uses: `activation_distance = K_STOP * ATR + MIN_MARGIN * entry_price`
+
+## 🧪 Testing
+
+The project uses a two-tier pytest strategy with Docker-first execution and an enforced coverage gate.
+
+- **Unit tests** (`tests/unit`): pure logic tests for `core/`, `trading/`, and mocked exchange wrappers in `exchange/`.
+- **Integration tests** (`tests/integration`): optional live Kraken connectivity checks, skipped by default unless explicitly enabled.
+- **Coverage gate**: `pytest.ini` enforces `--cov-fail-under=80` across `core`, `trading`, and `exchange`.
+
+### Local setup (without Docker)
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests
+```
+
+### Docker setup (recommended for parity)
+
+```bash
+docker compose -f docker-compose.test.yml build test
+docker compose -f docker-compose.test.yml run --rm test pytest tests
+```
+
+The dedicated `test` service in `docker-compose.test.yml` sets `PYTHONPATH=/app`, so the container resolves the repo's flat module layout the same way as the local environment.
+
+To run live Kraken integration tests, set:
+
+```bash
+RUN_LIVE_INTEGRATION=true
+KRAKEN_API_KEY=...
+KRAKEN_API_SECRET=...
+```
+
+Or override only for a single Docker run:
+
+```bash
+docker compose -f docker-compose.test.yml run --rm -e RUN_LIVE_INTEGRATION=true test pytest tests/integration
+```
+
+If live credentials are missing, integration tests are skipped automatically.
 
 ### Infrastructure
 

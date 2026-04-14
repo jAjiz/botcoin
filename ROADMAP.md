@@ -13,7 +13,7 @@ This document outlines the improvement areas and phased plan for the next iterat
   - [Phase 1 – Infrastructure First: Docker (Completed)](#phase-1--infrastructure-first-docker-completed)
   - [Phase 2 – Managed Execution: APScheduler](#phase-2--managed-execution-apscheduler)
     - [Phase 2.1 – API Efficiency (Completed)](#phase-21--api-efficiency-completed)
-  - [Phase 3 – Testing Strategy](#phase-3--testing-strategy)
+  - [Phase 3 – Testing Strategy (Completed)](#phase-3--testing-strategy-completed)
   - [Phase 4 – Professional Persistence: PostgreSQL & Redis](#phase-4--professional-persistence-postgresql--redis)
   - [Phase 5 – REST API Layer: FastAPI](#phase-5--rest-api-layer-fastapi)
   - [Phase 6 – Code Quality: Linting & Type Safety](#phase-6--code-quality-linting--type-safety)
@@ -32,9 +32,9 @@ Key gaps identified before starting V2 work:
 
 | Area | Current Status |
 |---|---|
-| Infrastructure | ❌ No containerization — runs directly on bare VM |
+| Infrastructure | ✅ Fully containerized with Docker and Docker Compose |
 | Execution model | ⚠️ Unmanaged `while True` loop — no retries, no observability |
-| Testing | ❌ No unit or integration tests |
+| Testing | ✅ Two-tier pytest suite with Docker parity and 80% coverage gate |
 | Persistence | ⚠️ JSON + CSV flat files — no schema, no history guarantees |
 | Active state store | ⚠️ JSON file on disk — not appropriate for real-time key-value access |
 | CI pipeline | ⚠️ Deploy-only — no lint or test step before production |
@@ -52,7 +52,7 @@ All development, testing, and production execution must happen inside containers
 The current `while True` loop in `main.py` is opaque: failed API calls are swallowed, retries are manual, and there is no execution history. Replacing it with APScheduler gives each run a clear lifecycle with deterministic scheduling, centralized logging, and robust process-level shutdown handling without introducing a full orchestration platform.
 
 ### 3. Testing Strategy
-No automated tests exist. A two-tier test suite — unit tests for pure trading logic and integration tests for API connectivity and database persistence — provides the confidence needed to refactor safely and deploy reliably. All tests must run inside the Docker environment to ensure parity with production.
+The project now has a two-tier pytest suite: deterministic unit tests for business logic and opt-in integration tests for live Kraken connectivity. The suite runs locally and in Docker through a dedicated `test` service, and `pytest.ini` enforces markers plus an 80% coverage threshold across `core`, `trading`, and `exchange`.
 
 ### 4. Professional Persistence: PostgreSQL & Redis
 The flat-file persistence model (JSON for state, CSV for history) has no schema enforcement, no transactional guarantees, and no migration path. V2 adopts a two-tier database architecture aligned with the access patterns of each data category:
@@ -124,7 +124,9 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 2 – Managed Execution: APScheduler
+### Phase 2 – Managed Execution: APScheduler (Completed)
+
+**Tracking:** [Issue #12](https://github.com/jAjiz/BoTCoin/issues/12), merged in [PR #24](https://github.com/jAjiz/BoTCoin/pull/24)
 
 **Goal:** Replace the unmanaged `while True` loop in `main.py` with an APScheduler-driven periodic execution model, giving every session predictable scheduling, robust retry control, and graceful shutdown.
 
@@ -145,6 +147,8 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 #### Phase 2.1 – API Efficiency (Completed)
 
+**Tracking:** [Issue #23](https://github.com/jAjiz/BoTCoin/issues/12), merged in [PR #24](https://github.com/jAjiz/BoTCoin/pull/24)
+
 **Goal:** Improve API efficiency and data reliability by implementing rate limiting on public Kraken calls, ensuring OHLC data excludes incomplete candles, and streamlining the main bot loop.
 
 **Scope:**
@@ -156,38 +160,35 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 3 – Testing Strategy
+### Phase 3 – Testing Strategy (Completed)
+
+**Tracking:** [Issue #13](https://github.com/jAjiz/BoTCoin/issues/13)
 
 **Goal:** Implement a two-tier test suite (unit + integration) that runs entirely inside Docker, ensuring test parity with the production environment.
 
 **Scope:**
 
-- [ ] Add `pytest` and `pytest-cov` as development dependencies in `requirements-dev.txt`
-- [ ] Create a `tests/` directory with the following structure:
+- [x] Add `pytest` and `pytest-cov` as development dependencies in `requirements-dev.txt`
+- [x] Create a `tests/` directory with the implemented structure:
   ```
   tests/
+  ├── integration/
   ├── unit/
-  │   ├── trading/        # ATR calculation, pivot detection, position logic
-  │   ├── core/           # Validation, utils
-  │   └── conftest.py
-  └── integration/
-      ├── test_kraken.py  # API connectivity (requires live credentials, opt-in)
-      └── conftest.py
+  │   ├── core/           
+  │   ├── exchange/       
+  │   └── trading/              
   ```
-- [ ] **Unit tests** – cover pure-logic functions with no external dependencies:
-  - `trading/market_analyzer.py`: ATR calculation, pivot detection, noise analysis
-  - `trading/parameters_manager.py`: volatility level mapping, K parameter calculation
-  - `trading/positions_manager.py`: position creation, trailing stop updates, close logic
-  - `trading/inventory_manager.py`: portfolio valuation, balance logic
-  - `core/validation.py`: all configuration edge cases
-  - `core/utils.py`: utility functions
-  - Use `unittest.mock` to stub all exchange API calls and database clients
-- [ ] **Integration tests** – verify API connectivity:
+- [x] **Unit tests** – cover pure-logic functions with no external dependencies:
+  - Covers the `core`, `trading`, and `exchange` modules that contain business logic
+  - Omits `trading/backtest.py` and `trading/optimize_params.py` because they are analysis scripts without core business logic
+  - Omits `core/runtime.py` and `core/state.py` because they are thin shared-state and persistence wrappers with no business logic
+  - Uses pytest monkeypatch-based stubs for exchange API calls so unit tests make no network calls
+- [x] **Integration tests** – verify API connectivity:
   - Kraken API: authenticated balance fetch, OHLC retrieval (skipped if credentials absent)
-- [ ] Add a `pytest.ini` or `pyproject.toml` section for test discovery, coverage thresholds, and markers (`unit`, `integration`)
-- [ ] Add a `docker-compose.test.yml` override (or a dedicated `test` service) for running the full suite in CI
+- [x] Add a `pytest.ini` section for test discovery, coverage thresholds, and markers (`unit`, `integration`)
+- [x] Add a dedicated `docker-compose.test.yml` `test` service for running the suite in Docker
 
-**Success criteria:** `docker compose run test pytest tests/unit` passes with no external network calls. `docker compose run test pytest tests/integration` passes with valid Kraken credentials.
+**Success criteria:** `docker compose -f docker-compose.test.yml run --rm test pytest tests/unit` passes with no external network calls. `docker compose -f docker-compose.test.yml run --rm test pytest tests/integration` passes with valid Kraken credentials. The full suite runs with an 80% coverage gate.
 
 ---
 
