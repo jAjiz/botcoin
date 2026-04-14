@@ -7,7 +7,7 @@ def now_str():
 
 def print_pair_argument_error():
     print("Error: PAIR parameter is required.")
-    print("Use: python market_analyzer.py PAIR=XBTEUR [ORDER=20] [SHOW_EVENTS] [Volatility=LL|LV|MV|HV|HH|ALL]")
+    print("Use: python trading/market_analyzer.py PAIR=XBTEUR [ORDER=20] [SHOW_EVENTS] [Volatility=LL|LV|MV|HV|HH|ALL]")
 
 
 def print_statistics(events, vol_level, title):

@@ -286,7 +286,7 @@ The system sends real-time notifications for:
 
 **Usage**:
 ```bash
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01 MAX_OPS=50
+PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01 MAX_OPS=50
 ```
 
 ### Optimizer Module
@@ -305,7 +305,7 @@ python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01
 
 **Usage**:
 ```bash
-python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26 TRAIN_SPLIT=0.7
+PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26 TRAIN_SPLIT=0.7
 ```
 
 ### ⚠️ Transparency Note
@@ -584,11 +584,11 @@ docker compose run --rm botc python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
 docker compose run --rm botc python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
 ```
 
-Or run locally with Python:
+Or run locally with Python (set `PYTHONPATH` so the flat module layout is resolvable):
 ```bash
-python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
-python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
+PYTHONPATH=. python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
+PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
 ```
 
 ## 📈 Project Structure
