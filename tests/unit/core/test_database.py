@@ -13,6 +13,8 @@ from core.database import (
     BotControl,
     load_ohlc_data,
     save_ohlc_data,
+    save_closed_position,
+    load_closed_positions,
     get_session,
     check_database_connection,
 )
@@ -55,6 +57,9 @@ class FakeSession:
 
     def query(self, _model: Any) -> FakeQuery:
         return self.query_obj
+
+    def add(self, record: Any) -> None:
+        self.added_records.append(record)
 
     def add_all(self, records: list[Any]) -> None:
         self.added_records.extend(records)
@@ -258,25 +263,12 @@ def test_load_ohlc_data_empty(monkeypatch):
     assert isinstance(df, pd.DataFrame)
 
 
-def test_load_ohlc_data_with_records(monkeypatch):
+def test_load_ohlc_data_with_records(monkeypatch, get_ohlc_record):
     """Test loading OHLC data with existing records.
 
     Uses mocked session to simulate database records.
     """
-    record1 = OHLCData(
-        pair="XBTEUR",
-        timeframe_minutes=15,
-        dtime=datetime(2026, 4, 1, 12, 0, 0),
-        open=Decimal("100.0"),
-        high=Decimal("101.5"),
-        low=Decimal("99.5"),
-        close=Decimal("101.0"),
-        vwap=Decimal("100.7"),
-        volume=Decimal("1000"),
-        count=120,
-        atr=Decimal("1.0"),
-    )
-    session = FakeSession(records=[record1])
+    session = FakeSession(records=[get_ohlc_record])
     patch_get_session(monkeypatch, session)
 
     df = load_ohlc_data("XBTEUR", 15)
@@ -419,3 +411,199 @@ def test_check_database_connection_failure(monkeypatch):
     result = check_database_connection()
 
     assert result is False
+
+
+# ============================================================================
+# Closed Position Operations Tests (Mocked)
+# ============================================================================
+
+
+def _make_closed_position_data(**overrides) -> dict:
+    """Return a minimal valid closed position data dict."""
+    data = {
+        "pair": "XBTEUR",
+        "side": "buy",
+        "volume": Decimal("0.5"),
+        "entry_price": Decimal("50000"),
+        "activation_atr": None,
+        "activation_price": Decimal("50100"),
+        "created_at": datetime(2026, 4, 1, 10, 0, 0),
+        "activated_at": None,
+        "trailing_price": None,
+        "stop_price": None,
+        "stop_atr": None,
+        "closing_price": Decimal("50500"),
+        "closing_order_id": "order_12345",
+        "closed_at": datetime(2026, 4, 1, 14, 0, 0),
+        "pnl_percent": Decimal("1.0"),
+    }
+    data.update(overrides)
+    return data
+
+
+def test_save_closed_position(monkeypatch):
+    """Test saving a closed position to the database."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    save_closed_position(_make_closed_position_data())
+
+    assert len(session.added_records) == 1
+    saved = session.added_records[0]
+    assert isinstance(saved, ClosedPosition)
+    assert saved.pair == "XBTEUR"
+    assert saved.side == "buy"
+    assert saved.closing_order_id == "order_12345"
+
+
+def test_save_closed_position_optional_fields_none(monkeypatch):
+    """Test saving a closed position with all optional fields as None."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    save_closed_position(_make_closed_position_data())
+
+    saved = session.added_records[0]
+    assert saved.activation_atr is None
+    assert saved.activated_at is None
+    assert saved.trailing_price is None
+    assert saved.stop_price is None
+    assert saved.stop_atr is None
+
+
+def test_save_closed_position_optional_fields_populated(monkeypatch):
+    """Test saving a closed position with all optional fields populated."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    data = _make_closed_position_data(
+        pair="ETHEUR",
+        side="sell",
+        activation_atr=Decimal("50"),
+        activated_at=datetime(2026, 4, 2, 10, 0, 0),
+        trailing_price=Decimal("2980"),
+        stop_price=Decimal("3020"),
+        stop_atr=Decimal("40"),
+    )
+    save_closed_position(data)
+
+    saved = session.added_records[0]
+    assert saved.pair == "ETHEUR"
+    assert saved.activated_at == datetime(2026, 4, 2, 10, 0, 0)
+    assert float(saved.trailing_price) == 2980.0
+    assert float(saved.stop_atr) == 40.0
+
+
+def test_save_closed_position_raises_on_db_error(monkeypatch):
+    """Test that save_closed_position re-raises on database error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    with pytest.raises(Exception, match="DB error"):
+        save_closed_position(_make_closed_position_data())
+
+
+def test_load_closed_positions_empty(monkeypatch):
+    """Test loading closed positions when none exist."""
+    session = FakeSession(records=[])
+    patch_get_session(monkeypatch, session)
+
+    result = load_closed_positions()
+
+    assert result == []
+    assert isinstance(result, list)
+
+
+def test_load_closed_positions_with_records(monkeypatch, closed_position_record):
+    """Test loading all closed positions returns correct dicts."""
+    session = FakeSession(records=[closed_position_record])
+    patch_get_session(monkeypatch, session)
+
+    result = load_closed_positions()
+
+    assert len(result) == 1
+    assert result[0]["pair"] == "XBTEUR"
+    assert result[0]["side"] == "buy"
+    assert result[0]["closing_order_id"] == "order_12345"
+
+
+def test_load_closed_positions_with_limit(monkeypatch, closed_position_record):
+    """Test load_closed_positions respects limit parameter."""
+    record2 = ClosedPosition(
+        pair="ETHEUR",
+        side="sell",
+        volume=Decimal("1.0"),
+        entry_price=Decimal("3000"),
+        closing_price=Decimal("3100"),
+        closing_order_id="order_67890",
+        closed_at=datetime(2026, 4, 2, 14, 0, 0),
+        pnl_percent=Decimal("3.33"),
+        created_at=datetime(2026, 4, 2, 10, 0, 0),
+    )
+    session = FakeSession(records=[closed_position_record, record2])
+    patch_get_session(monkeypatch, session)
+
+    result = load_closed_positions(limit=1)
+
+    assert len(result) == 1
+    assert session.query_obj.limit_value == 1
+
+
+def test_load_closed_positions_returns_empty_on_error(monkeypatch):
+    """Test that load_closed_positions returns empty list on database error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    result = load_closed_positions()
+
+    assert result == []
+
+
+def test_load_closed_positions_with_pair_filter_empty(monkeypatch):
+    """Test fetching closed positions for a pair with no records."""
+    session = FakeSession(records=[])
+    patch_get_session(monkeypatch, session)
+
+    result = load_closed_positions(pair="XBTEUR")
+
+    assert result == []
+    assert session.query_obj.filter_calls == 1
+
+
+def test_load_closed_positions_with_pair_filter_records(monkeypatch, closed_position_record):
+    """Test fetching closed positions filtered by pair returns correct dicts."""
+    session = FakeSession(records=[closed_position_record])
+    patch_get_session(monkeypatch, session)
+
+    result = load_closed_positions(pair="XBTEUR")
+
+    assert len(result) == 1
+    assert result[0]["pair"] == "XBTEUR"
+    assert result[0]["closing_order_id"] == "order_12345"
+
+
+def test_load_closed_positions_pair_and_limit(monkeypatch, closed_position_record):
+    """Test load_closed_positions with both pair and limit parameters."""
+    session = FakeSession(records=[closed_position_record])
+    patch_get_session(monkeypatch, session)
+
+    load_closed_positions(pair="XBTEUR", limit=5)
+
+    assert session.query_obj.limit_value == 5
+    assert session.query_obj.filter_calls == 1
+
+
+def test_load_closed_positions_pair_filter_error(monkeypatch):
+    """Test that load_closed_positions with pair filter returns empty list on error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    result = load_closed_positions(pair="XBTEUR")
+
+    assert result == []

@@ -347,3 +347,75 @@ def check_database_connection() -> bool:
     except Exception as e:
         logger.error(f"Database connection failed: {e}")
         return False
+
+
+# ============================================================================
+# Closed Position Operations
+# ============================================================================
+
+
+def save_closed_position(position_data: Dict[str, Any]) -> None:
+    """Persist a closed position to the database.
+
+    Args:
+        position_data: Dictionary containing closed position details.
+    """
+    def _to_decimal(value: Any) -> Optional[Decimal]:
+        return Decimal(str(value)) if value is not None else None
+
+    try:
+        record = ClosedPosition(
+            pair=position_data["pair"],
+            side=position_data["side"],
+            volume=Decimal(str(position_data["volume"])),
+            entry_price=Decimal(str(position_data["entry_price"])),
+            activation_atr=_to_decimal(position_data.get("activation_atr")),
+            activation_price=_to_decimal(position_data.get("activation_price")),
+            created_at=position_data["created_at"],
+            activated_at=position_data.get("activated_at"),
+            trailing_price=_to_decimal(position_data.get("trailing_price")),
+            stop_price=_to_decimal(position_data.get("stop_price")),
+            stop_atr=_to_decimal(position_data.get("stop_atr")),
+            closing_price=Decimal(str(position_data["closing_price"])),
+            closing_order_id=position_data["closing_order_id"],
+            closed_at=position_data["closed_at"],
+            pnl_percent=Decimal(str(position_data["pnl_percent"])),
+        )
+        with get_session() as session:
+            session.add(record)
+        logger.info(
+            f"Saved closed position for {position_data['pair']} "
+            f"order {position_data['closing_order_id']}"
+        )
+    except Exception as e:
+        logger.error(f"Error saving closed position: {e}")
+        raise
+
+
+def load_closed_positions(pair: Optional[str] = None, limit: Optional[int] = None) -> list[Dict[str, Any]]:
+    """Load closed positions ordered by closed_at descending.
+
+    Args:
+        pair: Optional trading pair filter. If None, loads all positions.
+        limit: Optional maximum number of records to return.
+
+    Returns:
+        List of closed position dictionaries, newest first.
+        Returns an empty list on error.
+    """
+    try:
+        with get_session() as session:
+            query = session.query(ClosedPosition)
+            if pair is not None:
+                query = query.filter(ClosedPosition.pair == pair)
+            query = query.order_by(desc(ClosedPosition.closed_at))
+            if limit is not None:
+                query = query.limit(limit)
+            records = query.all()
+            result = [r.to_dict() for r in records]
+            logger.debug(f"Fetched {len(result)} closed positions" + (f" for {pair}" if pair else ""))
+            return result
+    except Exception as e:
+        error_msg = f"Error loading closed positions" + (f" for {pair}" if pair else "")
+        logger.error(f"{error_msg}: {e}")
+        return []
