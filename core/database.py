@@ -70,7 +70,7 @@ class OHLCData(Base):
 
     pair = Column(Text, primary_key=True, nullable=False)
     timeframe_minutes = Column(Integer, primary_key=True, nullable=False)
-    dtime = Column(DateTime(timezone=True), primary_key=True, nullable=False)
+    time = Column(BigInteger, primary_key=True, nullable=False)
     source_exchange = Column(Text, nullable=False, default="kraken")
     open = Column(Numeric(20, 10), nullable=False)
     high = Column(Numeric(20, 10), nullable=False)
@@ -89,14 +89,15 @@ class OHLCData(Base):
         CheckConstraint("high >= low", name="ck_ohlc_data_price_range_valid"),
         CheckConstraint("open >= low AND open <= high", name="ck_ohlc_data_open_in_range"),
         CheckConstraint("close >= low AND close <= high", name="ck_ohlc_data_close_in_range"),
-        Index("ix_ohlc_data_pair_timeframe_dtime_desc", pair, timeframe_minutes, desc(dtime)),
+        Index("ix_ohlc_data_pair_timeframe_time_desc", pair, timeframe_minutes, desc(time)),
     )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "pair": self.pair,
             "timeframe_minutes": self.timeframe_minutes,
-            "dtime": self.dtime,
+            "time": self.time,
+            "dtime": datetime.fromtimestamp(self.time, tz=timezone.utc),
             "source_exchange": self.source_exchange,
             "open": float(self.open),
             "high": float(self.high),
@@ -351,14 +352,14 @@ def check_database_connection() -> bool:
 
 
 def load_ohlc_data(
-    pair: str, timeframe: int, since_timestamp: Optional[int] = None, limit: Optional[int] = None
+    pair: str, timeframe: int, since_time: Optional[int] = None, limit: Optional[int] = None
 ) -> pd.DataFrame:
     """Load OHLC data from the database.
 
     Args:
         pair: Trading pair.
         timeframe: Candle timeframe in minutes.
-        since_timestamp: Optional Unix timestamp filter.
+        since_time: Optional Unix timestamp filter.
         limit: Optional maximum number of rows to return.
 
     Returns:
@@ -369,16 +370,17 @@ def load_ohlc_data(
             query = session.query(OHLCData).filter(
                 and_(OHLCData.pair == pair, OHLCData.timeframe_minutes == timeframe)
             )
-            if since_timestamp is not None:
-                since_dt = datetime.fromtimestamp(since_timestamp, tz=timezone.utc)
-                query = query.filter(OHLCData.dtime >= since_dt)
+            if since_time is not None:
+                query = query.filter(OHLCData.time >= since_time)
             if limit is not None:
                 query = query.limit(limit)
-            records = query.order_by(OHLCData.dtime).all()
+            records = query.order_by(OHLCData.time).all()
             if not records:
                 return pd.DataFrame()
             df = pd.DataFrame([r.to_dict() for r in records])
-            df.set_index("dtime", drop=False, inplace=True)
+            df["dtime"] = pd.to_datetime(pd.to_numeric(df["time"]), unit="s")
+            df.sort_values("dtime", ascending=True, inplace=True)
+            df.set_index("dtime", inplace=True)
             logger.debug(f"Fetched {len(df)} OHLC records for {pair}")
             return df
     except Exception as e:
@@ -392,7 +394,7 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
     Args:
         pair: Trading pair.
         timeframe: Candle timeframe in minutes.
-        df: DataFrame containing OHLC columns and indexed by dtime.
+        df: DataFrame containing OHLC columns.
     """
     try:
         if df.empty:
@@ -404,7 +406,7 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
                 OHLCData(
                     pair=pair,
                     timeframe_minutes=timeframe,
-                    dtime=dtime,
+                    time=BigInteger(str(row["time"])),
                     open=Decimal(str(row["open"])),
                     high=Decimal(str(row["high"])),
                     low=Decimal(str(row["low"])),
@@ -414,7 +416,7 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
                     count=int(row["count"]) if "count" in row and pd.notna(row["count"]) else None,
                     atr=Decimal(str(row["atr"])) if "atr" in row and pd.notna(row["atr"]) else None,
                 )
-                for dtime, row in working_df.iterrows()
+                for _, row in working_df.iterrows()
             ]
             session.add_all(records)
             logger.info(f"Saved {len(records)} OHLC records for {pair}")

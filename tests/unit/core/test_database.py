@@ -130,7 +130,7 @@ def ohlc_record():
     return OHLCData(
         pair="XBTEUR",
         timeframe_minutes=15,
-        dtime=datetime(2026, 4, 1, 12, 0, 0),
+        time=1743508800,
         open=Decimal("100.00"),
         high=Decimal("101.50"),
         low=Decimal("99.50"),
@@ -203,10 +203,12 @@ def test_ohlc_to_dict(ohlc_record):
     """Test converting OHLCData to dictionary."""
     data = ohlc_record.to_dict()
     assert data["pair"] == "XBTEUR"
+    assert data["time"] == 1743508800
     assert data["open"] == 100.0
     assert data["close"] == 101.0
     assert data["count"] == 123
     assert isinstance(data["atr"], float)
+    assert isinstance(data["dtime"], datetime)
 
 
 def test_ohlc_decimal_precision():
@@ -214,7 +216,7 @@ def test_ohlc_decimal_precision():
     record = OHLCData(
         pair="XBTEUR",
         timeframe_minutes=15,
-        dtime=datetime.now(),
+        time=int(datetime.now().timestamp()),
         open=Decimal("100.1234567890"),
         high=Decimal("101.9999999999"),
         low=Decimal("99.0000000001"),
@@ -298,6 +300,7 @@ def test_load_ohlc_data_with_records(monkeypatch, ohlc_record):
 
     assert not df.empty
     assert len(df) == 1
+    assert "time" in df.columns
     assert "dtime" in df.columns
     assert "open" in df.columns
     assert "close" in df.columns
@@ -326,6 +329,7 @@ def test_save_ohlc_data(monkeypatch, sample_dataframe):
     save_ohlc_data("XBTEUR", 15, sample_dataframe)
 
     assert len(session.added_records) == len(sample_dataframe)
+    assert session.added_records[0].time == int(sample_dataframe.iloc[0]["dtime"].timestamp())
 
 
 def test_save_ohlc_data_empty_dataframe(caplog):
@@ -340,14 +344,14 @@ def test_load_ohlc_data_with_limit(monkeypatch):
     records = [
         OHLCData(
             pair="XBTEUR", timeframe_minutes=15,
-            dtime=datetime(2026, 1, 1, 0, 15, 0),
+            time=1735690500,
             open=Decimal("101.0"), high=Decimal("102.0"),
             low=Decimal("100.0"), close=Decimal("101.5"),
             atr=Decimal("1.1"),
         ),
         OHLCData(
             pair="XBTEUR", timeframe_minutes=15,
-            dtime=datetime(2026, 1, 1, 0, 0, 0),
+            time=1735689600,
             open=Decimal("100.0"), high=Decimal("101.0"),
             low=Decimal("99.0"), close=Decimal("100.5"),
             atr=Decimal("1.0"),
@@ -359,6 +363,7 @@ def test_load_ohlc_data_with_limit(monkeypatch):
     df = load_ohlc_data("XBTEUR", 15, limit=1)
 
     assert len(df) == 1
+    assert "time" in df.columns
     assert "dtime" in df.columns
     assert "atr" in df.columns
     assert session.query_obj.limit_value == 1

@@ -23,7 +23,7 @@ def upgrade() -> None:
         "ohlc_data",
         sa.Column("pair", sa.Text(), nullable=False),
         sa.Column("timeframe_minutes", sa.Integer(), nullable=False),
-        sa.Column("dtime", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("time", sa.BigInteger(), nullable=False),
         sa.Column("source_exchange", sa.Text(), nullable=False, server_default="kraken"),
         sa.Column("open", sa.Numeric(20, 10), nullable=False),
         sa.Column("high", sa.Numeric(20, 10), nullable=False),
@@ -40,12 +40,12 @@ def upgrade() -> None:
         sa.CheckConstraint("high >= low", name="ck_ohlc_data_price_range_valid"),
         sa.CheckConstraint("open >= low AND open <= high", name="ck_ohlc_data_open_in_range"),
         sa.CheckConstraint("close >= low AND close <= high", name="ck_ohlc_data_close_in_range"),
-        sa.PrimaryKeyConstraint("pair", "timeframe_minutes", "dtime", name="pk_ohlc_data"),
+        sa.PrimaryKeyConstraint("pair", "timeframe_minutes", "time", name="pk_ohlc_data"),
     )
     op.create_index(
-        "ix_ohlc_data_pair_timeframe_dtime_desc",
+        "ix_ohlc_data_pair_timeframe_time_desc",
         "ohlc_data",
-        ["pair", "timeframe_minutes", sa.text("dtime DESC")],
+        ["pair", "timeframe_minutes", sa.text('"time" DESC')],
         unique=False,
     )
 
@@ -150,5 +150,5 @@ def downgrade() -> None:
     op.drop_index("ix_closed_positions_closed_at_desc", table_name="closed_positions")
     op.drop_index("ix_closed_positions_pair_closed_at_desc", table_name="closed_positions")
     op.drop_table("closed_positions")
-    op.drop_index("ix_ohlc_data_pair_timeframe_dtime_desc", table_name="ohlc_data")
+    op.drop_index("ix_ohlc_data_pair_timeframe_time_desc", table_name="ohlc_data")
     op.drop_table("ohlc_data")
