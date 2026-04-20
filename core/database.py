@@ -254,6 +254,80 @@ def get_session() -> Iterator[Session]:
         session.close()
 
 
+def _to_decimal(value: Any) -> Optional[Decimal]:
+    if value is None:
+        return None
+    return Decimal(str(value))
+
+
+def _to_utc_datetime(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    if isinstance(value, str):
+        parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+        return parsed.replace(tzinfo=timezone.utc)
+    raise TypeError(f"Unsupported datetime value: {type(value)!r}")
+
+
+def _format_state_datetime(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc)
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _state_entry_to_trailing_record(pair: str, position_data: Dict[str, Any]) -> TrailingState:
+    return TrailingState(
+        pair=pair,
+        side=position_data["side"],
+        volume=Decimal(str(position_data["volume"])),
+        entry_price=Decimal(str(position_data["entry_price"])),
+        activation_atr=Decimal(str(position_data["activation_atr"])),
+        activation_price=Decimal(str(position_data["activation_price"])),
+        created_at=_to_utc_datetime(position_data.get("created_at") or position_data.get("creation_time")),
+        activated_at=_to_utc_datetime(position_data.get("activated_at")),
+        trailing_price=_to_decimal(position_data.get("trailing_price")),
+        stop_price=_to_decimal(position_data.get("stop_price")),
+        stop_atr=_to_decimal(position_data.get("stop_atr")),
+        closing_order_id=position_data.get("closing_order_id") or position_data.get("closing_order"),
+        closing_price=_to_decimal(position_data.get("closing_price")),
+        closing_requested_at=_to_utc_datetime(
+            position_data.get("closing_requested_at") or position_data.get("closing_time")
+        ),
+    )
+
+
+def _trailing_record_to_state_entry(record: TrailingState) -> Dict[str, Any]:
+    state_entry: Dict[str, Any] = {
+        "side": record.side,
+        "volume": float(record.volume),
+        "entry_price": float(record.entry_price),
+        "activation_atr": float(record.activation_atr),
+        "activation_price": float(record.activation_price),
+        "creation_time": _format_state_datetime(record.created_at),
+    }
+    if record.activated_at is not None:
+        state_entry["activated_at"] = _format_state_datetime(record.activated_at)
+    if record.trailing_price is not None:
+        state_entry["trailing_price"] = float(record.trailing_price)
+    if record.stop_price is not None:
+        state_entry["stop_price"] = float(record.stop_price)
+    if record.stop_atr is not None:
+        state_entry["stop_atr"] = float(record.stop_atr)
+    if record.closing_order_id is not None:
+        state_entry["closing_order"] = record.closing_order_id
+    if record.closing_price is not None:
+        state_entry["closing_price"] = float(record.closing_price)
+    if record.closing_requested_at is not None:
+        state_entry["closing_time"] = _format_state_datetime(record.closing_requested_at)
+    return state_entry
+
+
 # ============================================================================
 # Health Check
 # ============================================================================
@@ -360,9 +434,6 @@ def save_closed_position(position_data: Dict[str, Any]) -> None:
     Args:
         position_data: Dictionary containing closed position details.
     """
-    def _to_decimal(value: Any) -> Optional[Decimal]:
-        return Decimal(str(value)) if value is not None else None
-
     try:
         record = ClosedPosition(
             pair=position_data["pair"],
@@ -419,3 +490,120 @@ def load_closed_positions(pair: Optional[str] = None, limit: Optional[int] = Non
         error_msg = f"Error loading closed positions" + (f" for {pair}" if pair else "")
         logger.error(f"{error_msg}: {e}")
         return []
+
+
+# ============================================================================
+# Trailing State Operations
+# ============================================================================
+
+
+def save_trailing_state(pair: str, position_data: Dict[str, Any]) -> None:
+    """Persist active trailing state for a trading pair.
+    
+    Args:
+        pair: Trading pair.
+        position_data: Dictionary containing trailing state details.
+    """
+    try:
+        with get_session() as session:
+            session.merge(_state_entry_to_trailing_record(pair, position_data))
+        logger.info(f"Saved trailing state for {pair}")
+    except Exception as e:
+        logger.error(f"Error saving trailing state for {pair}: {e}")
+        raise
+
+
+def load_trailing_state(pair: str) -> Optional[Dict[str, Any]]:
+    """Load active trailing state for a trading pair.
+
+    Args:
+        pair: Trading pair.
+
+    Returns:
+        Dictionary containing trailing state details, or None if not found.
+    """
+    try:
+        with get_session() as session:
+            records = session.query(TrailingState).filter(TrailingState.pair == pair).all()
+            record = next((item for item in records if item.pair == pair), None)
+            if record is None:
+                return None
+            state_entry = _trailing_record_to_state_entry(record)
+            logger.debug(f"Fetched trailing state for {pair}")
+            return state_entry
+    except Exception as e:
+        logger.error(f"Error loading trailing state for {pair}: {e}")
+        return None
+
+
+def delete_trailing_state(pair: str) -> bool:
+    """Delete active trailing state for a trading pair.
+
+    Args:
+        pair: Trading pair.
+
+    Returns:
+        True if the trailing state was deleted, False otherwise.
+    """
+    try:
+        with get_session() as session:
+            records = session.query(TrailingState).filter(TrailingState.pair == pair).all()
+            record = next((item for item in records if item.pair == pair), None)
+            if record is None:
+                logger.debug(f"No trailing state found for {pair}")
+                return False
+            session.delete(record)
+        logger.info(f"Deleted trailing state for {pair}")
+        return True
+    except Exception as e:
+        logger.error(f"Error deleting trailing state for {pair}: {e}")
+        return False
+
+
+# ============================================================================
+# Bot Control Operations
+# ============================================================================
+
+
+def get_control_value(control_key: str) -> Optional[str]:
+    """Get a bot control value by key."""
+    try:
+        with get_session() as session:
+            records = session.query(BotControl).filter(BotControl.control_key == control_key).all()
+            record = next((item for item in records if item.control_key == control_key), None)
+            if record is None:
+                return None
+            return record.control_value
+    except Exception as e:
+        logger.error(f"Error loading control value for {control_key}: {e}")
+        return None
+
+
+def set_control_value(control_key: str, control_value: str, updated_by: Optional[str] = None) -> None:
+    """Set a bot control value by key."""
+    try:
+        with get_session() as session:
+            session.merge(
+                BotControl(
+                    control_key=control_key,
+                    control_value=control_value,
+                    updated_by=updated_by,
+                )
+            )
+        logger.info(f"Saved control value for {control_key}")
+    except Exception as e:
+        logger.error(f"Error saving control value for {control_key}: {e}")
+        raise
+
+
+def get_bot_paused() -> bool:
+    """Get bot paused state from bot_control table."""
+    value = get_control_value("bot_paused")
+    if value is None:
+        return False
+    return str(value).strip().lower() == "true"
+
+
+def set_bot_paused(paused: bool, updated_by: Optional[str] = None) -> None:
+    """Set bot paused state in bot_control table."""
+    set_control_value("bot_paused", "true" if paused else "false", updated_by=updated_by)

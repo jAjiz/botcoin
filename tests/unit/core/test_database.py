@@ -15,6 +15,13 @@ from core.database import (
     save_ohlc_data,
     save_closed_position,
     load_closed_positions,
+    save_trailing_state,
+    load_trailing_state,
+    delete_trailing_state,
+    get_control_value,
+    set_control_value,
+    get_bot_paused,
+    set_bot_paused,
     get_session,
     check_database_connection,
 )
@@ -49,6 +56,8 @@ class FakeSession:
     def __init__(self, records: list[Any] | None = None) -> None:
         self.query_obj = FakeQuery(records)
         self.added_records: list[Any] = []
+        self.merged_records: list[Any] = []
+        self.deleted_records: list[Any] = []
         self.commit_calls = 0
         self.rollback_calls = 0
         self.close_calls = 0
@@ -61,8 +70,15 @@ class FakeSession:
     def add(self, record: Any) -> None:
         self.added_records.append(record)
 
+    def merge(self, record: Any) -> Any:
+        self.merged_records.append(record)
+        return record
+
     def add_all(self, records: list[Any]) -> None:
         self.added_records.extend(records)
+
+    def delete(self, record: Any) -> None:
+        self.deleted_records.append(record)
 
     def commit(self) -> None:
         self.commit_calls += 1
@@ -263,12 +279,12 @@ def test_load_ohlc_data_empty(monkeypatch):
     assert isinstance(df, pd.DataFrame)
 
 
-def test_load_ohlc_data_with_records(monkeypatch, get_ohlc_record):
+def test_load_ohlc_data_with_records(monkeypatch, ohlc_record):
     """Test loading OHLC data with existing records.
 
     Uses mocked session to simulate database records.
     """
-    session = FakeSession(records=[get_ohlc_record])
+    session = FakeSession(records=[ohlc_record])
     patch_get_session(monkeypatch, session)
 
     df = load_ohlc_data("XBTEUR", 15)
@@ -441,6 +457,20 @@ def _make_closed_position_data(**overrides) -> dict:
     return data
 
 
+def _make_trailing_state_entry(**overrides) -> dict:
+    """Return a minimal valid trailing state entry using the app-facing shape."""
+    data = {
+        "side": "buy",
+        "volume": 0.5,
+        "entry_price": 50000.0,
+        "activation_atr": 200.0,
+        "activation_price": 50100.0,
+        "creation_time": "2026-04-01 10:00:00",
+    }
+    data.update(overrides)
+    return data
+
+
 def test_save_closed_position(monkeypatch):
     """Test saving a closed position to the database."""
     session = FakeSession()
@@ -607,3 +637,282 @@ def test_load_closed_positions_pair_filter_error(monkeypatch):
     result = load_closed_positions(pair="XBTEUR")
 
     assert result == []
+
+
+# ============================================================================
+# Trailing State Operations Tests (Mocked)
+# ============================================================================
+
+
+def test_save_trailing_state(monkeypatch):
+    """Test saving active trailing state to the database."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    save_trailing_state("XBTEUR", _make_trailing_state_entry())
+
+    assert len(session.merged_records) == 1
+    saved = session.merged_records[0]
+    assert isinstance(saved, TrailingState)
+    assert saved.pair == "XBTEUR"
+    assert saved.side == "buy"
+    assert float(saved.activation_price) == 50100.0
+
+
+def test_save_trailing_state_only_updates_target_pair(monkeypatch, trailing_state_record):
+    """Test saving trailing state does not delete or mutate other pairs implicitly."""
+    session = FakeSession(records=[trailing_state_record])
+    patch_get_session(monkeypatch, session)
+
+    save_trailing_state("ETHEUR", _make_trailing_state_entry(side="sell"))
+
+    assert len(session.merged_records) == 1
+    assert session.merged_records[0].pair == "ETHEUR"
+    assert session.deleted_records == []
+
+
+def test_save_trailing_state_with_optional_fields(monkeypatch):
+    """Test saving trailing state with active trailing and closing fields populated."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    save_trailing_state(
+        "XBTEUR",
+        _make_trailing_state_entry(
+            trailing_price=50400.0,
+            stop_price=50200.0,
+            stop_atr=150.0,
+            closing_order="close_123",
+            closing_price=50150.0,
+            closing_time="2026-04-01 11:15:00",
+            activated_at="2026-04-01 10:30:00",
+        ),
+    )
+
+    saved = session.merged_records[0]
+    assert float(saved.trailing_price) == 50400.0
+    assert float(saved.stop_price) == 50200.0
+    assert saved.closing_order_id == "close_123"
+
+
+def test_save_trailing_state_raises_on_db_error(monkeypatch):
+    """Test that save_trailing_state re-raises on database error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    with pytest.raises(Exception, match="DB error"):
+        save_trailing_state("XBTEUR", _make_trailing_state_entry())
+
+
+def test_load_trailing_state_not_found(monkeypatch):
+    """Test loading trailing state for a missing pair returns None."""
+    session = FakeSession(records=[])
+    patch_get_session(monkeypatch, session)
+
+    result = load_trailing_state("XBTEUR")
+
+    assert result is None
+
+
+def test_load_trailing_state_with_records(monkeypatch, trailing_state_record):
+    """Test loading trailing state returns pair app data."""
+    session = FakeSession(records=[trailing_state_record])
+    patch_get_session(monkeypatch, session)
+
+    result = load_trailing_state("XBTEUR")
+
+    assert result is not None
+    assert result["side"] == "buy"
+    assert result["creation_time"] == "2026-04-01 10:00:00"
+
+
+def test_load_trailing_state_returns_none_on_error(monkeypatch):
+    """Test that load_trailing_state returns None on database error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    result = load_trailing_state("XBTEUR")
+
+    assert result is None
+
+
+def test_load_trailing_state_with_pair_filter_record(monkeypatch, trailing_state_record):
+    """Test loading trailing state for a specific pair."""
+    session = FakeSession(records=[trailing_state_record])
+    patch_get_session(monkeypatch, session)
+
+    result = load_trailing_state("XBTEUR")
+
+    assert result is not None
+    assert result["side"] == "buy"
+    assert result["activation_price"] == 50100.0
+    assert session.query_obj.filter_calls == 1
+
+
+def test_load_trailing_state_with_pair_filter_not_found(monkeypatch, trailing_state_record):
+    """Test loading trailing state by pair returns None when missing."""
+    session = FakeSession(records=[trailing_state_record])
+    patch_get_session(monkeypatch, session)
+
+    result = load_trailing_state("ETHEUR")
+
+    assert result is None
+
+
+def test_load_trailing_state_with_pair_filter_returns_none_on_error(monkeypatch):
+    """Test that load_trailing_state with pair filter returns None on database error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    result = load_trailing_state("XBTEUR")
+
+    assert result is None
+
+
+def test_delete_trailing_state_success(monkeypatch, trailing_state_record):
+    """Test deleting trailing state for an existing pair."""
+    session = FakeSession(records=[trailing_state_record])
+    patch_get_session(monkeypatch, session)
+
+    result = delete_trailing_state("XBTEUR")
+
+    assert result is True
+    assert session.deleted_records == [trailing_state_record]
+
+
+def test_delete_trailing_state_missing(monkeypatch, trailing_state_record):
+    """Test deleting trailing state returns False when pair is missing."""
+    session = FakeSession(records=[trailing_state_record])
+    patch_get_session(monkeypatch, session)
+
+    result = delete_trailing_state("ETHEUR")
+
+    assert result is False
+    assert session.deleted_records == []
+
+
+def test_delete_trailing_state_returns_false_on_error(monkeypatch):
+    """Test that delete_trailing_state returns False on database error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    result = delete_trailing_state("XBTEUR")
+
+    assert result is False
+
+
+# ============================================================================
+# Bot Control Operations Tests (Mocked)
+# ============================================================================
+
+
+def test_get_control_value_found(monkeypatch, bot_control_record):
+    """Test getting control value when key exists."""
+    session = FakeSession(records=[bot_control_record])
+    patch_get_session(monkeypatch, session)
+
+    value = get_control_value("bot_paused")
+
+    assert value == "false"
+    assert session.query_obj.filter_calls == 1
+
+
+def test_get_control_value_missing(monkeypatch):
+    """Test getting control value when key does not exist."""
+    session = FakeSession(records=[])
+    patch_get_session(monkeypatch, session)
+
+    value = get_control_value("bot_paused")
+
+    assert value is None
+
+
+def test_get_control_value_returns_none_on_error(monkeypatch):
+    """Test get_control_value returns None on database error."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    value = get_control_value("bot_paused")
+
+    assert value is None
+
+
+def test_set_control_value(monkeypatch):
+    """Test setting a control value stores BotControl record."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    set_control_value("bot_paused", "true", updated_by="unit-test")
+
+    assert len(session.merged_records) == 1
+    saved = session.merged_records[0]
+    assert isinstance(saved, BotControl)
+    assert saved.control_key == "bot_paused"
+    assert saved.control_value == "true"
+    assert saved.updated_by == "unit-test"
+
+
+def test_set_control_value_raises_on_error(monkeypatch):
+    """Test set_control_value re-raises database errors."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    with pytest.raises(Exception, match="DB error"):
+        set_control_value("bot_paused", "true")
+
+
+def test_get_bot_paused_true(monkeypatch):
+    """Test get_bot_paused returns True when stored value is true."""
+    session = FakeSession(records=[BotControl(control_key="bot_paused", control_value="true")])
+    patch_get_session(monkeypatch, session)
+
+    assert get_bot_paused() is True
+
+
+def test_get_bot_paused_false_or_missing(monkeypatch):
+    """Test get_bot_paused returns False for false or missing control value."""
+    session = FakeSession(records=[BotControl(control_key="bot_paused", control_value="false")])
+    patch_get_session(monkeypatch, session)
+    assert get_bot_paused() is False
+
+    session_missing = FakeSession(records=[])
+    patch_get_session(monkeypatch, session_missing)
+    assert get_bot_paused() is False
+
+
+def test_set_bot_paused(monkeypatch):
+    """Test set_bot_paused stores normalized true/false values."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    set_bot_paused(True, updated_by="telegram")
+    set_bot_paused(False)
+
+    assert len(session.merged_records) == 2
+    assert session.merged_records[0].control_key == "bot_paused"
+    assert session.merged_records[0].control_value == "true"
+    assert session.merged_records[0].updated_by == "telegram"
+    assert session.merged_records[1].control_value == "false"
+
+
+def test_set_bot_paused_raises_on_error(monkeypatch):
+    """Test set_bot_paused re-raises database errors."""
+    def _failing_get_session() -> FakeSessionContextManager:
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _failing_get_session)
+
+    with pytest.raises(Exception, match="DB error"):
+        set_bot_paused(True)
