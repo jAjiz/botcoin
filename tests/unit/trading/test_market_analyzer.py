@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+from datetime import datetime, timezone
 
 import trading.market_analyzer as market_analyzer
 
@@ -46,19 +47,107 @@ def test_analyze_structural_noise_returns_two_event_lists(sample_dataframe: pd.D
     assert isinstance(downtrend_events, list)
 
 
-def test_get_current_atr_returns_value_with_mocked_ohlc(monkeypatch, sample_dataframe: pd.DataFrame) -> None:
-    df = sample_dataframe.set_index("dtime")
+def test_get_current_atr_uses_db_slice_fetches_new_data_and_saves_only_new_closed_rows(monkeypatch) -> None:
+    existing_df = pd.DataFrame(
+        {
+            "time": [1767225600, 1767226500, 1767227400],
+            "dtime": pd.to_datetime([1767225600, 1767226500, 1767227400], unit="s", utc=True),
+            "open": [100.0, 101.0, 102.0],
+            "high": [101.0, 102.5, 104.0],
+            "low": [99.0, 100.0, 101.5],
+            "close": [100.5, 102.0, 103.5],
+            "vwap": [100.2, 101.5, 102.8],
+            "volume": [10.0, 11.0, 12.0],
+            "count": [1, 1, 1],
+            "atr": [1.0, 1.2, 1.3],
+        }
+    )
 
-    monkeypatch.setattr(market_analyzer.os.path, "exists", lambda _path: False)
-    monkeypatch.setattr(market_analyzer, "fetch_ohlc_data", lambda *_args, **_kwargs: df.copy())
+    fetched_df = pd.DataFrame(
+        {
+            "time": [1767227400, 1767228300, 1767229200],
+            "open": [102.0, 103.5, 104.0],
+            "high": [104.0, 105.5, 106.0],
+            "low": [101.5, 103.0, 103.5],
+            "close": [103.5, 105.0, 104.5],
+            "vwap": [102.8, 104.2, 104.4],
+            "volume": [12.0, 13.0, 14.0],
+            "count": [1, 1, 1],
+        },
+        index=pd.to_datetime([1767227400, 1767228300, 1767229200], unit="s", utc=True),
+    )
+
+    calls = {"load": None, "fetch": None, "saved_df": None}
+
+    def fake_load(pair, timeframe, since_time=None, limit=None):
+        calls["load"] = {
+            "pair": pair,
+            "timeframe": timeframe,
+            "since_time": since_time,
+            "limit": limit,
+        }
+        return existing_df.copy()
+
+    def fake_fetch(pair, timeframe, since_param):
+        calls["fetch"] = {
+            "pair": pair,
+            "timeframe": timeframe,
+            "since": since_param,
+        }
+        return fetched_df.copy()
+
+    def fake_save(pair, timeframe, df):
+        calls["saved_df"] = df.copy()
+
+    monkeypatch.setattr(market_analyzer.db, "load_ohlc_data", fake_load)
+    monkeypatch.setattr(market_analyzer, "fetch_ohlc_data", fake_fetch)
+    monkeypatch.setattr(market_analyzer.db, "save_ohlc_data", fake_save)
+    class _FixedDatetime:
+        @staticmethod
+        def now(tz=None):
+            return datetime.fromtimestamp(1767229500, tz=timezone.utc)
+
+    monkeypatch.setattr(market_analyzer, "datetime", _FixedDatetime)
     monkeypatch.setattr(market_analyzer, "ATR_PERIOD", 3)
-    monkeypatch.setattr(market_analyzer, "MARKET_DATA_DAYS", 9999)
-    monkeypatch.setattr(pd.DataFrame, "to_csv", lambda self, *args, **kwargs: None)
 
     current_atr = get_current_atr("XBTEUR")
 
-    assert current_atr is not None
-    assert pd.notna(current_atr)
+    assert calls["load"]["pair"] == "XBTEUR"
+    assert calls["load"]["limit"] == 4
+    assert calls["fetch"]["since"] == int(existing_df.iloc[-1]["time"]) + 1
+    assert calls["saved_df"] is not None
+    assert list(calls["saved_df"]["time"]) == [1767228300]
+    assert pd.notna(calls["saved_df"]["atr"].iloc[-1])
+    assert current_atr == calls["saved_df"]["atr"].iloc[-1]
+
+
+def test_get_current_atr_returns_last_db_atr_when_fetch_returns_empty(monkeypatch) -> None:
+    existing_df = pd.DataFrame(
+        {
+            "time": [1767225600, 1767226500],
+            "dtime": pd.to_datetime([1767225600, 1767226500], unit="s", utc=True),
+            "open": [100.0, 101.0],
+            "high": [101.0, 102.0],
+            "low": [99.0, 100.0],
+            "close": [100.5, 101.5],
+            "atr": [1.1, 1.9],
+        }
+    )
+
+    monkeypatch.setattr(
+        market_analyzer.db,
+        "load_ohlc_data",
+        lambda *_args, **_kwargs: existing_df.copy(),
+    )
+    monkeypatch.setattr(
+        market_analyzer,
+        "fetch_ohlc_data",
+        lambda *_args, **_kwargs: pd.DataFrame(),
+    )
+
+    current_atr = get_current_atr("XBTEUR")
+
+    assert current_atr == 1.9
 
 
 def test_get_args_parses_cli_values(monkeypatch) -> None:

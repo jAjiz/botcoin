@@ -11,9 +11,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS, VOLATILITY_LEVELS as LEVELS, STOP_PERCENTILES
+from core.config import CANDLE_TIMEFRAME, ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS, VOLATILITY_LEVELS as LEVELS, STOP_PERCENTILES
 from trading.backtest import simulate_operations
-from trading.market_analyzer import analyze_structural_noise, load_data
+import core.database as db
+from trading.market_analyzer import analyze_structural_noise
 
 MODES = ("CONSERVATIVE", "AGGRESSIVE", "CURRENT")
 SPLIT_METHODS = ("RESET", "CONTINUE", "BOTH")
@@ -274,7 +275,7 @@ def main() -> None:
     fee_rate = float(args["fee_pct"]) / 100.0
     split_method = args["split_method"]
 
-    df = load_data(pair)
+    df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME)
     if args["start"]:
         df = df[df["dtime"] >= args["start"]]
     if args["end"]:

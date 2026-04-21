@@ -2,8 +2,9 @@ import math
 import logging
 import numpy as np
 import pandas as pd
-from core.config import PAIRS, TRADING_PARAMS, STOP_PERCENTILES, VOLATILITY_LEVELS as LEVELS
-from trading.market_analyzer import load_data, analyze_structural_noise
+import core.database as db
+from core.config import CANDLE_TIMEFRAME, PAIRS, TRADING_PARAMS, STOP_PERCENTILES, VOLATILITY_LEVELS as LEVELS
+from trading.market_analyzer import analyze_structural_noise
 
 def calculate_k_stops(pair, events):
     if not events:
@@ -34,7 +35,7 @@ def calculate_trading_parameters(pair, infoLog=True):
         logging.info(f"Calculating trading parameters for {pair}...")
 
     try:
-        df = load_data(pair)
+        df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME)
     except Exception as e:
         logging.error(f"Error loading data for {pair}: {e}")
         raise e

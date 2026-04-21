@@ -363,7 +363,7 @@ def load_ohlc_data(
         limit: Optional maximum number of rows to return.
 
     Returns:
-        A DataFrame indexed by dtime, or an empty DataFrame when no rows match.
+        A DataFrame or an empty DataFrame when no rows match.
     """
     try:
         with get_session() as session:
@@ -378,9 +378,8 @@ def load_ohlc_data(
             if not records:
                 return pd.DataFrame()
             df = pd.DataFrame([r.to_dict() for r in records])
-            df["dtime"] = pd.to_datetime(pd.to_numeric(df["time"]), unit="s")
+            df["dtime"] = pd.to_datetime(pd.to_numeric(df["time"]), unit="s", utc=True)
             df.sort_values("dtime", ascending=True, inplace=True)
-            df.set_index("dtime", inplace=True)
             logger.debug(f"Fetched {len(df)} OHLC records for {pair}")
             return df
     except Exception as e:

@@ -309,13 +309,13 @@ def test_load_ohlc_data_with_records(monkeypatch, ohlc_record):
 
 
 def test_load_ohlc_data_with_since_timestamp(monkeypatch):
-    """Test loading OHLC data with since_timestamp filter."""
+    """Test loading OHLC data with since_time filter."""
     since_ts = 1717200000  # Some Unix timestamp
 
     session = FakeSession(records=[])
     patch_get_session(monkeypatch, session)
 
-    df = load_ohlc_data("XBTEUR", 15, since_timestamp=since_ts)
+    df = load_ohlc_data("XBTEUR", 15, since_time=since_ts)
 
     assert session.query_obj.filter_calls >= 2
     assert df.empty
