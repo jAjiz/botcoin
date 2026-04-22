@@ -522,8 +522,7 @@ def load_trailing_state(pair: str) -> Optional[Dict[str, Any]]:
     """
     try:
         with get_session() as session:
-            records = session.query(TrailingState).filter(TrailingState.pair == pair).all()
-            record = next((item for item in records if item.pair == pair), None)
+            record = session.query(TrailingState).filter(TrailingState.pair == pair).one_or_none()
             if record is None:
                 return None
             state_entry = _trailing_record_to_state_entry(record)
@@ -545,8 +544,7 @@ def delete_trailing_state(pair: str) -> bool:
     """
     try:
         with get_session() as session:
-            records = session.query(TrailingState).filter(TrailingState.pair == pair).all()
-            record = next((item for item in records if item.pair == pair), None)
+            record = session.query(TrailingState).filter(TrailingState.pair == pair).one_or_none()
             if record is None:
                 logger.debug(f"No trailing state found for {pair}")
                 return False
@@ -567,8 +565,7 @@ def get_control_value(control_key: str) -> Optional[str]:
     """Get a bot control value by key."""
     try:
         with get_session() as session:
-            records = session.query(BotControl).filter(BotControl.control_key == control_key).all()
-            record = next((item for item in records if item.control_key == control_key), None)
+            record = session.query(BotControl).filter(BotControl.control_key == control_key).one_or_none()
             if record is None:
                 return None
             return record.control_value
