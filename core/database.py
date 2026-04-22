@@ -93,12 +93,9 @@ class OHLCData(Base):
     )
 
     def to_dict(self) -> Dict[str, Any]:
+        # Only return useful fields for DataFrame construction
         return {
-            "pair": self.pair,
-            "timeframe_minutes": self.timeframe_minutes,
             "time": self.time,
-            "dtime": datetime.fromtimestamp(self.time, tz=timezone.utc),
-            "source_exchange": self.source_exchange,
             "open": float(self.open),
             "high": float(self.high),
             "low": float(self.low),
@@ -363,7 +360,7 @@ def load_ohlc_data(
         limit: Optional maximum number of rows to return.
 
     Returns:
-        A DataFrame or an empty DataFrame when no rows match.
+        A DataFrame with OHLC data and a datetime column.
     """
     try:
         with get_session() as session:
@@ -372,14 +369,14 @@ def load_ohlc_data(
             )
             if since_time is not None:
                 query = query.filter(OHLCData.time >= since_time)
+            query = query.order_by(desc(OHLCData.time))
             if limit is not None:
                 query = query.limit(limit)
-            records = query.order_by(OHLCData.time).all()
+            records = query.all()
             if not records:
                 return pd.DataFrame()
             df = pd.DataFrame([r.to_dict() for r in records])
-            df["dtime"] = pd.to_datetime(pd.to_numeric(df["time"]), unit="s", utc=True)
-            df.sort_values("dtime", ascending=True, inplace=True)
+            df["dtime"] = pd.to_datetime(pd.to_numeric(df["time"]), unit="s")
             logger.debug(f"Fetched {len(df)} OHLC records for {pair}")
             return df
     except Exception as e:
@@ -405,7 +402,7 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
                 OHLCData(
                     pair=pair,
                     timeframe_minutes=timeframe,
-                    time=BigInteger(str(row["time"])),
+                    time=int(row["time"]),
                     open=Decimal(str(row["open"])),
                     high=Decimal(str(row["high"])),
                     low=Decimal(str(row["low"])),

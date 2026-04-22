@@ -349,7 +349,7 @@ def main() -> None:
     # Ensure we have thresholds + K_STOP in memory
     calculate_trading_parameters(pair, infoLog=False)
 
-    df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME)
+    df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME).dropna(subset=["atr"])
 
     # Optional date slicing (expects dtime comparable as string YYYY-MM-DD...)
     if args["start"]:

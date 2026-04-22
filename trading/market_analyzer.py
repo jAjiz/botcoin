@@ -21,8 +21,8 @@ def get_current_atr(pair: str) -> float | None:
         since_ts = None
         last_atr = None
         if not db_ohlc.empty:
-            since_ts = int(db_ohlc.iloc[-1]["time"]) + 1
-            last_atr = float(db_ohlc.iloc[-1]["atr"]) if pd.notna(db_ohlc.iloc[-1]["atr"]) else None
+            since_ts = int(db_ohlc.iloc[0]["time"]) + 1
+            last_atr = float(db_ohlc.iloc[0]["atr"]) if pd.notna(db_ohlc.iloc[0]["atr"]) else None
 
         xchange_ohlc = fetch_ohlc_data(pair, CANDLE_TIMEFRAME, since_ts)
 
@@ -30,24 +30,30 @@ def get_current_atr(pair: str) -> float | None:
             return last_atr
         
         # If the last fetched candle is the current one, exclude it from calculations
-        if xchange_ohlc.iloc[-1]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(timezone.utc).timestamp()):
-            xchange_ohlc = xchange_ohlc.iloc[:-1]
+        if xchange_ohlc.iloc[0]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(timezone.utc).timestamp()):
+            xchange_ohlc = xchange_ohlc.iloc[1:]
             if xchange_ohlc.empty:
                 return last_atr
 
         if not db_ohlc.empty:
-            all_rows = pd.concat([db_ohlc, xchange_ohlc], ignore_index=True)
+            all_rows = pd.concat([xchange_ohlc, db_ohlc], ignore_index=True)
         else:
             all_rows = xchange_ohlc.copy()
 
+        # Change order to oldest to newest for easier ATR calculation
         all_rows.sort_values("time", inplace=True)
         all_rows.drop_duplicates(subset=["time"], keep="last", inplace=True)
 
+        # Calculate ATR using True Range method
         all_rows["H-L"] = all_rows["high"] - all_rows["low"]
         all_rows["H-PC"] = (all_rows["high"] - all_rows["close"].shift(1)).abs()
         all_rows["L-PC"] = (all_rows["low"] - all_rows["close"].shift(1)).abs()
         all_rows["TR"] = all_rows[["H-L", "H-PC", "L-PC"]].max(axis=1)
         all_rows["atr"] = all_rows["TR"].rolling(ATR_PERIOD).mean()
+
+        # Remove intermediate columns and sort back to newest to oldest
+        all_rows.drop(columns=["H-L", "H-PC", "L-PC", "TR"], inplace=True)
+        all_rows.sort_values("time", ascending=False, inplace=True)
 
         if since_ts is None:
             new_rows = all_rows.copy()
@@ -56,7 +62,8 @@ def get_current_atr(pair: str) -> float | None:
 
         if not new_rows.empty:
             db.save_ohlc_data(pair, CANDLE_TIMEFRAME, new_rows)
-            return float(new_rows["atr"].iloc[-1]) if pd.notna(new_rows["atr"].iloc[-1]) else last_atr
+            if pd.notna(new_rows["atr"].iloc[0]):
+                return float(new_rows["atr"].iloc[0])
 
         return last_atr
     except Exception as e:

@@ -275,7 +275,8 @@ def main() -> None:
     fee_rate = float(args["fee_pct"]) / 100.0
     split_method = args["split_method"]
 
-    df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME)
+    df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME).dropna(subset=["atr"])
+    
     if args["start"]:
         df = df[df["dtime"] >= args["start"]]
     if args["end"]:
