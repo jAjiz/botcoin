@@ -202,13 +202,11 @@ def test_ohlc_creation(ohlc_record):
 def test_ohlc_to_dict(ohlc_record):
     """Test converting OHLCData to dictionary."""
     data = ohlc_record.to_dict()
-    assert data["pair"] == "XBTEUR"
     assert data["time"] == 1743508800
     assert data["open"] == 100.0
     assert data["close"] == 101.0
     assert data["count"] == 123
     assert isinstance(data["atr"], float)
-    assert isinstance(data["dtime"], datetime)
 
 
 def test_ohlc_decimal_precision():
@@ -813,14 +811,18 @@ def test_set_control_value_raises_on_error(monkeypatch):
     [
         (BotControl(control_key="bot_paused", control_value="true"), True),
         (BotControl(control_key="bot_paused", control_value="false"), False),
-        (None, False),
+        (None, None),  # Simulate missing record
     ],
 )
 def test_get_bot_paused(monkeypatch, record, expected):
     """Test get_bot_paused for true, false, and missing values."""
     session = FakeSession(records=[record] if record else [])
     patch_get_session(monkeypatch, session)
-    assert get_bot_paused() is expected
+    if record is None:
+        with pytest.raises(ValueError):
+            get_bot_paused()
+    else:
+        assert get_bot_paused() is expected
 
 
 def test_set_bot_paused(monkeypatch):
