@@ -43,7 +43,7 @@ def call_with_retry(func, *args):
 def trading_session():
     global _session_count
 
-    if telegram.BOT_PAUSED:
+    if db.get_bot_paused():
         logging.info("Bot is paused. Skipping session.\n")
         return
 

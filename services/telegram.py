@@ -3,8 +3,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 from core.config import TELEGRAM_TOKEN, TELEGRAM_USER_ID, TELEGRAM_POLL_INTERVAL, PAIRS, FIAT_CODE
 from core.runtime import get_last_balance, get_pair_data, get_trailing_state
-
-BOT_PAUSED = False
+import core.database as db
 
 # Only log warnings and above from telegram library
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -49,7 +48,8 @@ class TelegramInterface:
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
-        status = "⏸ PAUSED" if BOT_PAUSED else "▶️ RUNNING"
+        bot_paused = db.get_bot_paused()
+        status = "⏸ PAUSED" if bot_paused else "▶️ RUNNING"
         pairs_list = ', '.join(PAIRS.keys())
         await update.message.reply_text(
             f"Status: {status}\n"
@@ -59,20 +59,18 @@ class TelegramInterface:
 
     async def pause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
-        global BOT_PAUSED
-        if BOT_PAUSED:
+        if db.get_bot_paused():
             await update.message.reply_text("⚠️ Bot is already paused.")
             return
-        BOT_PAUSED = True
+        db.set_bot_paused(True, updated_by="telegram")
         await update.message.reply_text("⏸ BoTC paused. New operations will not be processed.")
 
     async def resume_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
-        global BOT_PAUSED
-        if not BOT_PAUSED:
+        if not db.get_bot_paused():
             await update.message.reply_text("⚠️ Bot is already running.")
             return
-        BOT_PAUSED = False
+        db.set_bot_paused(False, updated_by="telegram")
         await update.message.reply_text("▶️ BoTC resumed.")
 
     async def market_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
