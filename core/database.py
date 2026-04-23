@@ -16,7 +16,9 @@ from sqlalchemy import (
     CheckConstraint,
     and_,
     desc,
+    text,
 )
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 
@@ -312,7 +314,7 @@ def check_database_connection() -> bool:
     """Verify database connection is working."""
     try:
         with get_session() as session:
-            session.execute("SELECT 1")
+            session.execute(text("SELECT 1"))
         logger.debug("Database connection successful")
         return True
     except Exception as e:
@@ -373,26 +375,28 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
         if df.empty:
             logger.warning(f"Empty DataFrame provided for {pair}")
             return
-        working_df = df.copy()
+        rows = [
+            {
+                "pair": pair,
+                "timeframe_minutes": timeframe,
+                "time": int(row["time"]),
+                "open": Decimal(str(row["open"])),
+                "high": Decimal(str(row["high"])),
+                "low": Decimal(str(row["low"])),
+                "close": Decimal(str(row["close"])),
+                "vwap": Decimal(str(row["vwap"])) if "vwap" in row and pd.notna(row["vwap"]) else None,
+                "volume": Decimal(str(row["volume"])) if "volume" in row and pd.notna(row["volume"]) else None,
+                "count": int(row["count"]) if "count" in row and pd.notna(row["count"]) else None,
+                "atr": Decimal(str(row["atr"])) if "atr" in row and pd.notna(row["atr"]) else None,
+            }
+            for _, row in df.iterrows()
+        ]
         with get_session() as session:
-            records = [
-                OHLCData(
-                    pair=pair,
-                    timeframe_minutes=timeframe,
-                    time=int(row["time"]),
-                    open=Decimal(str(row["open"])),
-                    high=Decimal(str(row["high"])),
-                    low=Decimal(str(row["low"])),
-                    close=Decimal(str(row["close"])),
-                    vwap=Decimal(str(row["vwap"])) if "vwap" in row and pd.notna(row["vwap"]) else None,
-                    volume=Decimal(str(row["volume"])) if "volume" in row and pd.notna(row["volume"]) else None,
-                    count=int(row["count"]) if "count" in row and pd.notna(row["count"]) else None,
-                    atr=Decimal(str(row["atr"])) if "atr" in row and pd.notna(row["atr"]) else None,
-                )
-                for _, row in working_df.iterrows()
-            ]
-            session.add_all(records)
-            logger.debug(f"Saved {len(records)} OHLC records for {pair}")
+            stmt = pg_insert(OHLCData).values(rows).on_conflict_do_nothing(
+                index_elements=["pair", "timeframe_minutes", "time"]
+            )
+            session.execute(stmt)
+            logger.debug(f"Saved {len(rows)} OHLC records for {pair}")
     except Exception as e:
         logger.error(f"Error saving OHLC data for {pair}: {e}")
         raise

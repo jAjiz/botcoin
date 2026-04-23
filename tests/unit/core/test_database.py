@@ -84,9 +84,6 @@ class FakeSession:
         self.merged_records.append(record)
         return record
 
-    def add_all(self, records: list[Any]) -> None:
-        self.added_records.extend(records)
-
     def delete(self, record: Any) -> None:
         self.deleted_records.append(record)
 
@@ -101,8 +98,8 @@ class FakeSession:
     def close(self) -> None:
         self.close_calls += 1
 
-    def execute(self, sql: str) -> None:
-        self.executed_sql.append(sql)
+    def execute(self, sql) -> None:
+        self.executed_sql.append(str(sql))
 
 
 class FakeSessionContextManager:
@@ -336,8 +333,9 @@ def test_save_ohlc_data(monkeypatch, sample_dataframe):
 
     save_ohlc_data("XBTEUR", 15, sample_dataframe)
 
-    assert len(session.added_records) == len(sample_dataframe)
-    assert session.added_records[0].time == int(sample_dataframe.iloc[0]["dtime"].timestamp())
+    assert len(session.added_records) == 0
+    assert len(session.executed_sql) == 1
+    assert "ohlc_data" in session.executed_sql[0].lower()
 
 
 def test_save_ohlc_data_empty_dataframe(caplog):
