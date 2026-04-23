@@ -1,6 +1,6 @@
 import core.logging as logging
 from core.config import MIN_VALUE, TRADING_PARAMS
-from core.utils import now_str
+from core.utils import now_utc
 from exchange.kraken import place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
@@ -25,7 +25,7 @@ def create_position(pair, balance, last_prices, atr_val, trailing_state):
         "entry_price": current_price,
         "activation_atr": round(atr_val, 1),
         "activation_price": round(activation_price, 1),
-        "created_at": now_str()
+        "created_at": now_utc()
     }
     
     logging.info(f"[{pair}] 🆕 New {side.upper()} position: activation at {activation_price:,.1f}€",
@@ -130,7 +130,7 @@ def close_position(pair, pos, last_prices):
             "volume": round(volume, 8),
             "closing_price": current_price,
             "closing_order_id": closing_order,
-            "closing_requested_at": now_str(),
+            "closing_requested_at": now_utc(),
             "pnl_percent": round(pnl, 4)
         })
     except Exception as e:

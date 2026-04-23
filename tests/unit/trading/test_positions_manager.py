@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import trading.positions_manager as positions_manager
 
 
@@ -46,7 +48,8 @@ def test_create_position_builds_state_from_calculated_values(monkeypatch) -> Non
         lambda pair, balance, prices, state: ("buy", 100.0),
     )
     monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *args: 85.0)
-    monkeypatch.setattr(positions_manager, "now_str", lambda: "2026-01-01 00:00:00")
+    _now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
 
     trailing_state = {}
     positions_manager.create_position(
@@ -62,12 +65,13 @@ def test_create_position_builds_state_from_calculated_values(monkeypatch) -> Non
     assert trailing_state["XBTEUR"]["volume"] == 1.0
     assert trailing_state["XBTEUR"]["entry_price"] == 100.0
     assert trailing_state["XBTEUR"]["activation_price"] == 85.0
-    assert trailing_state["XBTEUR"]["created_at"] == "2026-01-01 00:00:00"
+    assert trailing_state["XBTEUR"]["created_at"] == _now
 
 
 def test_close_position_updates_position_on_success(monkeypatch) -> None:
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
-    monkeypatch.setattr(positions_manager, "now_str", lambda: "2026-01-01 12:00:00")
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
     prices = {"XBTEUR": 90.0}
@@ -75,7 +79,7 @@ def test_close_position_updates_position_on_success(monkeypatch) -> None:
     positions_manager.close_position("XBTEUR", pos, prices)
 
     assert pos["closing_order_id"] == "ORDER123"
-    assert pos["closing_requested_at"] == "2026-01-01 12:00:00"
+    assert pos["closing_requested_at"] == _now
     assert pos["closing_price"] == 90.0
     assert pos["pnl_percent"] == -10.0
 

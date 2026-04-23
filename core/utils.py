@@ -1,8 +1,8 @@
-import time
+from datetime import datetime, timezone
 
 
-def now_str():
-    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def print_pair_argument_error():

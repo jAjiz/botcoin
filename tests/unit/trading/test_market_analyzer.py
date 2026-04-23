@@ -50,31 +50,31 @@ def test_analyze_structural_noise_returns_two_event_lists(sample_dataframe: pd.D
 def test_get_current_atr_uses_db_slice_fetches_new_data_and_saves_only_new_closed_rows(monkeypatch) -> None:
     existing_df = pd.DataFrame(
         {
-            "time": [1767225600, 1767226500, 1767227400],
-            "dtime": pd.to_datetime([1767225600, 1767226500, 1767227400], unit="s", utc=True),
-            "open": [100.0, 101.0, 102.0],
-            "high": [101.0, 102.5, 104.0],
-            "low": [99.0, 100.0, 101.5],
-            "close": [100.5, 102.0, 103.5],
-            "vwap": [100.2, 101.5, 102.8],
-            "volume": [10.0, 11.0, 12.0],
+            "time": [1767227400, 1767226500, 1767225600],
+            "dtime": pd.to_datetime([1767227400, 1767226500, 1767225600], unit="s", utc=True),
+            "open": [102.0, 101.0, 100.0],
+            "high": [104.0, 102.5, 101.0],
+            "low": [101.5, 100.0, 99.0],
+            "close": [103.5, 102.0, 100.5],
+            "vwap": [102.8, 101.5, 100.2],
+            "volume": [12.0, 11.0, 10.0],
             "count": [1, 1, 1],
-            "atr": [1.0, 1.2, 1.3],
+            "atr": [1.3, 1.2, 1.0],
         }
     )
 
     fetched_df = pd.DataFrame(
         {
-            "time": [1767227400, 1767228300, 1767229200],
-            "open": [102.0, 103.5, 104.0],
-            "high": [104.0, 105.5, 106.0],
-            "low": [101.5, 103.0, 103.5],
-            "close": [103.5, 105.0, 104.5],
-            "vwap": [102.8, 104.2, 104.4],
-            "volume": [12.0, 13.0, 14.0],
+            "time": [1767229200, 1767228300, 1767227400],
+            "open": [104.0, 103.5, 102.0],
+            "high": [106.0, 105.5, 104.0],
+            "low": [103.5, 103.0, 101.5],
+            "close": [104.5, 105.0, 103.5],
+            "vwap": [104.4, 104.2, 102.8],
+            "volume": [14.0, 13.0, 12.0],
             "count": [1, 1, 1],
         },
-        index=pd.to_datetime([1767227400, 1767228300, 1767229200], unit="s", utc=True),
+        index=pd.to_datetime([1767229200, 1767228300, 1767227400], unit="s", utc=True),
     )
 
     calls = {"load": None, "fetch": None, "saved_df": None}
@@ -114,7 +114,7 @@ def test_get_current_atr_uses_db_slice_fetches_new_data_and_saves_only_new_close
 
     assert calls["load"]["pair"] == "XBTEUR"
     assert calls["load"]["limit"] == 4
-    assert calls["fetch"]["since"] == int(existing_df.iloc[-1]["time"]) + 1
+    assert calls["fetch"]["since"] == int(existing_df.iloc[0]["time"]) + 1
     assert calls["saved_df"] is not None
     assert list(calls["saved_df"]["time"]) == [1767228300]
     assert pd.notna(calls["saved_df"]["atr"].iloc[-1])
@@ -124,13 +124,13 @@ def test_get_current_atr_uses_db_slice_fetches_new_data_and_saves_only_new_close
 def test_get_current_atr_returns_last_db_atr_when_fetch_returns_empty(monkeypatch) -> None:
     existing_df = pd.DataFrame(
         {
-            "time": [1767225600, 1767226500],
-            "dtime": pd.to_datetime([1767225600, 1767226500], unit="s", utc=True),
-            "open": [100.0, 101.0],
-            "high": [101.0, 102.0],
-            "low": [99.0, 100.0],
-            "close": [100.5, 101.5],
-            "atr": [1.1, 1.9],
+            "time": [1767226500, 1767225600],
+            "dtime": pd.to_datetime([1767226500, 1767225600], unit="s", utc=True),
+            "open": [101.0, 100.0],
+            "high": [102.0, 101.0],
+            "low": [100.0, 99.0],
+            "close": [101.5, 100.5],
+            "atr": [1.9, 1.1],
         }
     )
 

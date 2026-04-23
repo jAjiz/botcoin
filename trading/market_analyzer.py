@@ -29,7 +29,7 @@ def get_current_atr(pair: str) -> float | None:
         if xchange_ohlc is None or xchange_ohlc.empty:
             return last_atr
         
-        # If the last fetched candle is the current one, exclude it from calculations
+        # If the most recent fetched candle is still open, exclude it from calculations
         if xchange_ohlc.iloc[0]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(timezone.utc).timestamp()):
             xchange_ohlc = xchange_ohlc.iloc[1:]
             if xchange_ohlc.empty:

@@ -258,27 +258,6 @@ def _to_decimal(value: Any) -> Optional[Decimal]:
     return Decimal(str(value))
 
 
-def _to_utc_datetime(value: Any) -> Optional[datetime]:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
-    if isinstance(value, str):
-        parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-        return parsed.replace(tzinfo=timezone.utc)
-    raise TypeError(f"Unsupported datetime value: {type(value)!r}")
-
-
-def _format_state_datetime(value: Optional[datetime]) -> Optional[str]:
-    if value is None:
-        return None
-    if value.tzinfo is not None:
-        value = value.astimezone(timezone.utc)
-    return value.strftime("%Y-%m-%d %H:%M:%S")
-
-
 def _state_entry_to_trailing_record(pair: str, position_data: Dict[str, Any]) -> TrailingState:
     return TrailingState(
         pair=pair,
@@ -287,14 +266,14 @@ def _state_entry_to_trailing_record(pair: str, position_data: Dict[str, Any]) ->
         entry_price=Decimal(str(position_data["entry_price"])),
         activation_atr=Decimal(str(position_data["activation_atr"])),
         activation_price=Decimal(str(position_data["activation_price"])),
-        created_at=_to_utc_datetime(position_data["created_at"]),
-        activated_at=_to_utc_datetime(position_data.get("activated_at")),
+        created_at=position_data["created_at"],
+        activated_at=position_data.get("activated_at"),
         trailing_price=_to_decimal(position_data.get("trailing_price")),
         stop_price=_to_decimal(position_data.get("stop_price")),
         stop_atr=_to_decimal(position_data.get("stop_atr")),
         closing_order_id=position_data.get("closing_order_id"),
         closing_price=_to_decimal(position_data.get("closing_price")),
-        closing_requested_at=_to_utc_datetime(position_data.get("closing_requested_at")),
+        closing_requested_at=position_data.get("closing_requested_at"),
     )
 
 
@@ -305,10 +284,10 @@ def _trailing_record_to_state_entry(record: TrailingState) -> Dict[str, Any]:
         "entry_price": float(record.entry_price),
         "activation_atr": float(record.activation_atr),
         "activation_price": float(record.activation_price),
-        "created_at": _format_state_datetime(record.created_at),
+        "created_at": record.created_at,
     }
     if record.activated_at is not None:
-        state_entry["activated_at"] = _format_state_datetime(record.activated_at)
+        state_entry["activated_at"] = record.activated_at
     if record.trailing_price is not None:
         state_entry["trailing_price"] = float(record.trailing_price)
     if record.stop_price is not None:
@@ -320,7 +299,7 @@ def _trailing_record_to_state_entry(record: TrailingState) -> Dict[str, Any]:
     if record.closing_price is not None:
         state_entry["closing_price"] = float(record.closing_price)
     if record.closing_requested_at is not None:
-        state_entry["closing_requested_at"] = _format_state_datetime(record.closing_requested_at)
+        state_entry["closing_requested_at"] = record.closing_requested_at
     return state_entry
 
 
@@ -439,8 +418,8 @@ def save_closed_position(pair: str, position_data: Dict[str, Any]) -> None:
             entry_price=Decimal(str(position_data["entry_price"])),
             activation_atr=_to_decimal(position_data.get("activation_atr")),
             activation_price=_to_decimal(position_data.get("activation_price")),
-            created_at=_to_utc_datetime(position_data["created_at"]),
-            activated_at=_to_utc_datetime(position_data.get("activated_at")),
+            created_at=position_data["created_at"],
+            activated_at=position_data.get("activated_at"),
             trailing_price=_to_decimal(position_data.get("trailing_price")),
             stop_price=_to_decimal(position_data.get("stop_price")),
             stop_atr=_to_decimal(position_data.get("stop_atr")),

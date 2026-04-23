@@ -11,7 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from exchange.kraken import get_balance, get_last_prices, get_order_status
 from core.config import SLEEPING_INTERVAL, PAIRS, PARAM_SESSIONS, ATR_DESV_LIMIT, TELEGRAM_ENABLED
 from core.validation import validate_config
-from core.utils import now_str
+from core.utils import now_utc
 from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
 from trading.market_analyzer import get_current_atr
 from trading.positions_manager import (
@@ -177,7 +177,7 @@ def update_trailing_state(pair, current_balance, last_prices, current_atr, trail
         # Activation check
         if (side == "sell" and current_price >= pos["activation_price"]) or \
             (side == "buy" and current_price <= pos["activation_price"]):
-            pos["activated_at"] = now_str()
+            pos["activated_at"] = now_utc()
             logging.info(f"[{pair}] ⚡ Activation price {pos['activation_price']:,}€ reached for {side.upper()} position.",
                             to_telegram=True)
             update_stop_price(pair, pos, current_price, current_atr)

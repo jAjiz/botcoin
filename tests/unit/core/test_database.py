@@ -34,8 +34,15 @@ class FakeQuery:
         self.order_by_calls = 0
         self.limit_value: int | None = None
 
-    def filter(self, *_args: Any, **_kwargs: Any) -> "FakeQuery":
+    def filter(self, *args: Any, **_kwargs: Any) -> "FakeQuery":
         self.filter_calls += 1
+        for expr in args:
+            try:
+                attr = expr.left.key
+                value = expr.right.value
+                self.records = [r for r in self.records if getattr(r, attr, None) == value]
+            except AttributeError:
+                pass
         return self
 
     def order_by(self, *_args: Any, **_kwargs: Any) -> "FakeQuery":
@@ -50,6 +57,9 @@ class FakeQuery:
         if self.limit_value is None:
             return self.records
         return self.records[: self.limit_value]
+
+    def one_or_none(self) -> Any | None:
+        return self.records[0] if self.records else None
 
 
 class FakeSession:
@@ -169,7 +179,7 @@ def trailing_state_record():
         entry_price=Decimal("50000"),
         activation_atr=Decimal("200"),
         activation_price=Decimal("50100"),
-        created_at=datetime(2026, 4, 1, 10, 0, 0),
+        created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
         trailing_price=Decimal("50400"),
         stop_price=Decimal("50200"),
         stop_atr=Decimal("150"),
@@ -452,7 +462,7 @@ def _make_closed_position_data(**overrides) -> dict:
         "entry_price": Decimal("50000"),
         "activation_atr": None,
         "activation_price": Decimal("50100"),
-        "created_at": datetime(2026, 4, 1, 10, 0, 0),
+        "created_at": datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
         "activated_at": None,
         "trailing_price": None,
         "stop_price": None,
@@ -473,7 +483,7 @@ def _make_trailing_state_entry(**overrides) -> dict:
         "entry_price": 50000.0,
         "activation_atr": 200.0,
         "activation_price": 50100.0,
-        "created_at": "2026-04-01 10:00:00",
+        "created_at": datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
     }
     data.update(overrides)
     return data
@@ -517,7 +527,7 @@ def test_save_closed_position_optional_fields_populated(monkeypatch):
     data = _make_closed_position_data(
         side="sell",
         activation_atr=Decimal("50"),
-        activated_at=datetime(2026, 4, 2, 10, 0, 0),
+        activated_at=datetime(2026, 4, 2, 10, 0, 0, tzinfo=timezone.utc),
         trailing_price=Decimal("2980"),
         stop_price=Decimal("3020"),
         stop_atr=Decimal("40"),
@@ -638,8 +648,8 @@ def test_save_trailing_state_with_optional_fields(monkeypatch):
             stop_atr=150.0,
             closing_order_id="close_123",
             closing_price=50150.0,
-            closing_requested_at="2026-04-01 11:15:00",
-            activated_at="2026-04-01 10:30:00",
+            closing_requested_at=datetime(2026, 4, 1, 11, 15, 0, tzinfo=timezone.utc),
+            activated_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=timezone.utc),
         ),
     )
 
@@ -669,7 +679,7 @@ def test_save_trailing_state_raises_on_db_error(monkeypatch):
                 entry_price=Decimal("50000"),
                 activation_atr=Decimal("200"),
                 activation_price=Decimal("50100"),
-                created_at=datetime(2026, 4, 1, 10, 0, 0),
+                created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
                 trailing_price=Decimal("50400"),
                 stop_price=Decimal("50200"),
                 stop_atr=Decimal("150"),
@@ -683,7 +693,7 @@ def test_save_trailing_state_raises_on_db_error(monkeypatch):
                 entry_price=Decimal("50000"),
                 activation_atr=Decimal("200"),
                 activation_price=Decimal("50100"),
-                created_at=datetime(2026, 4, 1, 10, 0, 0),
+                created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
                 trailing_price=Decimal("50400"),
                 stop_price=Decimal("50200"),
                 stop_atr=Decimal("150"),
@@ -702,7 +712,7 @@ def test_load_trailing_state(monkeypatch, pair, records, expect_found):
         assert result is not None
         assert result["side"] == "buy"
         assert result["activation_price"] == 50100.0
-        assert result["created_at"] == "2026-04-01 10:00:00"
+        assert result["created_at"] == datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
     else:
         assert result is None
     assert session.query_obj.filter_calls == 1
