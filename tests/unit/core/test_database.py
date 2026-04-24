@@ -816,18 +816,14 @@ def test_set_control_value_raises_on_error(monkeypatch):
     [
         (BotControl(control_key="bot_paused", control_value="true"), True),
         (BotControl(control_key="bot_paused", control_value="false"), False),
-        (None, None),  # Simulate missing record
+        (None, False),  # Missing record defaults to False (safe default, no exception)
     ],
 )
 def test_get_bot_paused(monkeypatch, record, expected):
     """Test get_bot_paused for true, false, and missing values."""
     session = FakeSession(records=[record] if record else [])
     patch_get_session(monkeypatch, session)
-    if record is None:
-        with pytest.raises(ValueError):
-            get_bot_paused()
-    else:
-        assert get_bot_paused() is expected
+    assert get_bot_paused() is expected
 
 
 def test_set_bot_paused(monkeypatch):

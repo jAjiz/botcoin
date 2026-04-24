@@ -48,7 +48,12 @@ class TelegramInterface:
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
-        bot_paused = db.get_bot_paused()
+        try:
+            bot_paused = db.get_bot_paused()
+        except Exception as e:
+            logging.error(f"Error reading bot status from DB: {e}")
+            await update.message.reply_text("❌ Could not read bot status from database.")
+            return
         status = "⏸ PAUSED" if bot_paused else "▶️ RUNNING"
         pairs_list = ', '.join(PAIRS.keys())
         await update.message.reply_text(
@@ -59,18 +64,28 @@ class TelegramInterface:
 
     async def pause_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
-        if db.get_bot_paused():
-            await update.message.reply_text("⚠️ Bot is already paused.")
+        try:
+            if db.get_bot_paused():
+                await update.message.reply_text("⚠️ Bot is already paused.")
+                return
+            db.set_bot_paused(True, updated_by="telegram")
+        except Exception as e:
+            logging.error(f"Error updating pause state in DB: {e}")
+            await update.message.reply_text("❌ Could not update bot state in database.")
             return
-        db.set_bot_paused(True, updated_by="telegram")
         await update.message.reply_text("⏸ BoTC paused. New operations will not be processed.")
 
     async def resume_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
-        if not db.get_bot_paused():
-            await update.message.reply_text("⚠️ Bot is already running.")
+        try:
+            if not db.get_bot_paused():
+                await update.message.reply_text("⚠️ Bot is already running.")
+                return
+            db.set_bot_paused(False, updated_by="telegram")
+        except Exception as e:
+            logging.error(f"Error updating pause state in DB: {e}")
+            await update.message.reply_text("❌ Could not update bot state in database.")
             return
-        db.set_bot_paused(False, updated_by="telegram")
         await update.message.reply_text("▶️ BoTC resumed.")
 
     async def market_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,8 +189,6 @@ class TelegramInterface:
                 msg += "\n".join(base_lines) + "\n\n"
 
             await update.message.reply_text(msg)
-        except FileNotFoundError:
-            await update.message.reply_text("⚠️ No positions file found.")
         except Exception as e:
             logging.error(f"Error in positions_command: {e}")
             await update.message.reply_text(f"❌ Error fetching positions: {e}")

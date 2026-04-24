@@ -8,7 +8,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./data:/app/data
       - ./logs:/app/logs
     networks:
       - botc_backend

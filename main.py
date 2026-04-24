@@ -97,6 +97,10 @@ def main():
     if not validate_config():
         sys.exit(1)
 
+    if not db.check_database_connection():
+        logging.error("Cannot connect to PostgreSQL. Check DATABASE_URL / POSTGRES_* env vars.")
+        sys.exit(1)
+
     if TELEGRAM_ENABLED:
         telegram.initialize_telegram()
 

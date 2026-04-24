@@ -577,7 +577,8 @@ def get_bot_paused() -> bool:
     """Get bot paused state from bot_control table."""
     value = get_control_value("bot_paused")
     if value is None:
-        raise ValueError("Bot paused state not found in control table")
+        logger.warning("bot_paused record missing from bot_control table; defaulting to False")
+        return False
     return str(value).strip().lower() == "true"
 
 
