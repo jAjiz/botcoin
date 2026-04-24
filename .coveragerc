@@ -13,3 +13,5 @@ omit =
     core/runtime.py
     # Telegram bot interface; command handlers require a live bot connection to test meaningfully
     services/telegram.py
+    # Top-level session orchestrator; end-to-end coverage is handled by integration tests
+    core/scheduler.py
