@@ -1,4 +1,9 @@
 [run]
+source =
+    core
+    exchange
+    services
+    trading
 omit =
     # Standalone backtesting script; no runtime business logic to unit test
     trading/backtest.py
@@ -6,5 +11,5 @@ omit =
     trading/optimize_params.py
     # Thread-safe shared-state wrapper; behaviour is threading I/O with no business logic
     core/runtime.py
-    # Thin JSON file I/O wrappers for persistence; no business logic to unit test
-    core/state.py
+    # Telegram bot interface; command handlers require a live bot connection to test meaningfully
+    services/telegram.py

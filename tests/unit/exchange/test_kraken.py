@@ -1,7 +1,10 @@
 import exchange.kraken as kraken
 
 
-# ── get_balance ──────────────────────────────────────────────────────────────
+# ============================================================================
+# Balance
+# ============================================================================
+
 
 def test_get_balance_returns_result_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -36,7 +39,10 @@ def test_get_balance_returns_none_on_exception(monkeypatch) -> None:
     assert result is None
 
 
-# ── get_order_status ─────────────────────────────────────────────────────────
+# ============================================================================
+# Order status
+# ============================================================================
+
 
 def test_get_order_status_returns_status_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -60,7 +66,10 @@ def test_get_order_status_returns_none_on_api_error(monkeypatch) -> None:
     assert result is None
 
 
-# ── get_last_prices ───────────────────────────────────────────────────────────
+# ============================================================================
+# Last prices
+# ============================================================================
+
 
 def test_get_last_prices_returns_prices_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -88,7 +97,10 @@ def test_get_last_prices_returns_none_on_api_error(monkeypatch) -> None:
     assert result is None
 
 
-# ── place_limit_order ─────────────────────────────────────────────────────────
+# ============================================================================
+# Limit orders
+# ============================================================================
+
 
 def test_place_limit_order_returns_order_id_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
@@ -112,7 +124,10 @@ def test_place_limit_order_returns_none_on_api_error(monkeypatch) -> None:
     assert result is None
 
 
-# ── fetch_ohlc_data ───────────────────────────────────────────────────────────
+# ============================================================================
+# OHLC data
+# ============================================================================
+
 
 _OHLC_ROW = ["1713052800", "80000.0", "81000.0", "79500.0", "80500.0", "80200.0", "1.5", 42]
 

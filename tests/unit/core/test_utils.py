@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from core.utils import now_str
+from core.utils import now_utc
 
 
-def test_now_str_returns_expected_datetime_format() -> None:
-    value = now_str()
-    parsed = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
-    assert parsed.year >= 2000
+def test_now_utc_returns_timezone_aware_utc_datetime() -> None:
+    value = now_utc()
+    assert isinstance(value, datetime)
+    assert value.tzinfo == timezone.utc
+    assert value.year >= 2000

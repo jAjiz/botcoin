@@ -14,7 +14,7 @@ This document outlines the improvement areas and phased plan for the next iterat
   - [Phase 2 – Managed Execution: APScheduler](#phase-2--managed-execution-apscheduler)
     - [Phase 2.1 – API Efficiency (Completed)](#phase-21--api-efficiency-completed)
   - [Phase 3 – Testing Strategy (Completed)](#phase-3--testing-strategy-completed)
-  - [Phase 4 – Professional Persistence: PostgreSQL & Redis](#phase-4--professional-persistence-postgresql--redis)
+  - [Phase 4 – Professional Persistence: PostgreSQL (Completed)](#phase-4--professional-persistence-postgresql)
   - [Phase 5 – REST API Layer: FastAPI](#phase-5--rest-api-layer-fastapi)
   - [Phase 6 – Code Quality: Linting & Type Safety](#phase-6--code-quality-linting--type-safety)
   - [Phase 7 – CI/CD Pipeline](#phase-7--cicd-pipeline)
@@ -36,7 +36,7 @@ Key gaps identified before starting V2 work:
 | Execution model | ⚠️ Unmanaged `while True` loop — no retries, no observability |
 | Testing | ✅ Two-tier pytest suite with Docker parity and 80% coverage gate |
 | Persistence | ⚠️ JSON + CSV flat files — no schema, no history guarantees |
-| Active state store | ⚠️ JSON file on disk — not appropriate for real-time key-value access |
+| Active state store | ⚠️ JSON file on disk — no schema or transactional guarantees |
 | CI pipeline | ⚠️ Deploy-only — no lint or test step before production |
 | Code quality tooling | ❌ No linter or formatter configured |
 | Data architecture docs | ❌ No ERD or data model documentation |
@@ -54,12 +54,12 @@ The current `while True` loop in `main.py` is opaque: failed API calls are swall
 ### 3. Testing Strategy
 The project now has a two-tier pytest suite: deterministic unit tests for business logic and opt-in integration tests for live Kraken connectivity. The suite runs locally and in Docker through a dedicated `test` service, and `pytest.ini` enforces markers plus an 80% coverage threshold across `core`, `trading`, and `exchange`.
 
-### 4. Professional Persistence: PostgreSQL & Redis
-The flat-file persistence model (JSON for state, CSV for history) has no schema enforcement, no transactional guarantees, and no migration path. V2 adopts a two-tier database architecture aligned with the access patterns of each data category:
-- **PostgreSQL** for structured, queryable historical data (OHLC candles, closed positions)
-- **Redis** for real-time, low-latency key-value access (active trailing stop state, current orders)
+### 4. Professional Persistence: PostgreSQL
+The flat-file persistence model (JSON for state, CSV for history) has no schema enforcement, no transactional guarantees, and no migration path. V2 migrates all data storage to **PostgreSQL**, which covers every access pattern in the project:
+- **Historical data**: OHLC candles and closed positions as queryable, indexed tables
+- **Active state**: trailing stop state and bot control flags as regular rows — accessed infrequently enough that a relational store is sufficient and simpler to operate
 
-Both services are defined in `docker-compose.yml`, requiring no external infrastructure.
+PostgreSQL is the single persistence service defined in `docker-compose.yml`, requiring no external infrastructure.
 
 ### 5. REST API Layer: FastAPI
 The bot's internal state is currently accessed directly by the Telegram service via shared in-process objects. Introducing a FastAPI service as the single external interface decouples every consumer — Telegram, future UIs, and external integrations — from the bot's internals, making each service independently deployable and testable.
@@ -71,7 +71,7 @@ Consistent formatting and type annotations improve IDE support, reduce cognitive
 The current pipeline deploys on every push to `main` with no validation. Tests must run inside Docker before any deployment step is allowed, ensuring what is tested is exactly what is deployed.
 
 ### 8. Data Architecture Documentation
-With a two-tier persistence layer in place, the data model must be documented explicitly. The PostgreSQL schema (ERD) and the Redis key-value structure should be added to `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
+With the PostgreSQL-backed persistence layer in place, the data model must be documented explicitly. The PostgreSQL schema (ERD) should be added to `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
 ### 9. Observability: Grafana Dashboard
 With structured data in PostgreSQL, a Grafana service can expose market metrics, trading performance, and system health as persistent, queryable dashboards. Running Grafana as a Docker Compose service keeps the observability layer co-located with the rest of the stack and reproducible with a single `docker compose up`.
@@ -114,7 +114,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 - [x] Write a `docker-compose.yml` that:
   - Defines the `botc` application service (builds from `Dockerfile`)
   - Loads credentials from a local `.env` file (never baked into the image)
-  - Includes `postgres` and `redis` service stubs (to be fully configured in Phase 4)
+  - Includes a `postgres` service stub (to be fully configured in Phase 4)
   - Supports running the bot (`main.py`) and the analysis scripts (`trading/market_analyzer.py`, `trading/backtest.py`)
 - [x] Add a `.dockerignore` file to exclude `.env`, `__pycache__`, `data/`, and other non-essential files
 - [x] Add a `.env.example` file documenting every supported environment variable
@@ -192,33 +192,26 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 4 – Professional Persistence: PostgreSQL & Redis
+### Phase 4 – Professional Persistence: PostgreSQL (Completed)
 
-**Goal:** Migrate all data storage from flat files to a two-tier database architecture. PostgreSQL handles structured historical data; Redis manages real-time active state.
+**Tracking:** [Issue #14](https://github.com/jAjiz/BoTCoin/issues/14)
+
+**Goal:** Migrate all data storage from flat files to PostgreSQL. Every data category — historical OHLC data, closed positions, active trailing stop state, and bot control flags — is stored in a single, consistently managed relational database.
 
 **Scope:**
 
-#### PostgreSQL (historical data & closed positions)
-- [ ] Define the `ohlc_data` and `closed_positions` table schemas
-- [ ] Write an Alembic migration (`scripts/migrations/`) to create both tables with appropriate indexes
-- [ ] Update `trading/market_analyzer.py` to read and write OHLC data from/to PostgreSQL instead of CSV files
-- [ ] Update `core/state.py`'s `save_closed_position` to write to the `closed_positions` table
-- [ ] Write a one-time migration script (`scripts/migrate_to_postgres.py`) to import existing CSV and JSON data into PostgreSQL on upgrade
-
-#### Redis (active trailing stop state)
-- [ ] Define the Redis key-value schema (documented in Phase 8):
-  - Active position: `botcoin:state:{pair}` → JSON-serialised position dict (mirrors current `trailing_state.json` structure per pair)
-  - Bot control flag: `botcoin:control:paused` → `"1"` / `"0"` (replaces `telegram.BOT_PAUSED` in-memory flag)
-- [ ] Update `core/state.py`'s `load_trailing_state` and `save_trailing_state` to read/write from Redis
-- [ ] Update `services/telegram.py` to set and read the pause flag from Redis instead of an in-memory variable
-- [ ] Add `data/` JSON and CSV files to `.gitignore`; document the new `data/` as containing only ephemeral migration inputs
+#### PostgreSQL schema
+- [x] Define the `ohlc_data`, `closed_positions`, `trailing_state`, and `bot_control` table schemas
+- [x] Write an Alembic migration (`scripts/migrations/`) to create all tables with appropriate indexes
+- [x] Update `trading/market_analyzer.py` to read and write OHLC data from/to PostgreSQL instead of CSV files
+- [x] Update state persistence to write closed positions, trailing stop state, and bot control flags to PostgreSQL via the centralized DAL in `core/database.py` (replaces `core/state.py`)
+- [x] Update `services/telegram.py` to read and write the pause flag from the `bot_control` table instead of an in-memory variable
+- [x] Write a legacy data migration script (`scripts/load_legacy_data.py`) to import existing CSV and JSON data into PostgreSQL on upgrade
 
 #### docker-compose.yml
-- [ ] Fully configure the `postgres` service with a named volume, health check, and init script for schema creation
-- [ ] Fully configure the `redis` service with a named volume and `appendonly yes` for durability
-- [ ] Add `DATABASE_URL` and `REDIS_URL` to `.env.example`
+- [x] Fully configure the `postgres` service with a named volume, health check, and `pg_isready` probe
 
-**Success criteria:** The bot runs with no flat files. OHLC data is queryable from PostgreSQL. Active positions survive a bot restart via Redis. Existing data is migrated cleanly.
+**Success criteria:** The bot runs with no flat files. OHLC data is queryable from PostgreSQL. Active trailing stop state and the bot pause flag are persisted in PostgreSQL and survive a bot restart. Existing data is migrated cleanly.
 
 ---
 
@@ -234,7 +227,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
   - `GET /positions` and `GET /positions/{pair}` – open positions with estimated P&L
   - `GET /balance` – current portfolio balance
   - `POST /control/pause` and `POST /control/resume` – bot control commands
-- [ ] Store the pause/resume control flag in a `bot_control` table in PostgreSQL, replacing the current in-memory `BOT_PAUSED` variable in `services/telegram.py`
+- [ ] Read the pause/resume control flag from the `bot_control` table introduced in Phase 4, replacing the current in-memory `BOT_PAUSED` variable in `services/telegram.py`
 - [ ] Refactor `services/telegram.py` to consume the FastAPI endpoints instead of reading directly from `core/runtime` shared state
 - [ ] Add the `api` service to `docker-compose.yml` as an independent container
 - [ ] Add the `telegram` service to `docker-compose.yml` as an independent container, separated from the bot service
@@ -257,7 +250,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
   - `exchange/kraken.py`
   - `trading/` modules
   - `services/telegram.py`
-- [ ] Refactor repeated patterns into shared utilities (e.g., database client factory, Redis key builders)
+- [ ] Refactor repeated patterns into shared utilities (e.g., database client factory)
 - [ ] Review and align exception handling: recoverable errors (log and retry/backoff in-session) vs. fatal errors (log and exit)
 
 **Success criteria:** `ruff check .` and `ruff format --check .` pass cleanly. All public function signatures carry type annotations.
@@ -286,16 +279,15 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ### Phase 8 – Data Architecture Documentation
 
-**Goal:** Document the V2 data architecture — the PostgreSQL schema and the Redis key-value structure — in `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
+**Goal:** Document the V2 data architecture — the PostgreSQL schema and data flow — in `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
 **Scope:**
 
 - [ ] Add a **Data Architecture** section to `README.md` covering:
-  - **PostgreSQL ERD**: Entity-Relationship Diagram showing the `ohlc_data` and `closed_positions` tables, their columns, data types, primary keys, and indexes
-  - **Redis Key-Value Structure**: document every key pattern, its value format (type + JSON schema), TTL policy if any, and which component reads/writes it
-  - **Data Flow Diagram**: illustrate how data moves from the Kraken API → PostgreSQL (OHLC) and Redis (active state) → closed positions (Redis → PostgreSQL on close)
+  - **PostgreSQL ERD**: Entity-Relationship Diagram showing the `ohlc_data`, `closed_positions`, `trailing_state`, and `bot_control` tables, their columns, data types, primary keys, and indexes
+  - **Data Flow Diagram**: illustrate how data moves from the Kraken API → PostgreSQL (OHLC, active state) → closed positions on trade close
 - [ ] Add a `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, tracking changes from the V2 milestone onwards (V1 history is not retroactively documented)
-- [ ] Update the `README.md` Quick Start section to reflect the full V2 Docker Compose setup (bot + PostgreSQL + Redis)
+- [ ] Update the `README.md` Quick Start section to reflect the full V2 Docker Compose setup (bot + PostgreSQL)
 
 **Success criteria:** A developer unfamiliar with the project can understand the full data model and how to query or inspect it using only the repository documentation.
 
@@ -329,7 +321,7 @@ The following are intentionally excluded from the V2 roadmap:
 
 - **Multi-exchange support** – Kraken-only scope is maintained for V2
 - **Trading/management web UI** – Telegram interface remains the primary control surface; Grafana covers observability
-- **Managed cloud databases** – PostgreSQL and Redis run as Docker Compose services; no RDS, ElastiCache, or equivalent managed services
+- **Managed cloud databases** – PostgreSQL runs as a Docker Compose service; no RDS or equivalent managed services
 - **Cloud infrastructure changes** – GCP free-tier VPS deployment model is retained; no Kubernetes or container orchestration platforms
 - **Full async rewrite** – APScheduler covers periodic orchestration needs; a deeper async rewrite of all modules is deferred
 

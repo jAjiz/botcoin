@@ -1,12 +1,12 @@
 import pandas as pd
 import numpy as np
 import sys
-import os
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from scipy.signal import argrelextrema
 
+import core.database as db
 import core.logging as logging
-from core.config import MARKET_ANALYZER, CANDLE_TIMEFRAME, MARKET_DATA_DAYS, ATR_PERIOD
+from core.config import MARKET_ANALYZER, CANDLE_TIMEFRAME, ATR_PERIOD
 from core.utils import print_pair_argument_error, print_structural_noise_results
 from exchange.kraken import fetch_ohlc_data
 
@@ -14,91 +14,65 @@ DEFAULT_ORDER = MARKET_ANALYZER["DEFAULT_ORDER"]
 MINIMUM_CHANGE_PCT = MARKET_ANALYZER["MINIMUM_CHANGE_PCT"]
 
 
-def get_current_atr(pair):
+def get_current_atr(pair: str) -> float | None:
     try:
-        atr_file = f"data/{pair}_ohlc_data_{CANDLE_TIMEFRAME}min.csv"
-        since_param = None
-        existing_df = None
+        db_ohlc = db.load_ohlc_data(pair, CANDLE_TIMEFRAME, limit=ATR_PERIOD + 1)
 
-        if os.path.exists(atr_file):
-            try:
-                existing_df = pd.read_csv(atr_file, index_col=0, parse_dates=True)
-                if not existing_df.empty:
-                    since_param = int(existing_df.index[-1].timestamp())
-            except Exception:
-                existing_df = None
+        since_ts = None
+        last_atr = None
+        if not db_ohlc.empty:
+            since_ts = int(db_ohlc.iloc[0]["time"]) + 1
+            last_atr = float(db_ohlc.iloc[0]["atr"]) if pd.notna(db_ohlc.iloc[0]["atr"]) else None
 
-        df = fetch_ohlc_data(pair, CANDLE_TIMEFRAME, since_param)
+        xchange_ohlc = fetch_ohlc_data(pair, CANDLE_TIMEFRAME, since_ts)
+
+        if xchange_ohlc is None or xchange_ohlc.empty:
+            return last_atr
         
-        if df is None or df.empty:
-            return None
+        # If the most recent fetched candle is still open, exclude it from calculations
+        if xchange_ohlc.iloc[0]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(timezone.utc).timestamp()):
+            xchange_ohlc = xchange_ohlc.iloc[1:]
+            if xchange_ohlc.empty:
+                return last_atr
 
-        if existing_df is not None and not existing_df.empty:
-            df = pd.concat([existing_df, df])
-            df = df[~df.index.duplicated(keep='last')]
-            df = df.sort_index()
+        if not db_ohlc.empty:
+            all_rows = pd.concat([xchange_ohlc, db_ohlc], ignore_index=True)
+        else:
+            all_rows = xchange_ohlc.copy()
 
-        cutoff_date = datetime.now() - timedelta(days=MARKET_DATA_DAYS)
-        df = df[df.index >= cutoff_date]
+        # Change order to oldest to newest for easier ATR calculation
+        all_rows.sort_values("time", inplace=True)
+        all_rows.drop_duplicates(subset=["time"], keep="last", inplace=True)
 
-        df["H-L"] = df["high"] - df["low"]
-        df["H-PC"] = (df["high"] - df["close"].shift(1)).abs()
-        df["L-PC"] = (df["low"] - df["close"].shift(1)).abs()
-        df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
-        df["ATR"] = df["TR"].rolling(ATR_PERIOD).mean()
-        df.to_csv(atr_file)
+        # Calculate ATR using True Range method
+        all_rows["H-L"] = all_rows["high"] - all_rows["low"]
+        all_rows["H-PC"] = (all_rows["high"] - all_rows["close"].shift(1)).abs()
+        all_rows["L-PC"] = (all_rows["low"] - all_rows["close"].shift(1)).abs()
+        all_rows["TR"] = all_rows[["H-L", "H-PC", "L-PC"]].max(axis=1)
+        all_rows["atr"] = all_rows["TR"].rolling(ATR_PERIOD).mean()
 
-        if len(df) < 2:
-            return None
+        # Remove intermediate columns and sort back to newest to oldest
+        all_rows.drop(columns=["H-L", "H-PC", "L-PC", "TR"], inplace=True)
+        all_rows.sort_values("time", ascending=False, inplace=True)
 
-        current_atr = df["ATR"].iloc[-2]
-        return current_atr
+        if since_ts is None:
+            new_rows = all_rows.copy()
+        else:
+            new_rows = all_rows[all_rows["time"] > since_ts].copy()
+
+        if not new_rows.empty:
+            db.save_ohlc_data(pair, CANDLE_TIMEFRAME, new_rows)
+            if pd.notna(new_rows["atr"].iloc[0]):
+                return float(new_rows["atr"].iloc[0])
+
+        return last_atr
     except Exception as e:
         logging.error(f"Error getting ATR for {pair}: {e}")
         return None
-    
-
-def get_args():
-    args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER, 'volatility_level': None}
-
-    for arg in sys.argv[1:]:
-        if arg.startswith('PAIR='):
-            args['pair'] = arg.split('=')[1].upper()
-        elif arg.startswith('ORDER='):
-            args['order'] = int(arg.split('=')[1])
-        elif arg == 'SHOW_EVENTS':
-            args['show_events'] = True
-        elif arg.startswith('Volatility='):
-            args['volatility_level'] = arg.split('=')[1].upper()
-    
-    if not args['pair']:
-        print_pair_argument_error()
-        sys.exit(1)
-    
-    return args
 
 
-def load_data(pair):
-    atr_file = f"data/{pair}_ohlc_data_{CANDLE_TIMEFRAME}min.csv"
-    if not os.path.exists(atr_file):
-        raise FileNotFoundError(f"File not found: {atr_file}")
-    
-    try:
-        df = pd.read_csv(atr_file)
-        df.columns = [c.strip().lower() for c in df.columns]
-    except Exception as e:
-        raise Exception(f"Error reading file: {e}")
-    
-    required_cols = {'low', 'high', 'dtime', 'atr'}
-    if not required_cols.issubset(set(df.columns)):
-        raise ValueError(f"Missing required columns. Need: {required_cols}")
-    
-    df.dropna(inplace=True)
-    df.reset_index(drop=True, inplace=True)
-    return df
-
-
-def detect_pivots(df, order=DEFAULT_ORDER):
+def detect_pivots(
+        df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[int, str, float, pd.Timestamp]]:
     ilocs_min = argrelextrema(df['low'].values, np.less_equal, order=order)[0]
     ilocs_max = argrelextrema(df['high'].values, np.greater_equal, order=order)[0]
     
@@ -131,7 +105,11 @@ def detect_pivots(df, order=DEFAULT_ORDER):
     return pivots
     
 
-def calculate_noise_between_pivots(df, pivot_pair, atr_percentiles):
+def calculate_noise_between_pivots(
+        df: pd.DataFrame, 
+        pivot_pair: tuple[tuple[int, str, float, pd.Timestamp], tuple[int, str, float, pd.Timestamp]], 
+        atr_percentiles: dict[str, float]
+    ) -> dict:
     start_idx, start_type, start_price, start_dtime = pivot_pair[0]
     end_idx, end_type, end_price, end_dtime = pivot_pair[1]
     
@@ -199,7 +177,13 @@ def calculate_noise_between_pivots(df, pivot_pair, atr_percentiles):
     return event
 
 
-def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_events=False, volatility_level=None):
+def analyze_structural_noise(
+        df: pd.DataFrame, 
+        order: int = DEFAULT_ORDER, 
+        print_results: bool = False, 
+        show_events: bool = False, 
+        volatility_level: str | None = None
+    ) -> tuple[list[dict], list[dict]]:
     pivots = detect_pivots(df, order)
     
     # Calculate ATR percentiles
@@ -234,10 +218,30 @@ def analyze_structural_noise(df, order=DEFAULT_ORDER, print_results=False, show_
     return uptrend_events, downtrend_events
 
 
+def get_args() -> dict[str, str | int | bool | None]:
+    args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER, 'volatility_level': None}
+
+    for arg in sys.argv[1:]:
+        if arg.startswith('PAIR='):
+            args['pair'] = arg.split('=')[1].upper()
+        elif arg.startswith('ORDER='):
+            args['order'] = int(arg.split('=')[1])
+        elif arg == 'SHOW_EVENTS':
+            args['show_events'] = True
+        elif arg.startswith('Volatility='):
+            args['volatility_level'] = arg.split('=')[1].upper()
+    
+    if not args['pair']:
+        print_pair_argument_error()
+        sys.exit(1)
+    
+    return args
+
+
 if __name__ == "__main__":
     args = get_args()
     analyze_structural_noise(
-        load_data(args['pair']), 
+        db.load_ohlc_data(args['pair'], CANDLE_TIMEFRAME), 
         args['order'], 
         True, 
         args['show_events'], 

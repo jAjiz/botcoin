@@ -1,7 +1,6 @@
 import core.logging as logging
 from core.config import MIN_VALUE, TRADING_PARAMS
-from core.state import load_closed_positions
-from core.utils import now_str
+from core.utils import now_utc
 from exchange.kraken import place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
@@ -17,25 +16,16 @@ def create_position(pair, balance, last_prices, atr_val, trailing_state):
     if volume <= 0:
         logging.warning(f"Cannot create {side.upper()} position: volume {volume:.8f} <= 0")
         return
-    
-    # Get entry_price from last closed position with opposite side
-    entry_price = current_price
-    closed_positions = load_closed_positions()
-    if pair in closed_positions and closed_positions[pair]:
-        for pos in reversed(closed_positions[pair]):
-            if pos.get("side") != side:
-                entry_price = pos.get("closing_price", current_price)
-                break
 
-    activation_price = calculate_activation_price(pair, side, entry_price, atr_val)
+    activation_price = calculate_activation_price(pair, side, current_price, atr_val)
 
     trailing_state[pair] = {
         "side": side,
         "volume": round(volume, 8),
-        "entry_price": entry_price,
+        "entry_price": current_price,
         "activation_atr": round(atr_val, 1),
         "activation_price": round(activation_price, 1),
-        "creation_time": now_str()
+        "created_at": now_utc()
     }
     
     logging.info(f"[{pair}] 🆕 New {side.upper()} position: activation at {activation_price:,.1f}€",
@@ -139,9 +129,9 @@ def close_position(pair, pos, last_prices):
         pos.update({
             "volume": round(volume, 8),
             "closing_price": current_price,
-            "closing_order": closing_order,
-            "closing_time": now_str(),
-            "pnl": round(pnl, 2)
+            "closing_order_id": closing_order,
+            "closing_requested_at": now_utc(),
+            "pnl_percent": round(pnl, 4)
         })
     except Exception as e:
         logging.error(f"Failed to close trailing position: {e}", to_telegram=True)

@@ -13,6 +13,13 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID")
 TELEGRAM_POLL_INTERVAL = int(os.getenv("TELEGRAM_POLL_INTERVAL", 0)) # in seconds
 
+# Database settings
+POSTGRES_DB = os.getenv("POSTGRES_DB", "DBbotc")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "botc")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+
 # Bot Settings
 SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute
 PARAM_SESSIONS = int(os.getenv("PARAM_SESSIONS", 720)) # 720 sessions (1min between) = 12 hours
