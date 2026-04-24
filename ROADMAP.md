@@ -14,7 +14,7 @@ This document outlines the improvement areas and phased plan for the next iterat
   - [Phase 2 – Managed Execution: APScheduler](#phase-2--managed-execution-apscheduler)
     - [Phase 2.1 – API Efficiency (Completed)](#phase-21--api-efficiency-completed)
   - [Phase 3 – Testing Strategy (Completed)](#phase-3--testing-strategy-completed)
-  - [Phase 4 – Professional Persistence: PostgreSQL](#phase-4--professional-persistence-postgresql)
+  - [Phase 4 – Professional Persistence: PostgreSQL (Completed)](#phase-4--professional-persistence-postgresql)
   - [Phase 5 – REST API Layer: FastAPI](#phase-5--rest-api-layer-fastapi)
   - [Phase 6 – Code Quality: Linting & Type Safety](#phase-6--code-quality-linting--type-safety)
   - [Phase 7 – CI/CD Pipeline](#phase-7--cicd-pipeline)
@@ -71,7 +71,7 @@ Consistent formatting and type annotations improve IDE support, reduce cognitive
 The current pipeline deploys on every push to `main` with no validation. Tests must run inside Docker before any deployment step is allowed, ensuring what is tested is exactly what is deployed.
 
 ### 8. Data Architecture Documentation
-With a two-tier persistence layer in place, the data model must be documented explicitly. The PostgreSQL schema (ERD) and the Redis key-value structure should be added to `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
+With the PostgreSQL-backed persistence layer in place, the data model must be documented explicitly. The PostgreSQL schema (ERD) should be added to `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
 ### 9. Observability: Grafana Dashboard
 With structured data in PostgreSQL, a Grafana service can expose market metrics, trading performance, and system health as persistent, queryable dashboards. Running Grafana as a Docker Compose service keeps the observability layer co-located with the rest of the stack and reproducible with a single `docker compose up`.
@@ -192,25 +192,24 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 4 – Professional Persistence: PostgreSQL
+### Phase 4 – Professional Persistence: PostgreSQL (Completed)
+
+**Tracking:** [Issue #14](https://github.com/jAjiz/BoTCoin/issues/14)
 
 **Goal:** Migrate all data storage from flat files to PostgreSQL. Every data category — historical OHLC data, closed positions, active trailing stop state, and bot control flags — is stored in a single, consistently managed relational database.
 
 **Scope:**
 
 #### PostgreSQL schema
-- [ ] Define the `ohlc_data`, `closed_positions`, `trailing_state`, and `bot_control` table schemas
-- [ ] Write an Alembic migration (`scripts/migrations/`) to create all tables with appropriate indexes
-- [ ] Update `trading/market_analyzer.py` to read and write OHLC data from/to PostgreSQL instead of CSV files
-- [ ] Update `core/state.py`'s `save_closed_position` to write to the `closed_positions` table
-- [ ] Update `core/state.py`'s `load_trailing_state` and `save_trailing_state` to read/write from the `trailing_state` table
-- [ ] Update `services/telegram.py` to read and write the pause flag from the `bot_control` table instead of an in-memory variable
-- [ ] Write a one-time migration script (`scripts/migrate_to_postgres.py`) to import existing CSV and JSON data into PostgreSQL on upgrade
-- [ ] Add `data/` JSON and CSV files to `.gitignore`; document `data/` as containing only ephemeral migration inputs
+- [x] Define the `ohlc_data`, `closed_positions`, `trailing_state`, and `bot_control` table schemas
+- [x] Write an Alembic migration (`scripts/migrations/`) to create all tables with appropriate indexes
+- [x] Update `trading/market_analyzer.py` to read and write OHLC data from/to PostgreSQL instead of CSV files
+- [x] Update state persistence to write closed positions, trailing stop state, and bot control flags to PostgreSQL via the centralized DAL in `core/database.py` (replaces `core/state.py`)
+- [x] Update `services/telegram.py` to read and write the pause flag from the `bot_control` table instead of an in-memory variable
+- [x] Write a legacy data migration script (`scripts/load_legacy_data.py`) to import existing CSV and JSON data into PostgreSQL on upgrade
 
 #### docker-compose.yml
-- [ ] Fully configure the `postgres` service with a named volume, health check, and init script for schema creation
-- [ ] Add `DATABASE_URL` to `.env.example`
+- [x] Fully configure the `postgres` service with a named volume, health check, and `pg_isready` probe
 
 **Success criteria:** The bot runs with no flat files. OHLC data is queryable from PostgreSQL. Active trailing stop state and the bot pause flag are persisted in PostgreSQL and survive a bot restart. Existing data is migrated cleanly.
 
@@ -251,7 +250,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
   - `exchange/kraken.py`
   - `trading/` modules
   - `services/telegram.py`
-- [ ] Refactor repeated patterns into shared utilities (e.g., database client factory, Redis key builders)
+- [ ] Refactor repeated patterns into shared utilities (e.g., database client factory)
 - [ ] Review and align exception handling: recoverable errors (log and retry/backoff in-session) vs. fatal errors (log and exit)
 
 **Success criteria:** `ruff check .` and `ruff format --check .` pass cleanly. All public function signatures carry type annotations.
@@ -280,7 +279,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ### Phase 8 – Data Architecture Documentation
 
-**Goal:** Document the V2 data architecture — the PostgreSQL schema and the Redis key-value structure — in `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
+**Goal:** Document the V2 data architecture — the PostgreSQL schema and data flow — in `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
 
 **Scope:**
 
@@ -323,7 +322,6 @@ The following are intentionally excluded from the V2 roadmap:
 - **Multi-exchange support** – Kraken-only scope is maintained for V2
 - **Trading/management web UI** – Telegram interface remains the primary control surface; Grafana covers observability
 - **Managed cloud databases** – PostgreSQL runs as a Docker Compose service; no RDS or equivalent managed services
-- **Redis / in-memory store** – adding a cache or key-value store would be over-engineering for the current access patterns; PostgreSQL covers all persistence needs
 - **Cloud infrastructure changes** – GCP free-tier VPS deployment model is retained; no Kubernetes or container orchestration platforms
 - **Full async rewrite** – APScheduler covers periodic orchestration needs; a deeper async rewrite of all modules is deferred
 
