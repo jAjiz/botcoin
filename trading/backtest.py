@@ -9,8 +9,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS
-from trading.market_analyzer import load_data
+from core.config import CANDLE_TIMEFRAME, ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS
+import core.database as db
 from trading.parameters_manager import calculate_trading_parameters, get_k_stop
 
 def _parse_args() -> dict:
@@ -349,7 +349,7 @@ def main() -> None:
     # Ensure we have thresholds + K_STOP in memory
     calculate_trading_parameters(pair, infoLog=False)
 
-    df = load_data(pair)
+    df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME).dropna(subset=["atr"])
 
     # Optional date slicing (expects dtime comparable as string YYYY-MM-DD...)
     if args["start"]:

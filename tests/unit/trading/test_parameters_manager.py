@@ -73,7 +73,7 @@ def test_get_k_stop_uses_fallbacks_when_current_level_missing(monkeypatch) -> No
 def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sample_dataframe) -> None:
     pair = "XBTEUR"
 
-    monkeypatch.setattr(parameters_manager, "load_data", lambda _pair: sample_dataframe.copy())
+    monkeypatch.setattr(parameters_manager.db, "load_ohlc_data", lambda _pair, _tf: sample_dataframe.copy())
     real_analyze = market_analyzer.analyze_structural_noise
     monkeypatch.setattr(
         parameters_manager, "analyze_structural_noise", lambda df: real_analyze(df, order=1),

@@ -147,11 +147,10 @@ def fetch_ohlc_data(pair, interval, since=None):
             "count",
         ]
         ohlc["dtime"] = pd.to_datetime(pd.to_numeric(ohlc["time"]), unit="s")
-        ohlc.sort_values("dtime", ascending=True, inplace=True)
-        ohlc.set_index("dtime", inplace=True)
         for col in ["open", "high", "low", "close", "vwap", "volume"]:
             ohlc[col] = ohlc[col].astype(float)
-        return ohlc.sort_index()
+        ohlc.sort_values("time", ascending=False, inplace=True)
+        return ohlc
     except Exception as e:
         logging.error(f"Error fetching OHLC data for {pair}: {e}")
         return None

@@ -35,7 +35,7 @@ RUN groupadd --system appgroup \
 COPY --from=builder /opt/venv /opt/venv
 COPY . /app
 
-RUN mkdir -p /app/data /app/logs \
+RUN mkdir -p /app/logs \
     && chown -R appuser:appgroup /app
 
 USER appuser

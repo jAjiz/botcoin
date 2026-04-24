@@ -42,7 +42,7 @@ BoTCoin operates as an autonomous trading agent that:
 - 📱 **Telegram Bot Interface** for monitoring and control
 - 🔐 **Secure Configuration** via environment variables
 - 🚀 **Automated CI/CD** deployment through GitHub Actions
-- 💾 **Data Persistence** with CSV-based data sinks for audit and analysis
+- 💾 **Data Persistence** with PostgreSQL for all runtime state, history, and market data
 - 🔄 **24/7 Autonomous Operation** on Google Cloud Platform (Free Tier VPS)
 
 ## 🏗️ Architecture & Trading Engine
@@ -134,8 +134,8 @@ The system uses Pandas DataFrames for efficient market data manipulation and Num
 
 - **OHLC Data Ingestion**: Fetches candlestick data from Kraken via `fetch_ohlc_data`
 - **ATR Calculation**: Rolling window calculation using True Range components (H-L, H-PC, L-PC)
-- **Historical Persistence**: Stores market data in CSV files (`data/{pair}_ohlc_data_{timeframe}min.csv`)
-- **Incremental Updates**: Appends only new candles to existing datasets
+- **Historical Persistence**: Stores market data in the `ohlc_data` PostgreSQL table; CSV caches under `data/` are consumed by offline analysis tools only
+- **Incremental Updates**: Appends only new candles using upsert semantics (`ON CONFLICT DO NOTHING`)
 
 ### Volatility Classification
 
@@ -173,57 +173,39 @@ The system uses `calculate_trading_parameters` and `calculate_k_stops` from `par
 
 ## 💾 Persistence & Data Structure
 
+Phase 4 introduces Alembic-backed PostgreSQL schema management. The initial migration bootstrap lives in `alembic.ini` and `scripts/migrations/`, and migrations run against `DATABASE_URL`.
+
+### Database Migrations
+
+Use Alembic for schema changes instead of ad hoc SQL:
+
+```bash
+alembic upgrade head
+```
+
+To generate a new revision after Phase 4 changes:
+
+```bash
+alembic revision -m "describe change"
+```
+
 ### State Management
 
-**Active Positions** (`data/trailing_state.json`):
-```json
-{
-  "XBTEUR": {
-    "side": "sell",
-    "volume": 0.00123456,
-    "entry_price": 45000.0,
-    "activation_atr": 1250.0,
-    "activation_price": 47500.0,
-    "activation_time": "2026-02-03 10:30:15",
-    "trailing_price": 48200.0,
-    "stop_price": 46950.0,
-    "stop_atr": 1250.0,
-    "creation_time": "2026-02-03 08:15:00"
-  }
-}
-```
+State (active trailing state, closed positions, and bot control flags) is persisted in PostgreSQL via the centralized Data Access Layer implemented in `core/database.py`.
 
-**Closed Positions** (`data/closed_positions.json`):
-```json
-{
-  "XBTEUR": [
-    {
-      "side": "sell",
-      "volume": 0.00123456,
-      "entry_price": 45000.0,
-      "activation_atr": 1250.0,
-      "activation_price": 47500.0,
-      "creation_time": "2026-02-03 08:15:00",
-      "activation_time": "2026-02-03 10:30:15",
-      "trailing_price": 48200.0,
-      "stop_price": 46950.0,
-      "stop_atr": 1250.0,
-      "closing_price": 46950.0,
-      "closing_order": "OXY7KL-XXXXX-XXXXXX",
-      "closing_time": "2026-02-03 12:45:30",
-      "pnl": 4.33
-    }
-  ]
-}
-```
+- **Active positions:** stored in the `trailing_state` table and accessed via DAL functions (`load_trailing_state`, `save_trailing_state`).
+- **Closed positions:** stored in the `closed_positions` table and accessed via DAL functions (`save_closed_position`, `load_closed_positions`).
+
+Legacy JSON files under `data/` (e.g., `trailing_state.json`, `closed_positions.json`) are deprecated and no longer used by the runtime.
 
 ### Data Sink Architecture
 
-The system uses **CSV files as data sinks** for:
+CSV files (`data/*_ohlc_data_*.csv`) are retained as read-only inputs for the offline analysis tools:
 
-- **Market Data**: Historical OHLC and ATR calculations
-- **Audit Trail**: Immutable record of all closed positions
-- **Performance Analysis**: Enable post-operation backtesting and optimization
+- **Backtest & Optimizer**: `trading/backtest.py` and `trading/optimize_params.py` consume CSV market data caches
+- **Performance Analysis**: Enable post-operation backtesting and parameter optimization
+
+All runtime persistence (OHLC ingestion, position state, closed positions, and bot control flags) is stored in PostgreSQL.
 
 ## 🔌 Exchange Integration
 
@@ -540,9 +522,9 @@ docker compose logs -f botc
 docker compose down
 ```
 
-Optional (future data migration with PostgreSQL + Redis):
+Optional PostgreSQL service:
 
-> **Note:** This also starts the default `botc` service. To start only `postgres`/`redis`, add them explicitly: `docker compose --profile data up -d postgres redis`.
+> **Note:** This also starts the default `botc` service. To start only `postgres`, add it explicitly: `docker compose --profile data up -d postgres`.
 
 ```bash
 docker compose --profile data up -d
@@ -596,19 +578,26 @@ PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE
 ```
 BoTCoin/
 ├── main.py                      # Application entry point
+├── alembic.ini                  # Alembic migration configuration
 ├── requirements.txt             # Python dependencies
 ├── .env                         # Configuration (not in repo)
 │
 ├── core/
 │   ├── config.py               # Configuration loader
+│   ├── database.py             # Data Access Layer (PostgreSQL ORM + operations)
 │   ├── runtime.py              # Thread-safe shared state
-│   ├── state.py                # Position persistence
 │   ├── logging.py              # Logging utilities
 │   ├── utils.py                # Common utilities
 │   └── validation.py           # Configuration validation
 │
 ├── exchange/
 │   └── kraken.py               # Kraken API integration
+│
+├── scripts/
+│   ├── load_legacy_data.py     # One-time CSV/JSON → PostgreSQL migration
+│   └── migrations/             # Alembic migration versions
+│       └── versions/
+│           └── 20260414_01_phase4_initial_schema.py
 │
 ├── services/
 │   └── telegram.py             # Telegram bot interface
@@ -620,11 +609,6 @@ BoTCoin/
 │   ├── positions_manager.py   # Position lifecycle management
 │   ├── backtest.py            # Historical simulation
 │   └── optimize_params.py     # Parameter optimization
-│
-├── data/                        # Runtime data (CSV + JSON)
-│   ├── trailing_state.json     # Active positions
-│   ├── closed_positions.json   # Historical operations
-│   └── *_ohlc_data_*.csv      # Market data cache
 │
 └── .github/
     └── workflows/
@@ -646,12 +630,6 @@ The system tracks and logs:
 - **Market Metrics**: Volatility distribution, ATR percentiles, price movements
 - **Operational Metrics**: Session count, position refresh cycles, recalibration events
 
-All data persists in CSV format for:
-- Historical performance analysis
-- Strategy backtesting
-- Parameter optimization
-- Audit compliance
-
 ## 🛠️ Technical Highlights
 
 ### Core Technologies
@@ -664,7 +642,7 @@ All data persists in CSV format for:
 ### Design Patterns
 - **Modular Architecture**: Separation of concerns (trading, exchange, services)
 - **Configuration as Code**: Environment-driven behavior
-- **State Persistence**: JSON for active state, CSV for historical audit
+- **State Persistence**: PostgreSQL for all runtime state (trailing stop, closed positions, bot control, OHLC)
 - **Thread-Safe State**: Locking mechanism for concurrent access
 
 ### Key Algorithms

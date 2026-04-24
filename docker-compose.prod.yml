@@ -4,8 +4,9 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # This file is layered on top of docker-compose.yml. It:
-#   - Replaces host bind-mounts with named volumes so that the container's
-#     non-root user (appuser) has correct ownership regardless of host UIDs.
+#   - Replaces the host bind-mount for logs with a named volume so that the
+#     container's non-root user (appuser) has correct ownership regardless of
+#     host UIDs.
 #   - Restarts the service unconditionally (suitable for a long-lived VPS process).
 #   - Adds no-new-privileges to prevent privilege escalation at runtime.
 #   - Caps CPU and memory to avoid resource exhaustion on a shared VPS.
@@ -14,7 +15,6 @@ services:
   botc:
     restart: always
     volumes:
-      - botc_data:/app/data
       - botc_logs:/app/logs
     security_opt:
       - no-new-privileges:true
@@ -25,5 +25,4 @@ services:
           memory: 512M
 
 volumes:
-  botc_data:
   botc_logs:
