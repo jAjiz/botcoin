@@ -1,5 +1,7 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-import core.database as db
+
 import services.telegram.polling as polling
 
 
@@ -27,70 +29,80 @@ class MockContext:
         self.args = []
 
 
+def _mock_response(json_data, status_code=200):
+    resp = MagicMock()
+    resp.json.return_value = json_data
+    resp.status_code = status_code
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+def _mock_client(*, get=None, post=None):
+    c = MagicMock()
+    if get is not None:
+        c.get = AsyncMock(return_value=get)
+    if post is not None:
+        c.post = AsyncMock(return_value=post)
+    return c
+
+
 # ============================================================================
 # Core Functionality: Pause/Resume
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_pause_command_sets_paused_true_in_database(monkeypatch) -> None:
-    """Pause command sets bot_paused=True and confirms to user."""
+async def test_pause_command_calls_control_pause_api(monkeypatch) -> None:
+    """Pause command calls POST /control/pause and confirms to user."""
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
-    calls = []
-    monkeypatch.setattr(db, "get_bot_paused", lambda: False)
-    monkeypatch.setattr(db, "set_bot_paused", lambda p, updated_by: calls.append((p, updated_by)))
+    mock = _mock_client(post=_mock_response({"paused": True, "updated_by": "telegram"}))
+    monkeypatch.setattr(polling, "client", mock)
 
     update = MockUpdate(user_id=123456789)
     await polling.pause_command(update, MockContext())
 
-    assert calls == [(True, "telegram")]
+    mock.post.assert_called_once_with("/control/pause", json={"updated_by": "telegram"})
     assert len(update.message.replies) == 1
     assert "⏸" in update.message.replies[0]
 
 
 @pytest.mark.asyncio
-async def test_resume_command_sets_paused_false_in_database(monkeypatch) -> None:
-    """Resume command sets bot_paused=False and confirms to user."""
+async def test_resume_command_calls_control_resume_api(monkeypatch) -> None:
+    """Resume command calls POST /control/resume and confirms to user."""
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
-    calls = []
-    monkeypatch.setattr(db, "get_bot_paused", lambda: True)
-    monkeypatch.setattr(db, "set_bot_paused", lambda p, updated_by: calls.append((p, updated_by)))
+    mock = _mock_client(post=_mock_response({"paused": False, "updated_by": "telegram"}))
+    monkeypatch.setattr(polling, "client", mock)
 
     update = MockUpdate(user_id=123456789)
     await polling.resume_command(update, MockContext())
 
-    assert calls == [(False, "telegram")]
+    mock.post.assert_called_once_with("/control/resume", json={"updated_by": "telegram"})
     assert len(update.message.replies) == 1
     assert "▶️" in update.message.replies[0]
 
 
 # ============================================================================
-# Idempotency & Status Display
+# Status Display
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_pause_resume_handle_idempotent_operations_and_status(monkeypatch) -> None:
-    """Commands handle duplicate operations gracefully; status reflects state."""
+async def test_status_command_shows_paused_state(monkeypatch) -> None:
+    """Status command displays PAUSED or RUNNING based on API response."""
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
-    monkeypatch.setattr(db, "set_bot_paused", lambda *_: None)
 
-    monkeypatch.setattr(db, "get_bot_paused", lambda: True)
-
-    update = MockUpdate(user_id=123456789)
-    await polling.pause_command(update, MockContext())
-    assert "already paused" in update.message.replies[0]
-
+    monkeypatch.setattr(
+        polling, "client",
+        _mock_client(get=_mock_response({"paused": True, "last_run_at": None})),
+    )
     update = MockUpdate(user_id=123456789)
     await polling.status_command(update, MockContext())
     assert "PAUSED" in update.message.replies[0]
 
-    monkeypatch.setattr(db, "get_bot_paused", lambda: False)
-
-    update = MockUpdate(user_id=123456789)
-    await polling.resume_command(update, MockContext())
-    assert "already running" in update.message.replies[0]
-
+    monkeypatch.setattr(
+        polling, "client",
+        _mock_client(get=_mock_response({"paused": False, "last_run_at": None})),
+    )
     update = MockUpdate(user_id=123456789)
     await polling.status_command(update, MockContext())
     assert "RUNNING" in update.message.replies[0]
@@ -105,7 +117,6 @@ async def test_pause_resume_handle_idempotent_operations_and_status(monkeypatch)
 async def test_all_commands_reject_unauthorized_users(monkeypatch) -> None:
     """Authorization check protects all commands from unauthorized access."""
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
-    monkeypatch.setattr(db, "get_bot_paused", lambda: False)
 
     wrong_user_update = MockUpdate(user_id=999999)
     context = MockContext()
