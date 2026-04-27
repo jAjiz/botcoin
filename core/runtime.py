@@ -1,12 +1,9 @@
 import threading
-import copy
 
-# Thread-safe shared data between main thread and Telegram thread
 _lock = threading.Lock()
 _shared_data = {
     "last_balance": {},
     "pairs_data": {},  # {pair: {"last_price": float, "atr": float}}
-    "trailing_state": {},  # {pair: position_data}
     "last_run_at": None,
 }
 
@@ -16,7 +13,7 @@ def update_balance(balance):
 
 def get_last_balance():
     with _lock:
-        return _shared_data["last_balance"]
+        return dict(_shared_data["last_balance"])
 
 def update_pair_data(pair, price=None, atr=None, volatility_level=None):
     with _lock:
@@ -31,7 +28,7 @@ def update_pair_data(pair, price=None, atr=None, volatility_level=None):
 
 def get_pair_data(pair):
     with _lock:
-        return _shared_data["pairs_data"].get(pair, {})
+        return dict(_shared_data["pairs_data"].get(pair, {}))
 
 def update_last_run_at(last_run_at):
     with _lock:
@@ -40,12 +37,3 @@ def update_last_run_at(last_run_at):
 def get_last_run_at():
     with _lock:
         return _shared_data["last_run_at"]
-
-def update_trailing_state(trailing_state):
-    with _lock:
-        _shared_data["trailing_state"] = trailing_state if trailing_state else {}
-
-def get_trailing_state():
-    with _lock:
-        # Return a deep copy to avoid modifications from the reading thread
-        return copy.deepcopy(_shared_data["trailing_state"])

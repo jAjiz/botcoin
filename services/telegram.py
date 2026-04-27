@@ -2,7 +2,7 @@ import threading, time, logging, asyncio, requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, CommandHandler
 from core.config import TELEGRAM_TOKEN, TELEGRAM_USER_ID, TELEGRAM_POLL_INTERVAL, PAIRS, FIAT_CODE
-from core.runtime import get_last_balance, get_pair_data, get_trailing_state
+from core.runtime import get_last_balance, get_pair_data
 import core.database as db
 
 # Only log warnings and above from telegram library
@@ -141,16 +141,15 @@ class TelegramInterface:
                 await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
                 return
             
-            all_positions = get_trailing_state()
             pairs_to_show = [pair_filter] if pair_filter else list(PAIRS.keys())
             msg = "📊 Open Positions:\n\n"
-            
+
             for pair in pairs_to_show:
                 pair_data = get_pair_data(pair)
                 last_price = pair_data.get('last_price', 0)
                 msg += f"━━━ {pair} (Last price: {last_price:,.2f}€) ━━━\n"
 
-                pos = all_positions.get(pair)
+                pos = db.load_trailing_state(pair)
                 if not pos:
                     msg += "⚠️ No open position for this pair.\n\n"
                     continue
