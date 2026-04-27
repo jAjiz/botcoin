@@ -1,5 +1,6 @@
 [run]
 source =
+    api
     core
     exchange
     services
@@ -11,7 +12,5 @@ omit =
     trading/optimize_params.py
     # Thread-safe shared-state wrapper; behaviour is threading I/O with no business logic
     core/runtime.py
-    # Telegram service package; covered in commit 14 (test(api,telegram))
-    services/telegram/*
     # Top-level session orchestrator; end-to-end coverage is handled by integration tests
     core/scheduler.py
