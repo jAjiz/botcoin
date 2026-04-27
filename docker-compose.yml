@@ -7,16 +7,41 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      TELEGRAM_SERVICE_URL: http://telegram:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./logs:/app/logs
     networks:
       - botc_backend
-    command: ["python", "main.py"]
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  telegram:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: botc-telegram
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_BASE_URL: http://botc:8000
+    depends_on:
+      botc:
+        condition: service_started
+    ports:
+      - "127.0.0.1:8001:8001"
+    networks:
+      - botc_backend
+    command: ["uvicorn", "services.telegram.app:app", "--host", "0.0.0.0", "--port", "8001"]
 
   postgres:
     image: postgres:16-alpine
     container_name: botc-postgres
-    profiles: ["data"]
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-botc}
