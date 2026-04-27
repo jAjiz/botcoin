@@ -4,7 +4,8 @@ from datetime import datetime
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 import core.database as db
 import core.logging as logging
@@ -38,3 +39,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BoTC API", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception):
+    logging.error(f"Unhandled error in {request.method} {request.url.path}: {exc}")
+    return JSONResponse(status_code=500, content={"detail": "internal error"})
+
+
+from api.routes import balance, control, market, positions, status  # noqa: E402
+
+for r in (market, positions, balance, status, control):
+    app.include_router(r.router)
