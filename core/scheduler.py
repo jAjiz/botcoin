@@ -80,6 +80,7 @@ def trading_session():
             db.save_trailing_state(pair, trailing_state[pair])
 
     _session_count += 1
+    runtime.update_last_run_at(now_utc())
     logging.info(f"Session complete. Next run in {SLEEPING_INTERVAL}s.\n")
 
 

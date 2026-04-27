@@ -6,7 +6,8 @@ _lock = threading.Lock()
 _shared_data = {
     "last_balance": {},
     "pairs_data": {},  # {pair: {"last_price": float, "atr": float}}
-    "trailing_state": {}  # {pair: position_data}
+    "trailing_state": {},  # {pair: position_data}
+    "last_run_at": None,
 }
 
 def update_balance(balance):
@@ -31,6 +32,14 @@ def update_pair_data(pair, price=None, atr=None, volatility_level=None):
 def get_pair_data(pair):
     with _lock:
         return _shared_data["pairs_data"].get(pair, {})
+
+def update_last_run_at(last_run_at):
+    with _lock:
+        _shared_data["last_run_at"] = last_run_at
+
+def get_last_run_at():
+    with _lock:
+        return _shared_data["last_run_at"]
 
 def update_trailing_state(trailing_state):
     with _lock:
