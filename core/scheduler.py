@@ -18,6 +18,9 @@ from trading.positions_manager import (
 _session_count = 0
 READ_ONLY_RETRY_ATTEMPTS = 3
 
+# TODO: add unit tests for trading_session, check_closed_position,
+#       check_open_position, and _update_trailing_state.
+
 
 def call_with_retry(func, *args):
     for attempt in range(READ_ONLY_RETRY_ATTEMPTS):
@@ -25,8 +28,8 @@ def call_with_retry(func, *args):
             result = func(*args)
             if result is not None:
                 return result
-        except Exception:
-            pass
+        except Exception as e:
+            logging.warning(f"Attempt {attempt + 1}/{READ_ONLY_RETRY_ATTEMPTS} failed for {func.__name__}: {e}")
         if attempt < READ_ONLY_RETRY_ATTEMPTS - 1:
             time.sleep(1)
     return None

@@ -4,7 +4,7 @@ from logging.handlers import TimedRotatingFileHandler
 
 import httpx
 
-from core.config import TELEGRAM_ENABLED
+from core.config import API_SECRET_TOKEN, TELEGRAM_ENABLED
 
 os.makedirs("logs", exist_ok=True)
 file_handler = TimedRotatingFileHandler(
@@ -27,9 +27,11 @@ def _notify(level: str, msg: str) -> None:
     if not TELEGRAM_ENABLED or not TELEGRAM_SERVICE_URL:
         return
     try:
+        headers = {"X-Api-Token": API_SECRET_TOKEN} if API_SECRET_TOKEN else {}
         httpx.post(
             f"{TELEGRAM_SERVICE_URL}/notify",
             json={"message": msg, "level": level},
+            headers=headers,
             timeout=2.0,
         )
     except Exception as e:
