@@ -496,6 +496,16 @@ Two Compose files are provided:
 | `docker-compose.yml` | **Development** – bind-mounts `./data` and `./logs` so you can inspect files directly on the host. |
 | `docker-compose.prod.yml` | **Production (VPS)** – layered override that switches to named volumes (fixes Linux ownership for the non-root container user), enforces `restart: always`, and adds runtime hardening. |
 
+#### Services
+
+`docker compose up` starts three containers:
+
+| Container | Port | Role |
+|---|---|---|
+| `botc` | `8000` | FastAPI trading service + APScheduler |
+| `botc-telegram` | `8001` | Telegram bot (polling + `/notify` webhook) |
+| `botc-postgres` | `5432` | PostgreSQL database |
+
 #### Development
 
 1. Copy the environment template:
@@ -504,30 +514,29 @@ Two Compose files are provided:
 cp .env.example .env
 ```
 
-2. Build and start the bot:
+2. Build and start all services:
 
 ```bash
 docker compose up -d --build
 ```
 
-3. Watch logs:
+3. Explore the API (Swagger UI):
+
+```
+http://localhost:8000/docs
+```
+
+4. Watch logs:
 
 ```bash
 docker compose logs -f botc
+docker compose logs -f botc-telegram
 ```
 
-4. Stop services:
+5. Stop services:
 
 ```bash
 docker compose down
-```
-
-Optional PostgreSQL service:
-
-> **Note:** This also starts the default `botc` service. To start only `postgres`, add it explicitly: `docker compose --profile data up -d postgres`.
-
-```bash
-docker compose --profile data up -d
 ```
 
 #### Production (Linux VPS)
@@ -577,18 +586,30 @@ PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE
 
 ```
 BoTCoin/
-├── main.py                      # Application entry point
+├── main.py                      # Uvicorn entry point (uvicorn main:app)
+├── docker-compose.yml           # Three-container stack (botc, botc-telegram, postgres)
 ├── alembic.ini                  # Alembic migration configuration
 ├── requirements.txt             # Python dependencies
 ├── .env                         # Configuration (not in repo)
 │
+├── api/                         # FastAPI trading service
+│   ├── app.py                  # App factory + APScheduler lifespan
+│   ├── schemas.py              # Pydantic v2 response models
+│   └── routes/
+│       ├── market.py           # GET /market, /market/{pair}
+│       ├── balance.py          # GET /balance
+│       ├── positions.py        # GET /positions, /positions/{pair}
+│       ├── status.py           # GET /status
+│       └── control.py          # POST /control/pause|resume
+│
 ├── core/
 │   ├── config.py               # Configuration loader
 │   ├── database.py             # Data Access Layer (PostgreSQL ORM + operations)
-│   ├── runtime.py              # Thread-safe shared state
-│   ├── logging.py              # Logging utilities
+│   ├── runtime.py              # Thread-safe shared state (runtime data)
+│   ├── scheduler.py            # Trading session orchestrator
+│   ├── logging.py              # Logging + Telegram notification dispatch
 │   ├── utils.py                # Common utilities
-│   └── validation.py           # Configuration validation
+│   └── validation.py           # Startup configuration validation
 │
 ├── exchange/
 │   └── kraken.py               # Kraken API integration
@@ -600,7 +621,10 @@ BoTCoin/
 │           └── 20260414_01_phase4_initial_schema.py
 │
 ├── services/
-│   └── telegram.py             # Telegram bot interface
+│   └── telegram/               # Telegram bot service (uvicorn services.telegram.app:app)
+│       ├── app.py              # FastAPI app + PTB polling lifespan + /notify route
+│       ├── polling.py          # Command handlers (pause, resume, status, market, positions)
+│       └── client.py           # httpx.AsyncClient pointed at the botc API
 │
 ├── trading/
 │   ├── inventory_manager.py   # Portfolio calculation logic
@@ -634,16 +658,19 @@ The system tracks and logs:
 
 ### Core Technologies
 - **Python 3.x**: Main programming language
+- **FastAPI + Uvicorn**: REST API for trading operations and Telegram webhook
+- **APScheduler**: Non-blocking interval scheduler for the trading session
+- **python-telegram-bot**: Telegram command interface
+- **httpx**: Async HTTP client for inter-service communication
 - **Pandas & Numpy**: High-performance data analysis
 - **Scipy**: Advanced statistical calculations
-- **AsyncIO**: Asynchronous Telegram bot integration
-- **Threading**: Concurrent operation (trading loop + bot interface)
 
 ### Design Patterns
+- **Two-container API architecture**: `botc` (trading API on :8000) and `botc-telegram` (bot service on :8001) communicate over a shared Docker network
 - **Modular Architecture**: Separation of concerns (trading, exchange, services)
 - **Configuration as Code**: Environment-driven behavior
 - **State Persistence**: PostgreSQL for all runtime state (trailing stop, closed positions, bot control, OHLC)
-- **Thread-Safe State**: Locking mechanism for concurrent access
+- **Thread-Safe State**: Locking mechanism for concurrent access between APScheduler and FastAPI request handlers
 
 ### Key Algorithms
 - **ATR-Based Volatility**: Dynamic stop distances using True Range
