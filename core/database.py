@@ -5,7 +5,9 @@ from typing import Optional, Dict, Any, Iterator
 
 import pandas as pd
 from sqlalchemy import (
+    URL,
     create_engine,
+    func,
     Column,
     Text,
     Integer,
@@ -37,9 +39,13 @@ logger = logging.logging.getLogger(__name__)
 # Database Setup
 # ============================================================================
 
-DATABASE_URL = (
-    f"postgresql+psycopg://{POSTGRES_USER}:{POSTGRES_PASSWORD}"
-    f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
+DATABASE_URL = URL.create(
+    drivername="postgresql+psycopg",
+    username=POSTGRES_USER,
+    password=POSTGRES_PASSWORD,
+    host=POSTGRES_HOST,
+    port=int(POSTGRES_PORT),
+    database=POSTGRES_DB,
 )
 
 # Create engine with connection pooling
@@ -59,6 +65,9 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 # ORM Base
 Base = declarative_base()
 
+
+# TODO: split this module into core/db/models.py, core/db/ohlc.py,
+#       core/db/positions.py, and core/db/control.py as the schema grows.
 
 # ============================================================================
 # ORM Models
@@ -392,8 +401,19 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
             for _, row in df.iterrows()
         ]
         with get_session() as session:
-            stmt = pg_insert(OHLCData).values(rows).on_conflict_do_nothing(
-                index_elements=["pair", "timeframe_minutes", "time"]
+            stmt = pg_insert(OHLCData).values(rows).on_conflict_do_update(
+                index_elements=["pair", "timeframe_minutes", "time"],
+                set_={
+                    "open": pg_insert(OHLCData).excluded.open,
+                    "high": pg_insert(OHLCData).excluded.high,
+                    "low": pg_insert(OHLCData).excluded.low,
+                    "close": pg_insert(OHLCData).excluded.close,
+                    "vwap": pg_insert(OHLCData).excluded.vwap,
+                    "volume": pg_insert(OHLCData).excluded.volume,
+                    "count": pg_insert(OHLCData).excluded.count,
+                    "atr": pg_insert(OHLCData).excluded.atr,
+                    "updated_at": func.now(),
+                },
             )
             session.execute(stmt)
             logger.debug(f"Saved {len(rows)} OHLC records for {pair}")

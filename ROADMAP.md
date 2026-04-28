@@ -217,23 +217,22 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ### Phase 5 – REST API Layer: FastAPI
 
-**Goal:** Introduce a FastAPI service as the single interface for all external data access and bot control, decoupling Telegram and any future consumer from the bot's internal state.
+**Goal:** Expose the bot's state and controls through a FastAPI service, and isolate Telegram as its own container so its long-lived polling lifecycle cannot stall the trading loop. The bot and API share a single process (splitting them would deliver no real benefit on a single-user bot and would force the in-memory runtime cache into Postgres solely to bridge containers).
 
 **Scope:**
 
-- [ ] Add `fastapi` and `uvicorn` as runtime dependencies
-- [ ] Implement the following endpoints:
-  - `GET /market/{pair}` – current price, ATR, volatility level
-  - `GET /positions` and `GET /positions/{pair}` – open positions with estimated P&L
-  - `GET /balance` – current portfolio balance
-  - `POST /control/pause` and `POST /control/resume` – bot control commands
-- [ ] Read the pause/resume control flag from the `bot_control` table introduced in Phase 4, replacing the current in-memory `BOT_PAUSED` variable in `services/telegram.py`
-- [ ] Refactor `services/telegram.py` to consume the FastAPI endpoints instead of reading directly from `core/runtime` shared state
-- [ ] Add the `api` service to `docker-compose.yml` as an independent container
-- [ ] Add the `telegram` service to `docker-compose.yml` as an independent container, separated from the bot service
-- [ ] Document all endpoints via FastAPI's auto-generated Swagger UI
+- [ ] Add `fastapi`, `uvicorn`, and `httpx` as runtime dependencies
+- [ ] Swap `BlockingScheduler` for an `AsyncIOScheduler` started from a FastAPI `lifespan` hook, with a dedicated `ThreadPoolExecutor` so scheduler jobs never run on the API event loop
+- [ ] Expose `GET /market`, `GET /positions`, `GET /balance`, `GET /status`, `POST /control/pause`, `POST /control/resume` (Swagger UI via FastAPI defaults)
+- [ ] Add a global FastAPI exception handler so no route error can propagate into the scheduler thread
+- [ ] Harden `core/runtime`: add `last_run_at`, drop the now-redundant `trailing_state` mirror, return copies from getters
+- [ ] Split `services/telegram.py` into an independent FastAPI service that runs the polling loop, exposes `POST /notify`, and delegates all command handlers to the API via `httpx`
+- [ ] Rewire `core/logging.py` so `to_telegram=True` posts to the Telegram service's `/notify` endpoint (best-effort, short timeout, errors swallowed)
+- [ ] Update `docker-compose.yml`: run `botc` via `uvicorn`, add a `telegram` service, wire `API_BASE_URL` / `TELEGRAM_SERVICE_URL`
 
-**Success criteria:** Telegram communicates exclusively through the API. The bot, API, and Telegram run as three independent Docker services. A future UI or integration can consume the API with no changes to the bot or Telegram service.
+Detailed execution plan: [`plan/phase-5-fastapi.md`](plan/phase-5-fastapi.md).
+
+**Success criteria:** The bot + API run in one container; Telegram runs in its own. Telegram consumes the API for every read and command, and receives notifications only via `/notify`. An unhandled route exception returns `500` and the scheduler keeps firing. A future UI can consume the API with no change to the bot or Telegram service.
 
 ---
 

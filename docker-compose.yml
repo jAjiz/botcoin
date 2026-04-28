@@ -7,19 +7,50 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      TELEGRAM_SERVICE_URL: http://telegram:8001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - botc_backend
-    command: ["python", "main.py"]
+    command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  telegram:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: botc-telegram
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_BASE_URL: http://botc:8000
+    depends_on:
+      botc:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8001:8001"
+    networks:
+      - botc_backend
+    command: ["uvicorn", "services.telegram.app:app", "--host", "0.0.0.0", "--port", "8001"]
 
   postgres:
     image: postgres:16-alpine
     container_name: botc-postgres
-    profiles: ["data"]
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-botc}
+      POSTGRES_DB: ${POSTGRES_DB:-DBbotc}
       POSTGRES_USER: ${POSTGRES_USER:-botc}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:

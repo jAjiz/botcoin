@@ -16,9 +16,12 @@ TELEGRAM_POLL_INTERVAL = int(os.getenv("TELEGRAM_POLL_INTERVAL", 0)) # in second
 # Database settings
 POSTGRES_DB = os.getenv("POSTGRES_DB", "DBbotc")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "botc")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+
+# API settings
+API_SECRET_TOKEN = os.getenv("API_SECRET_TOKEN")
 
 # Bot Settings
 SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute
