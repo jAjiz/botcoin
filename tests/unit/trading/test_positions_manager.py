@@ -105,7 +105,8 @@ def test_refresh_position_updates_volume_and_returns_true(monkeypatch) -> None:
     pos = {"side": "sell", "volume": 0.0}
     trailing_state = {"XBTEUR": pos}
     result = positions_manager.refresh_position(
-        "XBTEUR", pos,
+        "XBTEUR",
+        pos,
         balance={"ZEUR": 1000.0},
         last_prices={"XBTEUR": 100.0},
         trailing_state=trailing_state,
@@ -128,7 +129,8 @@ def test_refresh_position_drops_position_and_returns_false_when_below_min_value(
     pos = {"side": "buy"}
     trailing_state = {"XBTEUR": pos}
     result = positions_manager.refresh_position(
-        "XBTEUR", pos,
+        "XBTEUR",
+        pos,
         balance={"ZEUR": 100.0},
         last_prices={"XBTEUR": 100.0},
         trailing_state=trailing_state,

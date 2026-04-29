@@ -1,15 +1,17 @@
 from core.config import PAIRS, ASSET_ALLOCATION, FIAT_CODE
 
+
 def get_fiat_balance(balance: dict) -> float:
     return float(balance.get(FIAT_CODE, 0.0))
 
+
 def get_portfolio_value(balance: dict, last_prices: dict) -> float:
     total_value = 0.0
-    
+
     # Convert crypto assets with last prices
     for pair in PAIRS.keys():
         asset = PAIRS[pair]["base"]
-        
+
         amount = float(balance.get(asset, 0.0))
         if amount > 0:
             raw_price = last_prices.get(pair)
@@ -18,11 +20,12 @@ def get_portfolio_value(balance: dict, last_prices: dict) -> float:
             price = float(raw_price)
             asset_value = amount * price
             total_value += asset_value
-    
+
     # Add fiat balance
     total_value += get_fiat_balance(balance)
-    
+
     return total_value
+
 
 def get_available_fiat(balance: dict, last_prices: dict, trailing_state: dict) -> float:
     fiat_balance = get_fiat_balance(balance)
@@ -42,6 +45,7 @@ def get_available_fiat(balance: dict, last_prices: dict, trailing_state: dict) -
     available_fiat = fiat_balance - reserved_fiat
     return available_fiat if available_fiat > 0 else 0.0
 
+
 def get_base_value(pair: str, balance: dict, current_price: float) -> float:
     asset = PAIRS[pair]["base"]
     amount = float(balance.get(asset, 0.0))
@@ -50,15 +54,18 @@ def get_base_value(pair: str, balance: dict, current_price: float) -> float:
         return base_value
     return 0.0
 
+
 def get_target_value(pair: str, portfolio_value: float) -> float:
     target_pct = float(ASSET_ALLOCATION[pair].get("TARGET_PCT", 0))
     target_value = (target_pct / 100.0) * portfolio_value
     return target_value
 
+
 def get_hodl_value(pair: str, target_value: float) -> float:
     hodl_pct = float(ASSET_ALLOCATION[pair].get("HODL_PCT", 0))
     hodl_value = (hodl_pct / 100.0) * target_value
     return hodl_value
+
 
 def calculate_pair_values(pair: str, balance: dict, last_prices: dict) -> tuple[float, float, float]:
     portfolio_value = get_portfolio_value(balance, last_prices)
@@ -77,7 +84,7 @@ def calculate_position(pair: str, balance: dict, last_prices: dict, trailing_sta
     ts_excluding_self = dict(trailing_state or {})
     ts_excluding_self.pop(pair, None)
 
-    # Sell value is amount above hodl, buy value is amount needed to reach target 
+    # Sell value is amount above hodl, buy value is amount needed to reach target
     sell_value = max(0.0, float(current_value) - float(hodl_value))
     buy_value = max(
         0.0,

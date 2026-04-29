@@ -55,7 +55,7 @@ engine = create_engine(
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,  # Verify connections before using
-    pool_recycle=3600,   # Recycle connections after 1 hour
+    pool_recycle=3600,  # Recycle connections after 1 hour
     echo=False,  # Set to True for SQL debugging
 )
 
@@ -92,7 +92,12 @@ class OHLCData(Base):
     count = Column(Integer, nullable=True)
     atr = Column(Numeric(20, 10), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     __table_args__ = (
         CheckConstraint("timeframe_minutes > 0", name="ck_ohlc_data_timeframe_positive"),
@@ -190,7 +195,12 @@ class TrailingState(Base):
     closing_order_id = Column(Text, nullable=True)
     closing_price = Column(Numeric(20, 10), nullable=True)
     closing_requested_at = Column(DateTime(timezone=True), nullable=True)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
     __table_args__ = (
         CheckConstraint("side IN ('buy', 'sell')", name="ck_trailing_state_side_valid"),
@@ -231,7 +241,12 @@ class BotControl(Base):
 
     control_key = Column(Text, primary_key=True, nullable=False)
     control_value = Column(Text, nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
     updated_by = Column(Text, nullable=True)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -352,9 +367,7 @@ def load_ohlc_data(
     """
     try:
         with get_session() as session:
-            query = session.query(OHLCData).filter(
-                and_(OHLCData.pair == pair, OHLCData.timeframe_minutes == timeframe)
-            )
+            query = session.query(OHLCData).filter(and_(OHLCData.pair == pair, OHLCData.timeframe_minutes == timeframe))
             if since_time is not None:
                 query = query.filter(OHLCData.time >= since_time)
             query = query.order_by(desc(OHLCData.time))
@@ -401,19 +414,23 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
             for _, row in df.iterrows()
         ]
         with get_session() as session:
-            stmt = pg_insert(OHLCData).values(rows).on_conflict_do_update(
-                index_elements=["pair", "timeframe_minutes", "time"],
-                set_={
-                    "open": pg_insert(OHLCData).excluded.open,
-                    "high": pg_insert(OHLCData).excluded.high,
-                    "low": pg_insert(OHLCData).excluded.low,
-                    "close": pg_insert(OHLCData).excluded.close,
-                    "vwap": pg_insert(OHLCData).excluded.vwap,
-                    "volume": pg_insert(OHLCData).excluded.volume,
-                    "count": pg_insert(OHLCData).excluded.count,
-                    "atr": pg_insert(OHLCData).excluded.atr,
-                    "updated_at": func.now(),
-                },
+            stmt = (
+                pg_insert(OHLCData)
+                .values(rows)
+                .on_conflict_do_update(
+                    index_elements=["pair", "timeframe_minutes", "time"],
+                    set_={
+                        "open": pg_insert(OHLCData).excluded.open,
+                        "high": pg_insert(OHLCData).excluded.high,
+                        "low": pg_insert(OHLCData).excluded.low,
+                        "close": pg_insert(OHLCData).excluded.close,
+                        "vwap": pg_insert(OHLCData).excluded.vwap,
+                        "volume": pg_insert(OHLCData).excluded.volume,
+                        "count": pg_insert(OHLCData).excluded.count,
+                        "atr": pg_insert(OHLCData).excluded.atr,
+                        "updated_at": func.now(),
+                    },
+                )
             )
             session.execute(stmt)
             logger.debug(f"Saved {len(rows)} OHLC records for {pair}")
@@ -454,10 +471,7 @@ def save_closed_position(pair: str, position_data: Dict[str, Any]) -> None:
         )
         with get_session() as session:
             session.add(record)
-        logger.debug(
-            f"Saved closed position for {pair} "
-            f"order {position_data['closing_order_id']}"
-        )
+        logger.debug(f"Saved closed position for {pair} order {position_data['closing_order_id']}")
     except Exception as e:
         logger.error(f"Error saving closed position: {e}")
         raise
@@ -499,7 +513,7 @@ def load_closed_positions(pair: Optional[str] = None, limit: Optional[int] = Non
 
 def save_trailing_state(pair: str, position_data: Dict[str, Any]) -> None:
     """Persist active trailing state for a trading pair.
-    
+
     Args:
         pair: Trading pair.
         position_data: Dictionary containing trailing state details.

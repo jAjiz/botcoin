@@ -131,25 +131,34 @@ def _update_trailing_state(pair, current_balance, last_prices, current_atr, trai
             update_activation_price(pair, pos, current_atr)
             logging.info(f"♻️ Recalibrate {side.upper()} position: activation price to {pos['activation_price']:,}€.")
 
-        if (side == "sell" and current_price >= pos["activation_price"]) or \
-                (side == "buy" and current_price <= pos["activation_price"]):
+        if (side == "sell" and current_price >= pos["activation_price"]) or (
+            side == "buy" and current_price <= pos["activation_price"]
+        ):
             pos["activated_at"] = now_utc()
-            logging.info(f"[{pair}] ⚡ Activation price {pos['activation_price']:,}€ reached for {side.upper()} position.",
-                         to_telegram=True)
+            logging.info(
+                f"[{pair}] ⚡ Activation price {pos['activation_price']:,}€ reached for {side.upper()} position.",
+                to_telegram=True,
+            )
             update_stop_price(pair, pos, current_price, current_atr)
-            logging.info(f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
+            logging.info(
+                f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€"
+            )
 
     else:
         if pos["stop_atr"] < atr_limit_min or pos["stop_atr"] > atr_limit_max:
             update_stop_price(pair, pos, pos["trailing_price"], current_atr)
             logging.info(f"♻️ Recalibrate {side.upper()} position: stop price to {pos['stop_price']:,}€.")
 
-        if (side == "sell" and current_price <= pos["stop_price"]) or \
-                (side == "buy" and current_price >= pos["stop_price"]):
+        if (side == "sell" and current_price <= pos["stop_price"]) or (
+            side == "buy" and current_price >= pos["stop_price"]
+        ):
             close_position(pair, pos, last_prices)
             return
 
-        if (side == "sell" and current_price > pos["trailing_price"]) or \
-                (side == "buy" and current_price < pos["trailing_price"]):
+        if (side == "sell" and current_price > pos["trailing_price"]) or (
+            side == "buy" and current_price < pos["trailing_price"]
+        ):
             update_stop_price(pair, pos, current_price, current_atr)
-            logging.info(f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
+            logging.info(
+                f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€"
+            )

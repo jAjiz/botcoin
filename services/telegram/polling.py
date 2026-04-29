@@ -92,9 +92,7 @@ async def market_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         pair_filter = context.args[0].upper() if context.args else None
         if pair_filter and pair_filter not in PAIRS:
-            await update.message.reply_text(
-                f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}"
-            )
+            await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
             return
 
         market_url = f"/market/{pair_filter}" if pair_filter else "/market"
@@ -112,7 +110,7 @@ async def market_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         market_by_pair = {item["pair"]: item for item in market_items}
 
         msg = "📈 Market Status:\n\n"
-        for pair in ([pair_filter] if pair_filter else list(PAIRS.keys())):
+        for pair in [pair_filter] if pair_filter else list(PAIRS.keys()):
             item = market_by_pair.get(pair, {})
             price = item.get("last_price")
             atr = item.get("atr")
@@ -141,9 +139,7 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         pair_filter = context.args[0].upper() if context.args else None
         if pair_filter and pair_filter not in PAIRS:
-            await update.message.reply_text(
-                f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}"
-            )
+            await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
             return
 
         positions_url = f"/positions/{pair_filter}" if pair_filter else "/positions"
@@ -190,11 +186,13 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             if trailing_active:
                 pnl = _pnl_percent(pos, last_price)
                 pnl_symbol = "🟢" if pnl and pnl > 0 else "🔴"
-                base_lines.extend([
-                    f"Trailing: {pos['trailing_price']:,.2f}€",
-                    f"Stop: {pos['stop_price']:,.2f}€",
-                    f"PnL: {pnl_symbol} {pnl:+.2f}%",
-                ])
+                base_lines.extend(
+                    [
+                        f"Trailing: {pos['trailing_price']:,.2f}€",
+                        f"Stop: {pos['stop_price']:,.2f}€",
+                        f"PnL: {pnl_symbol} {pnl:+.2f}%",
+                    ]
+                )
 
             msg += "\n".join(base_lines) + "\n\n"
 

@@ -7,13 +7,16 @@ _shared_data = {
     "last_run_at": None,
 }
 
+
 def update_balance(balance):
     with _lock:
         _shared_data["last_balance"] = balance if balance else {}
 
+
 def get_last_balance():
     with _lock:
         return dict(_shared_data["last_balance"])
+
 
 def update_pair_data(pair, price=None, atr=None, volatility_level=None):
     with _lock:
@@ -26,13 +29,16 @@ def update_pair_data(pair, price=None, atr=None, volatility_level=None):
         if volatility_level is not None:
             _shared_data["pairs_data"][pair]["volatility_level"] = volatility_level
 
+
 def get_pair_data(pair):
     with _lock:
         return dict(_shared_data["pairs_data"].get(pair, {}))
 
+
 def update_last_run_at(last_run_at):
     with _lock:
         _shared_data["last_run_at"] = last_run_at
+
 
 def get_last_run_at():
     with _lock:

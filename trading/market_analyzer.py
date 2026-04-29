@@ -28,7 +28,7 @@ def get_current_atr(pair: str) -> float | None:
 
         if xchange_ohlc is None or xchange_ohlc.empty:
             return last_atr
-        
+
         # If the most recent fetched candle is still open, exclude it from calculations
         if xchange_ohlc.iloc[0]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(timezone.utc).timestamp()):
             xchange_ohlc = xchange_ohlc.iloc[1:]
@@ -71,28 +71,26 @@ def get_current_atr(pair: str) -> float | None:
         return None
 
 
-def detect_pivots(
-        df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[int, str, float, pd.Timestamp]]:
-    ilocs_min = argrelextrema(df['low'].values, np.less_equal, order=order)[0]
-    ilocs_max = argrelextrema(df['high'].values, np.greater_equal, order=order)[0]
-    
+def detect_pivots(df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[int, str, float, pd.Timestamp]]:
+    ilocs_min = argrelextrema(df["low"].values, np.less_equal, order=order)[0]
+    ilocs_max = argrelextrema(df["high"].values, np.greater_equal, order=order)[0]
+
     pivots = []
     for i in ilocs_min:
-        pivots.append((i, 'min', df['low'].iloc[i], df.iloc[i]['dtime']))
+        pivots.append((i, "min", df["low"].iloc[i], df.iloc[i]["dtime"]))
     for i in ilocs_max:
-        pivots.append((i, 'max', df['high'].iloc[i], df.iloc[i]['dtime']))
-    
+        pivots.append((i, "max", df["high"].iloc[i], df.iloc[i]["dtime"]))
+
     pivots.sort(key=lambda x: x[0])
 
     # Remove false pivots
-    i = 0    
+    i = 0
     while i < len(pivots) - 1:
         _, curr_type, curr_price, _ = pivots[i]
         _, next_type, next_price, _ = pivots[i + 1]
-        
+
         if curr_type == next_type:
-            if (curr_type == 'max' and curr_price >= next_price) or \
-               (curr_type == 'min' and curr_price <= next_price):
+            if (curr_type == "max" and curr_price >= next_price) or (curr_type == "min" and curr_price <= next_price):
                 del pivots[i + 1]
             else:
                 del pivots[i]
@@ -103,108 +101,104 @@ def detect_pivots(
                 i += 1
 
     return pivots
-    
+
 
 def calculate_noise_between_pivots(
-        df: pd.DataFrame, 
-        pivot_pair: tuple[tuple[int, str, float, pd.Timestamp], tuple[int, str, float, pd.Timestamp]], 
-        atr_percentiles: dict[str, float]
-    ) -> dict:
+    df: pd.DataFrame,
+    pivot_pair: tuple[tuple[int, str, float, pd.Timestamp], tuple[int, str, float, pd.Timestamp]],
+    atr_percentiles: dict[str, float],
+) -> dict:
     start_idx, start_type, start_price, start_dtime = pivot_pair[0]
     end_idx, end_type, end_price, end_dtime = pivot_pair[1]
-    
+
     price_change_pct = abs((end_price - start_price) / start_price)
-    segment = df.iloc[start_idx+1:end_idx]
-    
+    segment = df.iloc[start_idx + 1 : end_idx]
+
     if len(segment) == 0:
         return {}
-    
-    if start_type == 'min' and end_type == 'max':
+
+    if start_type == "min" and end_type == "max":
         # Uptrend: calculate drawdown and find maximum K (drawdown / ATR)
-        rolling_max = segment['high'].expanding().max()
-        drawdowns = rolling_max - segment['low']
+        rolling_max = segment["high"].expanding().max()
+        drawdowns = rolling_max - segment["low"]
         segment_copy = segment.copy()
-        segment_copy['k_values'] = drawdowns / segment_copy['atr'].replace(0, np.nan)
-    elif start_type == 'max' and end_type == 'min':
+        segment_copy["k_values"] = drawdowns / segment_copy["atr"].replace(0, np.nan)
+    elif start_type == "max" and end_type == "min":
         # Downtrend: calculate bounce and find maximum K (bounce / ATR)
-        rolling_min = segment['low'].expanding().min()
-        bounces = segment['high'] - rolling_min
+        rolling_min = segment["low"].expanding().min()
+        bounces = segment["high"] - rolling_min
         segment_copy = segment.copy()
-        segment_copy['k_values'] = bounces / segment_copy['atr'].replace(0, np.nan)
+        segment_copy["k_values"] = bounces / segment_copy["atr"].replace(0, np.nan)
     else:
         return {}
-    
+
     # Now find max K for each volatility level
     volatility_levels = {}
     vol_ranges = {
-        'LL': (0, atr_percentiles['p20']),
-        'LV': (atr_percentiles['p20'], atr_percentiles['p50']),
-        'MV': (atr_percentiles['p50'], atr_percentiles['p80']),
-        'HV': (atr_percentiles['p80'], atr_percentiles['p95']),
-        'HH': (atr_percentiles['p95'], float('inf'))
+        "LL": (0, atr_percentiles["p20"]),
+        "LV": (atr_percentiles["p20"], atr_percentiles["p50"]),
+        "MV": (atr_percentiles["p50"], atr_percentiles["p80"]),
+        "HV": (atr_percentiles["p80"], atr_percentiles["p95"]),
+        "HH": (atr_percentiles["p95"], float("inf")),
     }
-    
+
     for vol_level, (min_atr, max_atr) in vol_ranges.items():
-        mask = (segment_copy['atr'] >= min_atr) & (segment_copy['atr'] < max_atr)
+        mask = (segment_copy["atr"] >= min_atr) & (segment_copy["atr"] < max_atr)
         if not mask.any():
             continue
-        
+
         vol_segment = segment_copy[mask]
-        idx_max = vol_segment['k_values'].idxmax()
-        
-        if start_type == 'min' and end_type == 'max':
-            max_value = (rolling_max.loc[idx_max] - segment.loc[idx_max, 'low'])
+        idx_max = vol_segment["k_values"].idxmax()
+
+        if start_type == "min" and end_type == "max":
+            max_value = rolling_max.loc[idx_max] - segment.loc[idx_max, "low"]
         else:
-            max_value = (segment.loc[idx_max, 'high'] - rolling_min.loc[idx_max])
-        
-        k_value = vol_segment['k_values'].loc[idx_max]
-        atr_at_max = segment.loc[idx_max, 'atr']
-        
-        volatility_levels[vol_level] = {
-            'max_value': max_value,
-            'atr_at_max': atr_at_max,
-            'k_value': k_value
-        }
-    
+            max_value = segment.loc[idx_max, "high"] - rolling_min.loc[idx_max]
+
+        k_value = vol_segment["k_values"].loc[idx_max]
+        atr_at_max = segment.loc[idx_max, "atr"]
+
+        volatility_levels[vol_level] = {"max_value": max_value, "atr_at_max": atr_at_max, "k_value": k_value}
+
     event = {
-        'type': 'uptrend' if start_type == 'min' else 'downtrend',
-        'start_dtime': start_dtime,
-        'end_dtime': end_dtime,
-        'price_change_pct': price_change_pct,
-        'volatility_levels': volatility_levels
+        "type": "uptrend" if start_type == "min" else "downtrend",
+        "start_dtime": start_dtime,
+        "end_dtime": end_dtime,
+        "price_change_pct": price_change_pct,
+        "volatility_levels": volatility_levels,
     }
-    
+
     return event
 
 
 def analyze_structural_noise(
-        df: pd.DataFrame, 
-        order: int = DEFAULT_ORDER, 
-        print_results: bool = False, 
-        show_events: bool = False, 
-        volatility_level: str | None = None
-    ) -> tuple[list[dict], list[dict]]:
+    df: pd.DataFrame,
+    order: int = DEFAULT_ORDER,
+    print_results: bool = False,
+    show_events: bool = False,
+    volatility_level: str | None = None,
+) -> tuple[list[dict], list[dict]]:
     pivots = detect_pivots(df, order)
-    
+
     # Calculate ATR percentiles
     atr_percentiles = {
-        'p20': np.percentile(df['atr'], 20),
-        'p50': np.percentile(df['atr'], 50),
-        'p80': np.percentile(df['atr'], 80),
-        'p95': np.percentile(df['atr'], 95),
+        "p20": np.percentile(df["atr"], 20),
+        "p50": np.percentile(df["atr"], 50),
+        "p80": np.percentile(df["atr"], 80),
+        "p95": np.percentile(df["atr"], 95),
     }
-    
+
     # Calculate noise (events) for each pivot pair
     uptrend_events = []
     downtrend_events = []
     for i in range(1, len(pivots)):
-        event = calculate_noise_between_pivots(df, (pivots[i-1], pivots[i]), atr_percentiles)
-        if event and event['volatility_levels']:
-            if event['type'] == 'uptrend':
+        event = calculate_noise_between_pivots(df, (pivots[i - 1], pivots[i]), atr_percentiles)
+        if event and event["volatility_levels"]:
+            if event["type"] == "uptrend":
                 uptrend_events.append(event)
             else:
                 downtrend_events.append(event)
-    
+
     if print_results:
         print_structural_noise_results(
             uptrend_events,
@@ -219,31 +213,31 @@ def analyze_structural_noise(
 
 
 def get_args() -> dict[str, str | int | bool | None]:
-    args = {'pair': None, 'show_events': False, 'order': DEFAULT_ORDER, 'volatility_level': None}
+    args = {"pair": None, "show_events": False, "order": DEFAULT_ORDER, "volatility_level": None}
 
     for arg in sys.argv[1:]:
-        if arg.startswith('PAIR='):
-            args['pair'] = arg.split('=')[1].upper()
-        elif arg.startswith('ORDER='):
-            args['order'] = int(arg.split('=')[1])
-        elif arg == 'SHOW_EVENTS':
-            args['show_events'] = True
-        elif arg.startswith('Volatility='):
-            args['volatility_level'] = arg.split('=')[1].upper()
-    
-    if not args['pair']:
+        if arg.startswith("PAIR="):
+            args["pair"] = arg.split("=")[1].upper()
+        elif arg.startswith("ORDER="):
+            args["order"] = int(arg.split("=")[1])
+        elif arg == "SHOW_EVENTS":
+            args["show_events"] = True
+        elif arg.startswith("Volatility="):
+            args["volatility_level"] = arg.split("=")[1].upper()
+
+    if not args["pair"]:
         print_pair_argument_error()
         sys.exit(1)
-    
+
     return args
 
 
 if __name__ == "__main__":
     args = get_args()
     analyze_structural_noise(
-        db.load_ohlc_data(args['pair'], CANDLE_TIMEFRAME), 
-        args['order'], 
-        True, 
-        args['show_events'], 
-        args['volatility_level']
+        db.load_ohlc_data(args["pair"], CANDLE_TIMEFRAME),
+        args["order"],
+        True,
+        args["show_events"],
+        args["volatility_level"],
     )

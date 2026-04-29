@@ -41,7 +41,8 @@ def test_analyze_structural_noise_returns_two_event_lists(sample_dataframe: pd.D
     df = sample_dataframe
 
     uptrend_events, downtrend_events = analyze_structural_noise(
-        df, order=1, print_results=True, show_events=True, volatility_level="ALL")
+        df, order=1, print_results=True, show_events=True, volatility_level="ALL"
+    )
 
     assert isinstance(uptrend_events, list)
     assert isinstance(downtrend_events, list)
@@ -102,6 +103,7 @@ def test_get_current_atr_uses_db_slice_fetches_new_data_and_saves_only_new_close
     monkeypatch.setattr(market_analyzer.db, "load_ohlc_data", fake_load)
     monkeypatch.setattr(market_analyzer, "fetch_ohlc_data", fake_fetch)
     monkeypatch.setattr(market_analyzer.db, "save_ohlc_data", fake_save)
+
     class _FixedDatetime:
         @staticmethod
         def now(tz=None):

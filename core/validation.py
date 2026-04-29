@@ -13,8 +13,9 @@ from core.config import (
     MARKET_DATA_DAYS,
     ATR_PERIOD,
     ATR_DESV_LIMIT,
-    PAIRS
+    PAIRS,
 )
+
 
 def validate_common_params(errors):
     # Kraken API credentials
@@ -50,6 +51,7 @@ def validate_common_params(errors):
     if not PAIRS or not any(PAIRS.keys()):
         errors.append("PAIRS is missing or empty")
 
+
 def build_and_validate_pairs(errors):
     try:
         build_pairs_map(PAIRS)
@@ -57,6 +59,7 @@ def build_and_validate_pairs(errors):
             errors.append("No valid pairs found")
     except Exception as e:
         errors.append(f"Failed to fetch pairs: {str(e)}")
+
 
 def log_configuration_summary():
     logging.info("=" * 60)
@@ -71,25 +74,26 @@ def log_configuration_summary():
     logging.info(f"Pairs to trade: {', '.join(PAIRS.keys())}")
     logging.info("-" * 60 + "\n")
 
+
 def validate_config() -> bool:
     errors = []
-    
+
     # Common validations
     validate_common_params(errors)
-    
+
     if not errors:
         build_and_validate_pairs(errors)
-    
+
     # Log all errors at the end
     if errors:
-        logging.error("="*60)
+        logging.error("=" * 60)
         logging.error("❌ CONFIGURATION VALIDATION FAILED")
-        logging.error("="*60)
+        logging.error("=" * 60)
         for error in errors:
             logging.error(f"  - {error}")
-        logging.error("="*60)
+        logging.error("=" * 60)
         return False
-    
+
     # If all validations passed, log configuration summary
     log_configuration_summary()
     return True

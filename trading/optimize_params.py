@@ -11,7 +11,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.config import CANDLE_TIMEFRAME, ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS, VOLATILITY_LEVELS as LEVELS, STOP_PERCENTILES
+from core.config import (
+    CANDLE_TIMEFRAME,
+    ATR_DESV_LIMIT,
+    PAIRS,
+    TRADING_PARAMS,
+    VOLATILITY_LEVELS as LEVELS,
+    STOP_PERCENTILES,
+)
 from trading.backtest import simulate_operations
 import core.database as db
 from trading.market_analyzer import analyze_structural_noise
@@ -23,6 +30,7 @@ SPLIT_METHODS = ("RESET", "CONTINUE", "BOTH")
 STOP_PCT_CHOICES = (0.20, 0.35, 0.50, 0.65, 0.75, 0.80, 0.90, 0.95)
 K_ACT_CHOICES = (0.0, 1.0, 2.0, 3.0)
 MIN_MARGIN_CHOICES = (0.000, 0.003, 0.006, 0.009)
+
 
 def _parse_args() -> dict:
     args = {
@@ -276,7 +284,7 @@ def main() -> None:
     split_method = args["split_method"]
 
     df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME).dropna(subset=["atr"])
-    
+
     if args["start"]:
         df = df[df["dtime"] >= args["start"]]
     if args["end"]:
@@ -333,13 +341,13 @@ def main() -> None:
 
         if split_method == "RESET":
             robust = _robust_key(train_reset, test_reset)
-            print("Robust rank key (min train/test): " f"pnl={robust[0]:.2f}%")
+            print(f"Robust rank key (min train/test): pnl={robust[0]:.2f}%")
             print(f"Train: pnl={train_reset.total_pnl:.2f}% | ops={train_reset.ops}")
             print(f"Test : pnl={test_reset.total_pnl:.2f}% | ops={test_reset.ops}")
 
         elif split_method == "CONTINUE":
             robust = _robust_key(train_cont, test_cont)
-            print("Robust rank key (min train/test): " f"pnl={robust[0]:.2f}%")
+            print(f"Robust rank key (min train/test): pnl={robust[0]:.2f}%")
             print(f"Train: pnl={train_cont.total_pnl:.2f}% | ops={train_cont.ops}")
             print(f"Test : pnl={test_cont.total_pnl:.2f}% | ops={test_cont.ops}")
 
@@ -347,9 +355,9 @@ def main() -> None:
             robust_reset = _robust_key(train_reset, test_reset)
             robust_cont = _robust_key(train_cont, test_cont)
             overall = _overall_robust_key(train_reset, test_reset, train_cont, test_cont)
-            print("Robust RESET (min train/test): "f"pnl={robust_reset[0]:.2f}%")
-            print("Robust CONTINUE (min train/test): "f"pnl={robust_cont[0]:.2f}%")
-            print("Overall worst-case (min of both methods): "f"pnl={overall[0]:.2f}%")
+            print(f"Robust RESET (min train/test): pnl={robust_reset[0]:.2f}%")
+            print(f"Robust CONTINUE (min train/test): pnl={robust_cont[0]:.2f}%")
+            print(f"Overall worst-case (min of both methods): pnl={overall[0]:.2f}%")
             print(f"RESET    Train: pnl={train_reset.total_pnl:.2f}% | ops={train_reset.ops}")
             print(f"RESET    Test : pnl={test_reset.total_pnl:.2f}% | ops={test_reset.ops}")
             print(f"CONTINUE Train: pnl={train_cont.total_pnl:.2f}% | ops={train_cont.ops}")
@@ -362,7 +370,7 @@ def main() -> None:
         f"ATR_DESV_LIMIT={ATR_DESV_LIMIT} | SPLIT_METHOD={split_method}"
     )
     print(f"Rows: {len(df)} | Train rows: {len(train_df)} | Test rows: {len(test_df)}")
-    
+
     # Generate exhaustive candidate grid for CONSERVATIVE/AGGRESSIVE
     candidates = _iter_exhaustive_candidates(mode)
 
@@ -454,7 +462,7 @@ def main() -> None:
     robust = _robust_key(train_score, test_score)
     print("\n=== BEST (walk-forward, exhaustive) ===")
     print(f"Split method: {split_method}")
-    
+
     if split_method == "BOTH":
         _apply_candidate_mode(pair, mode, best_cand.k_act, best_cand.min_margin, best_cand.stop_pcts, up_k, down_k)
         ops_all_best = simulate_operations(df, pair, fee_rate=fee_rate, max_ops=None)
@@ -463,9 +471,9 @@ def main() -> None:
         robust_reset = _robust_key(train_score, test_score)
         robust_cont = _robust_key(cont_train_best, cont_test_best)
 
-        print("Robust RESET (min train/test): " f"pnl={robust_reset[0]:.2f}%")
-        print("Robust CONTINUE (min train/test): " f"pnl={robust_cont[0]:.2f}%")
-        print("Overall worst-case (min of both methods): " f"pnl={overall[0]:.2f}%")
+        print(f"Robust RESET (min train/test): pnl={robust_reset[0]:.2f}%")
+        print(f"Robust CONTINUE (min train/test): pnl={robust_cont[0]:.2f}%")
+        print(f"Overall worst-case (min of both methods): pnl={overall[0]:.2f}%")
         print(f"In-sample: pnl={in_sample_score.total_pnl:.2f}% | ops={in_sample_score.ops}")
         print(f"RESET Train: pnl={train_score.total_pnl:.2f}% | ops={train_score.ops}")
         print(f"RESET Test : pnl={test_score.total_pnl:.2f}% | ops={test_score.ops}")
@@ -473,7 +481,7 @@ def main() -> None:
         print(f"CONT Test : pnl={cont_test_best.total_pnl:.2f}% | ops={cont_test_best.ops}")
 
     else:
-        print("Robust key (min train/test): " f"pnl={robust[0]:.2f}%")
+        print(f"Robust key (min train/test): pnl={robust[0]:.2f}%")
         print(f"In-sample: pnl={in_sample_score.total_pnl:.2f}% | ops={in_sample_score.ops}")
         print(f"Train: pnl={train_score.total_pnl:.2f}% | ops={train_score.ops}")
         print(f"Test : pnl={test_score.total_pnl:.2f}% | ops={test_score.ops}")

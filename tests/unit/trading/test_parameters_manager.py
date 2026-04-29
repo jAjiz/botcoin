@@ -76,7 +76,9 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     monkeypatch.setattr(parameters_manager.db, "load_ohlc_data", lambda _pair, _tf: sample_dataframe.copy())
     real_analyze = market_analyzer.analyze_structural_noise
     monkeypatch.setattr(
-        parameters_manager, "analyze_structural_noise", lambda df: real_analyze(df, order=1),
+        parameters_manager,
+        "analyze_structural_noise",
+        lambda df: real_analyze(df, order=1),
     )
     monkeypatch.setattr(parameters_manager, "LEVELS", ("LL", "LV", "MV", "HV", "HH"))
     monkeypatch.setattr(

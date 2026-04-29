@@ -13,6 +13,7 @@ from core.config import CANDLE_TIMEFRAME, ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS
 import core.database as db
 from trading.parameters_manager import calculate_trading_parameters, get_k_stop
 
+
 def _parse_args() -> dict:
     args = {
         "pair": None,
@@ -140,7 +141,7 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
     first_fee = float(first_price) * float(fee_rate)
     # Convert the entry fee to percent of entry price and apply to cumulative %
     # Equivalent to an immediate negative return of fee_rate * 100.
-    cum_pnl -= (float(fee_rate) * 100.0)
+    cum_pnl -= float(fee_rate) * 100.0
     ops.append(
         Operation(
             idx=1,
@@ -183,7 +184,7 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
             activation_atr = atr
 
         if not active:
-            # Recalibrate activation 
+            # Recalibrate activation
             if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
                 activation_price = _activation_price(pair, side, entry_price, atr)
                 activation_atr = atr
@@ -202,7 +203,7 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
             else:
                 continue
 
-        # Recalibrate stop 
+        # Recalibrate stop
         if stop_price is not None and trailing_price is not None and stop_atr is not None:
             if stop_atr < atr_limit_min or stop_atr > atr_limit_max:
                 stop_price = _stop_price(pair, side, trailing_price, atr)
@@ -314,7 +315,9 @@ def _print_summary(ops: List[Operation]) -> None:
 
     print("\n=== BACKTEST SUMMARY (PER OPERATION) ===")
     print(f"Operations: {len(ops)} | P&L samples: {len(pnl)}")
-    print(f"Win rate: {win_rate:.1f}% | Total P&L (net): {pnl.sum():.2f}€ | Avg: {pnl.mean():.2f}€ | Median: {np.median(pnl):.2f}€")
+    print(
+        f"Win rate: {win_rate:.1f}% | Total P&L (net): {pnl.sum():.2f}€ | Avg: {pnl.mean():.2f}€ | Median: {np.median(pnl):.2f}€"
+    )
     print(f"Best op P&L: {pnl.max():.2f}€ | Worst op P&L: {pnl.min():.2f}€")
     print(f"Total fees: {total_fees:.2f}€")
 
@@ -329,7 +332,7 @@ def _print_operations(ops: List[Operation], limit: Optional[int] = 100) -> None:
     else:
         title = "\n=== OPERATIONS (all) ==="
     print(title)
-    header = (f"{'#':>3} | {'Time':<20} | {'Side':>4} | {'Price':>10} | {'Vol':>3} | {'K_STOP':>6} | {'Fee€':>9} | {'P&L€':>10} | {'P&L%':>8} | {'Cum%':>10}")
+    header = f"{'#':>3} | {'Time':<20} | {'Side':>4} | {'Price':>10} | {'Vol':>3} | {'K_STOP':>6} | {'Fee€':>9} | {'P&L€':>10} | {'P&L%':>8} | {'Cum%':>10}"
     print(header)
     print("-" * len(header))
 
@@ -338,7 +341,9 @@ def _print_operations(ops: List[Operation], limit: Optional[int] = 100) -> None:
         pnl_abs = "" if op.pnl_abs is None else f"{op.pnl_abs:>10.2f}"
         pnl_pct = "" if op.pnl_pct is None else f"{op.pnl_pct:>7.2f}%"
         cum = "" if op.cum_pnl is None else f"{op.cum_pnl:>9.2f}%"
-        print(f"{op.idx:>3} | {op.time:<20} | {op.side:>4} | {op.price:>10.1f} | {op.vol:>3} | {op.k_stop:>6.2f} | {fee_abs:>9} | {pnl_abs:>10} | {pnl_pct:>8} | {cum:>10}")
+        print(
+            f"{op.idx:>3} | {op.time:<20} | {op.side:>4} | {op.price:>10.1f} | {op.vol:>3} | {op.k_stop:>6.2f} | {fee_abs:>9} | {pnl_abs:>10} | {pnl_pct:>8} | {cum:>10}"
+        )
 
 
 def main() -> None:

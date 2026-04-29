@@ -5,7 +5,7 @@ import time
 import pandas as pd
 from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
-## Kraken API rate limit: 1 call per second for public endpoints. 
+## Kraken API rate limit: 1 call per second for public endpoints.
 # We implement a simple locking mechanism to ensure we respect this limit across all threads.
 KRAKEN_MIN_CALL_INTERVAL_SECONDS = 1.0
 _rate_limit_lock = threading.Lock()
@@ -54,13 +54,13 @@ def build_pairs_map(pairs_dict):
     if pairs_info is None:
         return
     for primary, info in pairs_info.items():
-        altname = info.get('altname', '')
+        altname = info.get("altname", "")
         if altname in pairs_dict:
             pairs_dict[altname] = {
-                'primary': primary,
-                'wsname': info.get("wsname", ""),
-                'base': info.get("base", ""),
-                'quote': info.get("quote", "")
+                "primary": primary,
+                "wsname": info.get("wsname", ""),
+                "base": info.get("base", ""),
+                "quote": info.get("quote", ""),
             }
     if not all(pairs_dict[pair] for pair in pairs_dict):
         missing = [pair for pair in pairs_dict if not pairs_dict[pair]]
@@ -98,7 +98,7 @@ def get_last_prices(pairs_dict):
             raise Exception(response["error"])
         prices = {}
         for pair, info in pairs_dict.items():
-            prices[pair] = round(float(response["result"][info['primary']]["c"][0]), 1)  # 'c' = last trade price
+            prices[pair] = round(float(response["result"][info["primary"]]["c"][0]), 1)  # 'c' = last trade price
         return prices
     except Exception as e:
         logging.error(f"Error fetching current prices: {e}")
@@ -107,22 +107,25 @@ def get_last_prices(pairs_dict):
 
 def place_limit_order(pair, side, price, volume):
     try:
-        response = api.query_private("AddOrder", {
-            "pair": pair,
-            "type": side,
-            "ordertype": "limit",
-            "price": str(round(price, 1)),
-            "volume": str(volume),
-        })
+        response = api.query_private(
+            "AddOrder",
+            {
+                "pair": pair,
+                "type": side,
+                "ordertype": "limit",
+                "price": str(round(price, 1)),
+                "volume": str(volume),
+            },
+        )
         if "error" in response and response["error"]:
             raise Exception(response["error"])
-        new_order = response.get('result', {}).get('txid', [None])[0]
+        new_order = response.get("result", {}).get("txid", [None])[0]
         logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
         return new_order
     except Exception as e:
         logging.error(f"Error creating {side.upper()} order: {e}")
         return None
-    
+
 
 def fetch_ohlc_data(pair, interval, since=None):
     data = {"pair": pair, "interval": interval}

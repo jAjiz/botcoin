@@ -47,9 +47,7 @@ def test_calculate_position_with_force_side(monkeypatch) -> None:
     balance = {"XXBT": 2.0, "ZEUR": 1000.0}
     prices = {"XBTEUR": 100.0}
 
-    side, value = inventory_manager.calculate_position(
-        "XBTEUR", balance, prices, trailing_state={}, force_side="sell"
-    )
+    side, value = inventory_manager.calculate_position("XBTEUR", balance, prices, trailing_state={}, force_side="sell")
 
     assert side == "sell"
     assert value == 80.0

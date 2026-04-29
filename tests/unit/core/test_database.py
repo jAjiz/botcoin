@@ -349,17 +349,23 @@ def test_load_ohlc_data_with_limit(monkeypatch):
     """Test load_ohlc_data with limit preserves the requested row count."""
     records = [
         OHLCData(
-            pair="XBTEUR", timeframe_minutes=15,
+            pair="XBTEUR",
+            timeframe_minutes=15,
             time=1735690500,
-            open=Decimal("101.0"), high=Decimal("102.0"),
-            low=Decimal("100.0"), close=Decimal("101.5"),
+            open=Decimal("101.0"),
+            high=Decimal("102.0"),
+            low=Decimal("100.0"),
+            close=Decimal("101.5"),
             atr=Decimal("1.1"),
         ),
         OHLCData(
-            pair="XBTEUR", timeframe_minutes=15,
+            pair="XBTEUR",
+            timeframe_minutes=15,
             time=1735689600,
-            open=Decimal("100.0"), high=Decimal("101.0"),
-            low=Decimal("99.0"), close=Decimal("100.5"),
+            open=Decimal("100.0"),
+            high=Decimal("101.0"),
+            low=Decimal("99.0"),
+            close=Decimal("100.5"),
             atr=Decimal("1.0"),
         ),
     ]
@@ -437,6 +443,7 @@ def test_check_database_connection_success(monkeypatch):
 
 def test_check_database_connection_failure(monkeypatch):
     """Test database connection check when connection fails."""
+
     def _failing_get_session() -> FakeSessionContextManager:
         return FakeSessionContextManager(FakeSession(), enter_error=Exception("Connection failed"))
 
@@ -669,34 +676,42 @@ def test_save_trailing_state_raises_on_db_error(monkeypatch):
     "pair,records,expect_found",
     [
         ("XBTEUR", [], False),
-        ("XBTEUR", [
-            TrailingState(
-                pair="XBTEUR",
-                side="buy",
-                volume=Decimal("0.5"),
-                entry_price=Decimal("50000"),
-                activation_atr=Decimal("200"),
-                activation_price=Decimal("50100"),
-                created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
-                trailing_price=Decimal("50400"),
-                stop_price=Decimal("50200"),
-                stop_atr=Decimal("150"),
-            )
-        ], True),
-        ("ETHEUR", [
-            TrailingState(
-                pair="XBTEUR",
-                side="buy",
-                volume=Decimal("0.5"),
-                entry_price=Decimal("50000"),
-                activation_atr=Decimal("200"),
-                activation_price=Decimal("50100"),
-                created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
-                trailing_price=Decimal("50400"),
-                stop_price=Decimal("50200"),
-                stop_atr=Decimal("150"),
-            )
-        ], False),
+        (
+            "XBTEUR",
+            [
+                TrailingState(
+                    pair="XBTEUR",
+                    side="buy",
+                    volume=Decimal("0.5"),
+                    entry_price=Decimal("50000"),
+                    activation_atr=Decimal("200"),
+                    activation_price=Decimal("50100"),
+                    created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+                    trailing_price=Decimal("50400"),
+                    stop_price=Decimal("50200"),
+                    stop_atr=Decimal("150"),
+                )
+            ],
+            True,
+        ),
+        (
+            "ETHEUR",
+            [
+                TrailingState(
+                    pair="XBTEUR",
+                    side="buy",
+                    volume=Decimal("0.5"),
+                    entry_price=Decimal("50000"),
+                    activation_atr=Decimal("200"),
+                    activation_price=Decimal("50100"),
+                    created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+                    trailing_price=Decimal("50400"),
+                    stop_price=Decimal("50200"),
+                    stop_atr=Decimal("150"),
+                )
+            ],
+            False,
+        ),
     ],
 )
 def test_load_trailing_state(monkeypatch, pair, records, expect_found):

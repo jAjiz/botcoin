@@ -73,7 +73,7 @@ def load_csv_file(path: str, dry_run: bool = False) -> int:
     # convert it.
     if "time" not in df.columns and "dtime" in df.columns:
         try:
-            df["time"] = pd.to_datetime(df["dtime"]).astype(int) // 10 ** 9
+            df["time"] = pd.to_datetime(df["dtime"]).astype(int) // 10**9
         except Exception:
             # Fallback: try parsing with pd.to_datetime without astype
             df["time"] = (pd.to_datetime(df["dtime"]) - pd.Timestamp("1970-01-01")) // pd.Timedelta("1s")
