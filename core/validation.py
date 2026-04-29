@@ -1,20 +1,21 @@
 import logging
-from exchange.kraken import build_pairs_map
+
 from core.config import (
+    ATR_DESV_LIMIT,
+    ATR_PERIOD,
+    CANDLE_TIMEFRAME,
     KRAKEN_API_KEY,
     KRAKEN_API_SECRET,
+    MARKET_DATA_DAYS,
+    PAIRS,
+    PARAM_SESSIONS,
+    SLEEPING_INTERVAL,
     TELEGRAM_ENABLED,
+    TELEGRAM_POLL_INTERVAL,
     TELEGRAM_TOKEN,
     TELEGRAM_USER_ID,
-    TELEGRAM_POLL_INTERVAL,
-    SLEEPING_INTERVAL,
-    PARAM_SESSIONS,
-    CANDLE_TIMEFRAME,
-    MARKET_DATA_DAYS,
-    ATR_PERIOD,
-    ATR_DESV_LIMIT,
-    PAIRS,
 )
+from exchange.kraken import build_pairs_map
 
 
 def validate_common_params(errors):
@@ -58,7 +59,7 @@ def build_and_validate_pairs(errors):
         if not any(PAIRS.values()):
             errors.append("No valid pairs found")
     except Exception as e:
-        errors.append(f"Failed to fetch pairs: {str(e)}")
+        errors.append(f"Failed to fetch pairs: {e!s}")
 
 
 def log_configuration_summary():

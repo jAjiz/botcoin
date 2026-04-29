@@ -1,8 +1,8 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def print_pair_argument_error():
@@ -42,7 +42,7 @@ def print_events_detail(events, title, vol_level=None):
         print("-" * 55)
         for event in events:
             change_pct = event["price_change_pct"] * 100
-            print(f"{str(event['start_dtime']):<20} | {str(event['end_dtime']):<20} | {change_pct:>9.2f}%")
+            print(f"{event['start_dtime']!s:<20} | {event['end_dtime']!s:<20} | {change_pct:>9.2f}%")
     else:
         print(f"{'From':<20} | {'To':<20} | {'Change %':>10} | {'Max Value':>10} | {'ATR at max':>10} | {'K Value':>8}")
         print("-" * 120)
@@ -52,7 +52,7 @@ def print_events_detail(events, title, vol_level=None):
             change_pct = event["price_change_pct"] * 100
             vol_data = event["volatility_levels"][vol_level]
             print(
-                f"{str(event['start_dtime']):<20} | {str(event['end_dtime']):<20} | {change_pct:>9.2f}% "
+                f"{event['start_dtime']!s:<20} | {event['end_dtime']!s:<20} | {change_pct:>9.2f}% "
                 f"| {vol_data['max_value']:>10.1f} | {vol_data['atr_at_max']:>10.1f} | {vol_data['k_value']:>8.2f}"
             )
 
@@ -74,10 +74,7 @@ def print_structural_noise_results(
 
     print("ATR P20: {p20:.1f} | P50: {p50:.1f} | P80: {p80:.1f} | P95: {p95:.1f}".format(**atr_percentiles))
 
-    if volatility_level == "ALL":
-        vol_levels = ["LL", "LV", "MV", "HV", "HH"]
-    else:
-        vol_levels = [volatility_level]
+    vol_levels = ["LL", "LV", "MV", "HV", "HH"] if volatility_level == "ALL" else [volatility_level]
 
     for vol_level in vol_levels:
         uptrend_vol = [e for e in uptrend_events if vol_level in e["volatility_levels"]]

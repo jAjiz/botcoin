@@ -1,9 +1,9 @@
+from datetime import UTC, datetime
+
 import pandas as pd
 import pytest
-from datetime import datetime, timezone
 
 import trading.market_analyzer as market_analyzer
-
 from trading.market_analyzer import (
     analyze_structural_noise,
     calculate_noise_between_pivots,
@@ -107,7 +107,7 @@ def test_get_current_atr_uses_db_slice_fetches_new_data_and_saves_only_new_close
     class _FixedDatetime:
         @staticmethod
         def now(tz=None):
-            return datetime.fromtimestamp(1767229500, tz=timezone.utc)
+            return datetime.fromtimestamp(1767229500, tz=UTC)
 
     monkeypatch.setattr(market_analyzer, "datetime", _FixedDatetime)
     monkeypatch.setattr(market_analyzer, "ATR_PERIOD", 3)

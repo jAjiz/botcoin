@@ -1,26 +1,20 @@
-import sys
-import math
 import itertools
-import numpy as np
+import math
+import sys
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
-# Ensure sibling packages are importable when running as a script.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+import numpy as np
 
-from core.config import (
-    CANDLE_TIMEFRAME,
-    ATR_DESV_LIMIT,
-    PAIRS,
-    TRADING_PARAMS,
-    VOLATILITY_LEVELS as LEVELS,
-    STOP_PERCENTILES,
-)
-from trading.backtest import simulate_operations
 import core.database as db
+from core.config import (
+    ATR_DESV_LIMIT,
+    CANDLE_TIMEFRAME,
+    PAIRS,
+    STOP_PERCENTILES,
+    TRADING_PARAMS,
+)
+from core.config import VOLATILITY_LEVELS as LEVELS
+from trading.backtest import simulate_operations
 from trading.market_analyzer import analyze_structural_noise
 
 MODES = ("CONSERVATIVE", "AGGRESSIVE", "CURRENT")
@@ -93,15 +87,15 @@ def _set_pair_atr_thresholds(pair: str, df) -> None:
     PAIRS[pair]["atr_95pct"] = float(np.percentile(atr, 95))
 
 
-def _quantile_ceiled(values: np.ndarray, pct: float) -> Optional[float]:
+def _quantile_ceiled(values: np.ndarray, pct: float) -> float | None:
     if values.size == 0:
         return None
     q = float(np.quantile(values, pct))
     return math.ceil(q * 10.0) / 10.0
 
 
-def _k_values_by_level(events: List[dict]) -> Dict[str, np.ndarray]:
-    out: Dict[str, List[float]] = {lvl: [] for lvl in LEVELS}
+def _k_values_by_level(events: list[dict]) -> dict[str, np.ndarray]:
+    out: dict[str, list[float]] = {lvl: [] for lvl in LEVELS}
     for e in events:
         vols = e.get("volatility_levels") or {}
         for lvl in LEVELS:
@@ -118,11 +112,11 @@ def _k_values_by_level(events: List[dict]) -> Dict[str, np.ndarray]:
 def _apply_candidate_mode(
     pair: str,
     mode: str,
-    k_act: Optional[float],
-    min_margin: Optional[float],
-    stop_pcts: Dict[str, float],
-    up_k: Dict[str, np.ndarray],
-    down_k: Dict[str, np.ndarray],
+    k_act: float | None,
+    min_margin: float | None,
+    stop_pcts: dict[str, float],
+    up_k: dict[str, np.ndarray],
+    down_k: dict[str, np.ndarray],
 ) -> None:
     if mode == "CURRENT":
         raise ValueError("Use _apply_current_config() for MODE=CURRENT")
@@ -150,14 +144,14 @@ def _apply_candidate_mode(
 
 @dataclass(frozen=True)
 class Candidate:
-    k_act: Optional[float]
-    min_margin: Optional[float]
-    stop_pcts: Dict[str, float]
+    k_act: float | None
+    min_margin: float | None
+    stop_pcts: dict[str, float]
 
 
-def _iter_exhaustive_candidates(mode: str) -> List[Candidate]:
+def _iter_exhaustive_candidates(mode: str) -> list[Candidate]:
     # Exhaustively enumerates the full discrete grid. This can be large.
-    candidates: List[Candidate] = []
+    candidates: list[Candidate] = []
 
     for ll, lv, mv, hv, hh in itertools.product(STOP_PCT_CHOICES, repeat=len(LEVELS)):
         stop_pcts = {"LL": ll, "LV": lv, "MV": mv, "HV": hv, "HH": hh}
@@ -174,7 +168,7 @@ def _iter_exhaustive_candidates(mode: str) -> List[Candidate]:
 
 def _candidate_from_env(pair: str) -> Candidate:
     raw_k_act = TRADING_PARAMS[pair]["buy"].get("K_ACT")
-    k_act: Optional[float]
+    k_act: float | None
     try:
         k_act = float(raw_k_act) if raw_k_act is not None and str(raw_k_act).strip() != "" else None
     except Exception:
@@ -192,9 +186,9 @@ def _candidate_from_env(pair: str) -> Candidate:
 
 def _apply_current_config(
     pair: str,
-    stop_pcts: Dict[str, float],
-    up_k: Dict[str, np.ndarray],
-    down_k: Dict[str, np.ndarray],
+    stop_pcts: dict[str, float],
+    up_k: dict[str, np.ndarray],
+    down_k: dict[str, np.ndarray],
 ) -> None:
     sell_k_stop = {lvl: _quantile_ceiled(up_k[lvl], stop_pcts[lvl]) for lvl in LEVELS}
     buy_k_stop = {lvl: _quantile_ceiled(down_k[lvl], stop_pcts[lvl]) for lvl in LEVELS}
@@ -209,12 +203,12 @@ class Score:
     pnl_samples: int
 
 
-def _score_key(score: Score) -> Tuple[float, int]:
+def _score_key(score: Score) -> tuple[float, int]:
     # Rank: net P&L, then number of P&L samples.
     return (float(score.total_pnl), int(score.pnl_samples))
 
 
-def _robust_key(train: Score, test: Score) -> Tuple[float, int]:
+def _robust_key(train: Score, test: Score) -> tuple[float, int]:
     # Robust rank: worst-case P&L across train/test.
     return (float(min(train.total_pnl, test.total_pnl)), int(min(train.pnl_samples, test.pnl_samples)))
 
@@ -224,7 +218,7 @@ def _overall_robust_key(
     reset_test: Score,
     cont_train: Score,
     cont_test: Score,
-) -> Tuple[float, int]:
+) -> tuple[float, int]:
     rr_pnl, rr_n = _robust_key(reset_train, reset_test)
     cr_pnl, cr_n = _robust_key(cont_train, cont_test)
     return (float(min(rr_pnl, cr_pnl)), int(min(rr_n, cr_n)))
@@ -239,7 +233,7 @@ def _score_run(ops) -> Score:
     return Score(total_pnl=total, ops=len(ops), pnl_samples=pnl_samples)
 
 
-def _split_scores_from_single_run(ops, boundary_time: str) -> Tuple[Score, Score]:
+def _split_scores_from_single_run(ops, boundary_time: str) -> tuple[Score, Score]:
     if not ops:
         empty = Score(total_pnl=-1e18, ops=0, pnl_samples=0)
         return empty, empty
@@ -262,7 +256,7 @@ def _split_scores_from_single_run(ops, boundary_time: str) -> Tuple[Score, Score
     return first_score, second_score
 
 
-def _format_env_lines(pair: str, cand: Candidate) -> List[str]:
+def _format_env_lines(pair: str, cand: Candidate) -> list[str]:
     lines = []
     if cand.k_act is not None:
         lines.append(f"{pair}_K_ACT={cand.k_act:.1f}")
@@ -375,9 +369,9 @@ def main() -> None:
     candidates = _iter_exhaustive_candidates(mode)
 
     # Run exhaustive search
-    best: List[Tuple[Score, Candidate]] = []
+    best: list[tuple[Score, Candidate]] = []
     min_ops_required = int(args["min_ops"])
-    evaluated: List[Tuple[Tuple[float, int], Score, Score, Score, Candidate]] = []
+    evaluated: list[tuple[tuple[float, int], Score, Score, Score, Candidate]] = []
     passed_train = 0
     passed_test = 0
 

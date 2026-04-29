@@ -1,12 +1,10 @@
 import asyncio
 import logging
-from typing import Optional
-
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 from core.config import FIAT_CODE, PAIRS, TELEGRAM_TOKEN, TELEGRAM_USER_ID
 from services.telegram.client import client
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -20,7 +18,7 @@ def _check_auth(update: Update) -> bool:
     return update.effective_user.id == int(TELEGRAM_USER_ID)
 
 
-def _pnl_percent(pos: dict, last_price: float) -> Optional[float]:
+def _pnl_percent(pos: dict, last_price: float) -> float | None:
     trailing_price = pos.get("trailing_price")
     stop_price = pos.get("stop_price")
     if trailing_price is None or stop_price is None:
@@ -174,7 +172,6 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 continue
 
             trailing_active = pos.get("trailing_price") is not None
-            side = pos["side"].lower()
             entry_price = pos["entry_price"]
             base_lines = [
                 f"{pos['side'].upper()}",

@@ -1,12 +1,13 @@
 import time
+
+import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-import core.database as db
-from exchange.kraken import get_balance, get_last_prices, get_order_status
-from core.config import SLEEPING_INTERVAL, PAIRS, PARAM_SESSIONS, ATR_DESV_LIMIT
+from core.config import ATR_DESV_LIMIT, PAIRS, PARAM_SESSIONS, SLEEPING_INTERVAL
 from core.utils import now_utc
-from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
+from exchange.kraken import get_balance, get_last_prices, get_order_status
 from trading.market_analyzer import get_current_atr
+from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
 from trading.positions_manager import (
     close_position,
     create_position,
@@ -56,14 +57,14 @@ def trading_session():
         logging.error("Could not fetch prices. Skipping session.\n")
         return
 
-    for pair in PAIRS.keys():
+    for pair in PAIRS:
         logging.info(f"--- Processing pair: [{pair}] ---")
         trailing_state[pair] = db.load_trailing_state(pair)
         current_price = last_prices.get(pair, None)
         current_atr = call_with_retry(get_current_atr, pair)
 
         if current_price is None or current_atr is None:
-            logging.error(f"Could not fetch price or ATR. Skipping this pair.")
+            logging.error("Could not fetch price or ATR. Skipping this pair.")
             continue
 
         if _session_count % PARAM_SESSIONS == 0:
@@ -109,10 +110,7 @@ def check_open_position(pair, trailing_state):
         return False
 
     closing_order = trailing_state[pair].get("closing_order_id")
-    if closing_order:
-        return False
-
-    return True
+    return not closing_order
 
 
 def _update_trailing_state(pair, current_balance, last_prices, current_atr, trailing_state):

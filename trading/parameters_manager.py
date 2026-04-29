@@ -1,9 +1,12 @@
-import math
 import logging
+import math
+
 import numpy as np
 import pandas as pd
+
 import core.database as db
-from core.config import CANDLE_TIMEFRAME, PAIRS, TRADING_PARAMS, STOP_PERCENTILES, VOLATILITY_LEVELS as LEVELS
+from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
+from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.market_analyzer import analyze_structural_noise
 
 
@@ -61,7 +64,8 @@ def calculate_trading_parameters(pair, infoLog=True):
     TRADING_PARAMS[pair]["buy"]["K_STOP"] = buy_k_stops
 
     if infoLog:
-        fmt = lambda k: f"{k:.2f}" if k is not None else "N/A"
+        def fmt(k):
+            return f"{k:.2f}" if k is not None else "N/A"
         sell_msg = " | ".join(f"{lvl}:{fmt(sell_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_SELL → {sell_msg}")
         buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)

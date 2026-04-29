@@ -44,11 +44,7 @@ def calculate_activation_price(pair, side, entry_price, atr_val):
         min_margin = float(TRADING_PARAMS[pair][side]["MIN_MARGIN"])
         activation_distance = k_stop * atr_val + min_margin * entry_price
 
-    if side == "sell":
-        activation_price = entry_price + activation_distance
-    else:
-        activation_price = entry_price - activation_distance
-
+    activation_price = entry_price + activation_distance if side == "sell" else entry_price - activation_distance
     return activation_price
 
 
@@ -64,11 +60,7 @@ def calculate_stop_price(pair, side, trailing_price, atr_val):
     k_stop = get_k_stop(pair, side, atr_val)
     stop_distance = k_stop * atr_val
 
-    if side == "sell":
-        stop_price = trailing_price - stop_distance
-    else:
-        stop_price = trailing_price + stop_distance
-
+    stop_price = trailing_price - stop_distance if side == "sell" else trailing_price + stop_distance
     return stop_price
 
 
@@ -121,7 +113,7 @@ def close_position(pair, pos, last_prices):
 
         closing_order = place_limit_order(pair, side, current_price, volume)
         if not closing_order:
-            logging.error(f"Failed to place closing order. Aborting close.", to_telegram=True)
+            logging.error("Failed to place closing order. Aborting close.", to_telegram=True)
             return
         logging.info(f"💸 Closed position: {pnl:+.2f}% result", to_telegram=True)
 

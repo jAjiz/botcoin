@@ -1,29 +1,29 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 import pandas as pd
 import pytest
-import core.database as database
 
+import core.database as database
 from core.database import (
-    OHLCData,
-    ClosedPosition,
-    TrailingState,
     BotControl,
-    load_ohlc_data,
-    save_ohlc_data,
-    save_closed_position,
-    load_closed_positions,
-    save_trailing_state,
-    load_trailing_state,
-    delete_trailing_state,
-    get_control_value,
-    set_control_value,
-    get_bot_paused,
-    set_bot_paused,
-    get_session,
+    ClosedPosition,
+    OHLCData,
+    TrailingState,
     check_database_connection,
+    delete_trailing_state,
+    get_bot_paused,
+    get_control_value,
+    get_session,
+    load_closed_positions,
+    load_ohlc_data,
+    load_trailing_state,
+    save_closed_position,
+    save_ohlc_data,
+    save_trailing_state,
+    set_bot_paused,
+    set_control_value,
 )
 
 
@@ -176,7 +176,7 @@ def trailing_state_record():
         entry_price=Decimal("50000"),
         activation_atr=Decimal("200"),
         activation_price=Decimal("50100"),
-        created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
         trailing_price=Decimal("50400"),
         stop_price=Decimal("50200"),
         stop_atr=Decimal("150"),
@@ -467,7 +467,7 @@ def _make_closed_position_data(**overrides) -> dict:
         "entry_price": Decimal("50000"),
         "activation_atr": None,
         "activation_price": Decimal("50100"),
-        "created_at": datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
         "activated_at": None,
         "trailing_price": None,
         "stop_price": None,
@@ -488,7 +488,7 @@ def _make_trailing_state_entry(**overrides) -> dict:
         "entry_price": 50000.0,
         "activation_atr": 200.0,
         "activation_price": 50100.0,
-        "created_at": datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
     }
     data.update(overrides)
     return data
@@ -532,7 +532,7 @@ def test_save_closed_position_optional_fields_populated(monkeypatch):
     data = _make_closed_position_data(
         side="sell",
         activation_atr=Decimal("50"),
-        activated_at=datetime(2026, 4, 2, 10, 0, 0, tzinfo=timezone.utc),
+        activated_at=datetime(2026, 4, 2, 10, 0, 0, tzinfo=UTC),
         trailing_price=Decimal("2980"),
         stop_price=Decimal("3020"),
         stop_atr=Decimal("40"),
@@ -541,7 +541,7 @@ def test_save_closed_position_optional_fields_populated(monkeypatch):
 
     saved = session.added_records[0]
     assert saved.pair == "ETHEUR"
-    assert saved.activated_at == datetime(2026, 4, 2, 10, 0, 0, tzinfo=timezone.utc)
+    assert saved.activated_at == datetime(2026, 4, 2, 10, 0, 0, tzinfo=UTC)
     assert float(saved.trailing_price) == 2980.0
     assert float(saved.stop_atr) == 40.0
 
@@ -653,8 +653,8 @@ def test_save_trailing_state_with_optional_fields(monkeypatch):
             stop_atr=150.0,
             closing_order_id="close_123",
             closing_price=50150.0,
-            closing_requested_at=datetime(2026, 4, 1, 11, 15, 0, tzinfo=timezone.utc),
-            activated_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=timezone.utc),
+            closing_requested_at=datetime(2026, 4, 1, 11, 15, 0, tzinfo=UTC),
+            activated_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=UTC),
         ),
     )
 
@@ -686,7 +686,7 @@ def test_save_trailing_state_raises_on_db_error(monkeypatch):
                     entry_price=Decimal("50000"),
                     activation_atr=Decimal("200"),
                     activation_price=Decimal("50100"),
-                    created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
                     trailing_price=Decimal("50400"),
                     stop_price=Decimal("50200"),
                     stop_atr=Decimal("150"),
@@ -704,7 +704,7 @@ def test_save_trailing_state_raises_on_db_error(monkeypatch):
                     entry_price=Decimal("50000"),
                     activation_atr=Decimal("200"),
                     activation_price=Decimal("50100"),
-                    created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc),
+                    created_at=datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC),
                     trailing_price=Decimal("50400"),
                     stop_price=Decimal("50200"),
                     stop_atr=Decimal("150"),
@@ -725,7 +725,7 @@ def test_load_trailing_state(monkeypatch, pair, records, expect_found):
         assert result is not None
         assert result["side"] == "buy"
         assert result["activation_price"] == 50100.0
-        assert result["created_at"] == datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+        assert result["created_at"] == datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC)
     else:
         assert result is None
     assert session.query_obj.filter_calls == 1

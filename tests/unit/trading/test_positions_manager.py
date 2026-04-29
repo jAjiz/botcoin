@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import trading.positions_manager as positions_manager
 
@@ -48,7 +48,7 @@ def test_create_position_builds_state_from_calculated_values(monkeypatch) -> Non
         lambda pair, balance, prices, state: ("buy", 100.0),
     )
     monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *args: 85.0)
-    _now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    _now = datetime(2026, 1, 1, tzinfo=UTC)
     monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
 
     trailing_state = {}
@@ -69,7 +69,7 @@ def test_create_position_builds_state_from_calculated_values(monkeypatch) -> Non
 
 
 def test_close_position_updates_position_on_success(monkeypatch) -> None:
-    _now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
     monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
 

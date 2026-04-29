@@ -1,36 +1,37 @@
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Optional, Dict, Any, Iterator
+from typing import Any
 
 import pandas as pd
 from sqlalchemy import (
     URL,
-    create_engine,
-    func,
-    Column,
-    Text,
-    Integer,
-    DateTime,
-    Numeric,
     BigInteger,
-    Index,
     CheckConstraint,
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    Numeric,
+    Text,
     and_,
+    create_engine,
     desc,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 import core.logging as logging
 from core.config import (
     POSTGRES_DB,
-    POSTGRES_USER,
-    POSTGRES_PASSWORD,
     POSTGRES_HOST,
+    POSTGRES_PASSWORD,
     POSTGRES_PORT,
+    POSTGRES_USER,
 )
 
 logger = logging.logging.getLogger(__name__)
@@ -91,12 +92,12 @@ class OHLCData(Base):
     volume = Column(Numeric(28, 10), nullable=True)
     count = Column(Integer, nullable=True)
     atr = Column(Numeric(20, 10), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (
@@ -108,7 +109,7 @@ class OHLCData(Base):
         Index("ix_ohlc_data_pair_timeframe_time_desc", pair, timeframe_minutes, desc(time)),
     )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         # Only return useful fields for DataFrame construction
         return {
             "time": self.time,
@@ -144,7 +145,7 @@ class ClosedPosition(Base):
     closing_order_id = Column(Text, nullable=False, unique=True)
     closed_at = Column(DateTime(timezone=True), nullable=False)
     pnl_percent = Column(Numeric(10, 4), nullable=False)
-    inserted_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    inserted_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
         CheckConstraint("side IN ('buy', 'sell')", name="ck_closed_positions_side_valid"),
@@ -155,7 +156,7 @@ class ClosedPosition(Base):
         Index("ix_closed_positions_closed_at_desc", desc(closed_at)),
     )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "pair": self.pair,
@@ -198,8 +199,8 @@ class TrailingState(Base):
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     __table_args__ = (
@@ -214,7 +215,7 @@ class TrailingState(Base):
         Index("ix_trailing_state_closing_order_id", closing_order_id),
     )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "pair": self.pair,
             "side": self.side,
@@ -244,12 +245,12 @@ class BotControl(Base):
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
     updated_by = Column(Text, nullable=True)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "control_key": self.control_key,
             "control_value": self.control_value,
@@ -278,13 +279,13 @@ def get_session() -> Iterator[Session]:
         session.close()
 
 
-def _to_decimal(value: Any) -> Optional[Decimal]:
+def _to_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     return Decimal(str(value))
 
 
-def _state_entry_to_trailing_record(pair: str, position_data: Dict[str, Any]) -> TrailingState:
+def _state_entry_to_trailing_record(pair: str, position_data: dict[str, Any]) -> TrailingState:
     return TrailingState(
         pair=pair,
         side=position_data["side"],
@@ -303,8 +304,8 @@ def _state_entry_to_trailing_record(pair: str, position_data: Dict[str, Any]) ->
     )
 
 
-def _trailing_record_to_state_entry(record: TrailingState) -> Dict[str, Any]:
-    state_entry: Dict[str, Any] = {
+def _trailing_record_to_state_entry(record: TrailingState) -> dict[str, Any]:
+    state_entry: dict[str, Any] = {
         "side": record.side,
         "volume": float(record.volume),
         "entry_price": float(record.entry_price),
@@ -352,7 +353,7 @@ def check_database_connection() -> bool:
 
 
 def load_ohlc_data(
-    pair: str, timeframe: int, since_time: Optional[int] = None, limit: Optional[int] = None
+    pair: str, timeframe: int, since_time: int | None = None, limit: int | None = None
 ) -> pd.DataFrame:
     """Load OHLC data from the database.
 
@@ -444,7 +445,7 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
 # ============================================================================
 
 
-def save_closed_position(pair: str, position_data: Dict[str, Any]) -> None:
+def save_closed_position(pair: str, position_data: dict[str, Any]) -> None:
     """Persist a closed position to the database.
 
     Args:
@@ -466,7 +467,7 @@ def save_closed_position(pair: str, position_data: Dict[str, Any]) -> None:
             stop_atr=_to_decimal(position_data.get("stop_atr")),
             closing_price=Decimal(str(position_data["closing_price"])),
             closing_order_id=position_data["closing_order_id"],
-            closed_at=datetime.now(timezone.utc),
+            closed_at=datetime.now(UTC),
             pnl_percent=Decimal(str(position_data["pnl_percent"])),
         )
         with get_session() as session:
@@ -477,7 +478,7 @@ def save_closed_position(pair: str, position_data: Dict[str, Any]) -> None:
         raise
 
 
-def load_closed_positions(pair: Optional[str] = None, limit: Optional[int] = None) -> list[Dict[str, Any]]:
+def load_closed_positions(pair: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:
     """Load closed positions ordered by closed_at descending.
 
     Args:
@@ -501,7 +502,7 @@ def load_closed_positions(pair: Optional[str] = None, limit: Optional[int] = Non
             logger.debug(f"Fetched {len(result)} closed positions" + (f" for {pair}" if pair else ""))
             return result
     except Exception as e:
-        error_msg = f"Error loading closed positions" + (f" for {pair}" if pair else "")
+        error_msg = "Error loading closed positions" + (f" for {pair}" if pair else "")
         logger.error(f"{error_msg}: {e}")
         return []
 
@@ -511,7 +512,7 @@ def load_closed_positions(pair: Optional[str] = None, limit: Optional[int] = Non
 # ============================================================================
 
 
-def save_trailing_state(pair: str, position_data: Dict[str, Any]) -> None:
+def save_trailing_state(pair: str, position_data: dict[str, Any]) -> None:
     """Persist active trailing state for a trading pair.
 
     Args:
@@ -527,7 +528,7 @@ def save_trailing_state(pair: str, position_data: Dict[str, Any]) -> None:
         raise
 
 
-def load_trailing_state(pair: str) -> Optional[Dict[str, Any]]:
+def load_trailing_state(pair: str) -> dict[str, Any] | None:
     """Load active trailing state for a trading pair.
 
     Args:
@@ -577,7 +578,7 @@ def delete_trailing_state(pair: str) -> bool:
 # ============================================================================
 
 
-def get_control_value(control_key: str) -> Optional[str]:
+def get_control_value(control_key: str) -> str | None:
     """Get a bot control value by key."""
     try:
         with get_session() as session:
@@ -590,7 +591,7 @@ def get_control_value(control_key: str) -> Optional[str]:
         return None
 
 
-def set_control_value(control_key: str, control_value: str, updated_by: Optional[str] = None) -> None:
+def set_control_value(control_key: str, control_value: str, updated_by: str | None = None) -> None:
     """Set a bot control value by key."""
     try:
         with get_session() as session:
@@ -616,6 +617,6 @@ def get_bot_paused() -> bool:
     return str(value).strip().lower() == "true"
 
 
-def set_bot_paused(paused: bool, updated_by: Optional[str] = None) -> None:
+def set_bot_paused(paused: bool, updated_by: str | None = None) -> None:
     """Set bot paused state in bot_control table."""
     set_control_value("bot_paused", "true" if paused else "false", updated_by=updated_by)

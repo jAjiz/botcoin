@@ -9,7 +9,6 @@ import core.runtime as runtime
 from api.routes import control, market, status
 from exchange import kraken
 
-
 # ============================================================================
 # Kraken API Integration Tests
 # ============================================================================

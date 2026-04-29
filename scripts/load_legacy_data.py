@@ -19,17 +19,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import os
 import re
 import sys
-from datetime import datetime, timezone
-from typing import Dict
+from datetime import UTC, datetime
 
 import pandas as pd
 
 import core.logging as project_logging
-from core.database import save_ohlc_data, save_trailing_state, check_database_connection
+from core.database import check_database_connection, save_ohlc_data, save_trailing_state
 
 logger = project_logging.logging.getLogger("load_legacy_data")
 
@@ -42,7 +40,7 @@ def _parse_datetime(value: str) -> datetime:
     """Parse an ISO-format datetime string, assuming UTC if no timezone is present."""
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -97,8 +95,8 @@ def load_trailing_state(path: str, dry_run: bool = False) -> int:
         logger.info("Trailing state JSON not found: %s", path)
         return 0
     logger.info("Loading trailing state JSON: %s", path)
-    with open(path, "r", encoding="utf-8") as fh:
-        data: Dict[str, Dict] = json.load(fh)
+    with open(path, encoding="utf-8") as fh:
+        data: dict[str, dict] = json.load(fh)
 
     count = 0
     for pair, state in data.items():
@@ -148,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     for p in csv_files:
         try:
             # cheap row count by streaming header + len of file lines (not ideal for huge files)
-            with open(p, "r", encoding="utf-8") as fh:
+            with open(p, encoding="utf-8") as fh:
                 # subtract header
                 rows = sum(1 for _ in fh) - 1
             total_rows += max(rows, 0)
@@ -158,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
     trailing_count = 0
     if os.path.exists(args.json_file):
         try:
-            with open(args.json_file, "r", encoding="utf-8") as fh:
+            with open(args.json_file, encoding="utf-8") as fh:
                 j = json.load(fh)
             trailing_count = len(j.keys()) if isinstance(j, dict) else 0
         except Exception:
@@ -168,10 +166,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.dry_run:
         logger.info("Dry run requested; no writes will be performed")
-    elif not args.yes:
-        if not confirm("Proceed with import? [y/N]: "):
-            logger.info("Aborted by user")
-            return 1
+    elif not args.yes and not confirm("Proceed with import? [y/N]: "):
+        logger.info("Aborted by user")
+        return 1
 
     # Process CSVs
     imported = 0

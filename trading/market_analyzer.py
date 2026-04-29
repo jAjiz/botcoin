@@ -1,12 +1,13 @@
-import pandas as pd
-import numpy as np
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+
+import numpy as np
+import pandas as pd
 from scipy.signal import argrelextrema
 
 import core.database as db
 import core.logging as logging
-from core.config import MARKET_ANALYZER, CANDLE_TIMEFRAME, ATR_PERIOD
+from core.config import ATR_PERIOD, CANDLE_TIMEFRAME, MARKET_ANALYZER
 from core.utils import print_pair_argument_error, print_structural_noise_results
 from exchange.kraken import fetch_ohlc_data
 
@@ -30,15 +31,12 @@ def get_current_atr(pair: str) -> float | None:
             return last_atr
 
         # If the most recent fetched candle is still open, exclude it from calculations
-        if xchange_ohlc.iloc[0]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(timezone.utc).timestamp()):
+        if xchange_ohlc.iloc[0]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(UTC).timestamp()):
             xchange_ohlc = xchange_ohlc.iloc[1:]
             if xchange_ohlc.empty:
                 return last_atr
 
-        if not db_ohlc.empty:
-            all_rows = pd.concat([xchange_ohlc, db_ohlc], ignore_index=True)
-        else:
-            all_rows = xchange_ohlc.copy()
+        all_rows = pd.concat([xchange_ohlc, db_ohlc], ignore_index=True) if not db_ohlc.empty else xchange_ohlc.copy()
 
         # Change order to oldest to newest for easier ATR calculation
         all_rows.sort_values("time", inplace=True)
@@ -55,10 +53,7 @@ def get_current_atr(pair: str) -> float | None:
         all_rows.drop(columns=["H-L", "H-PC", "L-PC", "TR"], inplace=True)
         all_rows.sort_values("time", ascending=False, inplace=True)
 
-        if since_ts is None:
-            new_rows = all_rows.copy()
-        else:
-            new_rows = all_rows[all_rows["time"] > since_ts].copy()
+        new_rows = all_rows.copy() if since_ts is None else all_rows[all_rows["time"] > since_ts].copy()
 
         if not new_rows.empty:
             db.save_ohlc_data(pair, CANDLE_TIMEFRAME, new_rows)

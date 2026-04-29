@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -9,14 +9,14 @@ import core.runtime as runtime
 from api.routes import balance, control, market, positions, status
 
 _PAIRS = {"XBTEUR": {}, "ETHEUR": {}}
-_TS = datetime(2026, 4, 27, 10, 0, 0, tzinfo=timezone.utc)
+_TS = datetime(2026, 4, 27, 10, 0, 0, tzinfo=UTC)
 _POSITION = {
     "side": "buy",
     "volume": 0.01,
     "entry_price": 80000.0,
     "activation_atr": 500.0,
     "activation_price": 81000.0,
-    "created_at": datetime(2026, 4, 1, 12, 0, 0, tzinfo=timezone.utc),
+    "created_at": datetime(2026, 4, 1, 12, 0, 0, tzinfo=UTC),
     "activated_at": None,
     "trailing_price": 82000.0,
     "stop_price": 78000.0,

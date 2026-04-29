@@ -1,16 +1,10 @@
 import sys
-import numpy as np
 from dataclasses import dataclass
-from pathlib import Path
-from typing import List, Optional, Tuple
 
-# Ensure sibling packages are importable when running as a script.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+import numpy as np
 
-from core.config import CANDLE_TIMEFRAME, ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS
 import core.database as db
+from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, PAIRS, TRADING_PARAMS
 from trading.parameters_manager import calculate_trading_parameters, get_k_stop
 
 
@@ -47,7 +41,7 @@ def _parse_args() -> dict:
     return args
 
 
-def _atr_thresholds(pair: str) -> Tuple[float, float, float, float]:
+def _atr_thresholds(pair: str) -> tuple[float, float, float, float]:
     return (
         float(PAIRS[pair]["atr_20pct"]),
         float(PAIRS[pair]["atr_50pct"]),
@@ -106,15 +100,15 @@ class Operation:
     vol: str
     k_stop: float
     fee_abs: float
-    pnl_abs: Optional[float]
-    pnl_pct: Optional[float]
-    cum_pnl: Optional[float]
+    pnl_abs: float | None
+    pnl_pct: float | None
+    cum_pnl: float | None
 
 
-def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[int] = None) -> List[Operation]:
+def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: int | None = None) -> list[Operation]:
     atr_20, atr_50, atr_80, atr_95 = _atr_thresholds(pair)
 
-    ops: List[Operation] = []
+    ops: list[Operation] = []
     # Track cumulative return in percent (compounded). Start at 0%.
     cum_pnl = 0.0
 
@@ -298,7 +292,7 @@ def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: Optional[
     return ops
 
 
-def _print_summary(ops: List[Operation]) -> None:
+def _print_summary(ops: list[Operation]) -> None:
     if not ops:
         print("No operations found.")
         return
@@ -322,7 +316,7 @@ def _print_summary(ops: List[Operation]) -> None:
     print(f"Total fees: {total_fees:.2f}€")
 
 
-def _print_operations(ops: List[Operation], limit: Optional[int] = 100) -> None:
+def _print_operations(ops: list[Operation], limit: int | None = 100) -> None:
     if not ops:
         return
 

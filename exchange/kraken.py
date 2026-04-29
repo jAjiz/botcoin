@@ -1,8 +1,10 @@
-import krakenex
 import logging
 import threading
 import time
+
+import krakenex
 import pandas as pd
+
 from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
 ## Kraken API rate limit: 1 call per second for public endpoints.
@@ -41,7 +43,7 @@ api.secret = KRAKEN_API_SECRET
 def get_asset_pairs():
     try:
         response = _query_public_limited("AssetPairs")
-        if "error" in response and response["error"]:
+        if response.get("error"):
             raise Exception(response["error"])
         return response.get("result", {})
     except Exception as e:
@@ -71,7 +73,7 @@ def build_pairs_map(pairs_dict):
 def get_balance():
     try:
         response = api.query_private("Balance")
-        if "error" in response and response["error"]:
+        if response.get("error"):
             raise Exception(response["error"])
         return response.get("result", {})
     except Exception as e:
@@ -82,7 +84,7 @@ def get_balance():
 def get_order_status(order_id):
     try:
         response = api.query_private("QueryOrders", {"txid": order_id})
-        if "error" in response and response["error"]:
+        if response.get("error"):
             raise Exception(response["error"])
         result = response.get("result", {})
         return result.get(order_id, {}).get("status")
@@ -94,7 +96,7 @@ def get_order_status(order_id):
 def get_last_prices(pairs_dict):
     try:
         response = _query_public_limited("Ticker", {"pair": ",".join(pairs_dict.keys())})
-        if "error" in response and response["error"]:
+        if response.get("error"):
             raise Exception(response["error"])
         prices = {}
         for pair, info in pairs_dict.items():
@@ -117,7 +119,7 @@ def place_limit_order(pair, side, price, volume):
                 "volume": str(volume),
             },
         )
-        if "error" in response and response["error"]:
+        if response.get("error"):
             raise Exception(response["error"])
         new_order = response.get("result", {}).get("txid", [None])[0]
         logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
@@ -133,9 +135,9 @@ def fetch_ohlc_data(pair, interval, since=None):
         data["since"] = since
     try:
         response = _query_public_limited("OHLC", data)
-        if "error" in response and response["error"]:
+        if response.get("error"):
             raise Exception(response["error"])
-        result_pair = list(response["result"].keys())[0]
+        result_pair = next(iter(response["result"].keys()))
         ohlc = pd.DataFrame(response["result"][result_pair])
         if ohlc.empty:
             return ohlc

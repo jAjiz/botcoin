@@ -1,4 +1,5 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -39,7 +40,7 @@ PAIRS = {pair: {} for pair in os.getenv("PAIRS", "").split(",")}
 # Trading params
 def _build_trading_params():
     params = {}
-    for pair in PAIRS.keys():
+    for pair in PAIRS:
         params[pair] = {
             "sell": {
                 "K_ACT": os.getenv(f"{pair}_SELL_K_ACT", os.getenv(f"{pair}_K_ACT", None)),
@@ -59,7 +60,7 @@ TRADING_PARAMS = _build_trading_params()
 # Asset allocation
 def _build_asset_allocation():
     allocations = {}
-    for pair in PAIRS.keys():
+    for pair in PAIRS:
         allocations[pair] = {
             "TARGET_PCT": os.getenv(f"{pair}_TARGET_PCT", 0),
             "HODL_PCT": os.getenv(f"{pair}_HODL_PCT", 0),
@@ -79,7 +80,7 @@ MARKET_ANALYZER = {
 # K_STOP percentiles
 def _build_percentiles():
     percentiles = {}
-    for pair in PAIRS.keys():
+    for pair in PAIRS:
         percentiles[pair] = {
             "LL": float(os.getenv(f"{pair}_STOP_PCT_LL", 0.90)),
             "LV": float(os.getenv(f"{pair}_STOP_PCT_LV", 0.90)),

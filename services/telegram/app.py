@@ -1,10 +1,10 @@
+import logging
 from contextlib import asynccontextmanager
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-import logging
 from core.config import API_SECRET_TOKEN, TELEGRAM_POLL_INTERVAL, TELEGRAM_USER_ID
 from services.telegram.polling import build_tg_app
 
@@ -45,7 +45,7 @@ app = FastAPI(title="BoTC Telegram", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/notify", status_code=202)
-async def notify(req: NotifyRequest, x_api_token: Optional[str] = Header(default=None)):
+async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=None)):
     if API_SECRET_TOKEN and x_api_token != API_SECRET_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid or missing API token")
     try:

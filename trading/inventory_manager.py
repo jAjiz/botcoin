@@ -1,4 +1,4 @@
-from core.config import PAIRS, ASSET_ALLOCATION, FIAT_CODE
+from core.config import ASSET_ALLOCATION, FIAT_CODE, PAIRS
 
 
 def get_fiat_balance(balance: dict) -> float:
@@ -9,7 +9,7 @@ def get_portfolio_value(balance: dict, last_prices: dict) -> float:
     total_value = 0.0
 
     # Convert crypto assets with last prices
-    for pair in PAIRS.keys():
+    for pair in PAIRS:
         asset = PAIRS[pair]["base"]
 
         amount = float(balance.get(asset, 0.0))
