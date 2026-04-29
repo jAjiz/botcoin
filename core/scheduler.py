@@ -1,4 +1,6 @@
 import time
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import core.database as db
 import core.logging as logging
@@ -16,27 +18,31 @@ from trading.positions_manager import (
     update_stop_price,
 )
 
-_session_count = 0
-READ_ONLY_RETRY_ATTEMPTS = 3
+T = TypeVar("T")
+
+_session_count: int = 0
+READ_ONLY_RETRY_ATTEMPTS: int = 3
 
 # TODO: add unit tests for trading_session, check_closed_position,
 #       check_open_position, and _update_trailing_state.
 
 
-def call_with_retry(func, *args):
+def call_with_retry(func: Callable[..., T], *args: Any) -> T | None:
     for attempt in range(READ_ONLY_RETRY_ATTEMPTS):
         try:
             result = func(*args)
             if result is not None:
                 return result
         except Exception as e:
-            logging.warning(f"Attempt {attempt + 1}/{READ_ONLY_RETRY_ATTEMPTS} failed for {func.__name__}: {e}")
+            logging.warning(
+                f"Attempt {attempt + 1}/{READ_ONLY_RETRY_ATTEMPTS} failed for {func.__name__}: {e}"
+            )
         if attempt < READ_ONLY_RETRY_ATTEMPTS - 1:
             time.sleep(1)
     return None
 
 
-def trading_session():
+def trading_session() -> None:
     global _session_count
 
     if db.get_bot_paused():
@@ -88,7 +94,7 @@ def trading_session():
     logging.info(f"Session complete. Next run in {SLEEPING_INTERVAL}s.\n")
 
 
-def check_closed_position(pair, trailing_state):
+def check_closed_position(pair: str, trailing_state: dict[str, Any]) -> bool:
     if pair not in trailing_state or not trailing_state[pair]:
         return True
 
@@ -105,7 +111,7 @@ def check_closed_position(pair, trailing_state):
     return False
 
 
-def check_open_position(pair, trailing_state):
+def check_open_position(pair: str, trailing_state: dict[str, Any]) -> bool:
     if pair not in trailing_state or not trailing_state[pair]:
         return False
 
@@ -113,7 +119,13 @@ def check_open_position(pair, trailing_state):
     return not closing_order
 
 
-def _update_trailing_state(pair, current_balance, last_prices, current_atr, trailing_state):
+def _update_trailing_state(
+    pair: str,
+    current_balance: dict[str, Any],
+    last_prices: dict[str, float],
+    current_atr: float,
+    trailing_state: dict[str, Any],
+) -> None:
     current_price = last_prices[pair]
     pos = trailing_state[pair]
     side = pos["side"]

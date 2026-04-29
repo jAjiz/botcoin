@@ -1,7 +1,6 @@
+import threading
 from datetime import datetime
 from typing import Any
-
-import threading
 
 _lock = threading.Lock()
 _shared_data = {
