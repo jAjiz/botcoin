@@ -1,0 +1,48 @@
+[project]
+name = "botc"
+version = "0.1.0"
+description = "BoTCoin - Autonomous Digital Asset Manager"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["venv", "logs", "__pycache__"]
+
+[tool.ruff.lint]
+# E/W/F = pycodestyle + pyflakes; I = import sorting; UP = pyupgrade;
+# B = bugbear; SIM = simplify; RUF = ruff-specific.
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "E501",  # line length is enforced by `ruff format`, not the linter.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Analysis scripts use sys.argv parsing and verbose prints; relax the rules
+# instead of forcing them into a different shape.
+"trading/backtest.py" = ["B", "SIM"]
+"trading/optimize_params.py" = ["B", "SIM"]
+"core/utils.py" = ["B"]  # the print_* helpers intentionally use bare prints.
+"tests/**" = ["B", "SIM"]  # fixtures and parametrize expressions trip rules.
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --cov --cov-report=term-missing --cov-fail-under=80"
+markers = [
+    "unit: Unit tests with no network/external APIs.",
+    "integration: Integration tests that may call external services.",
+    "asyncio: Marks tests as async (pytest-asyncio).",
+]
+
+[tool.coverage.run]
+source = ["api", "core", "exchange", "services", "trading"]
+omit = [
+    "trading/backtest.py",
+    "trading/optimize_params.py",
+    "core/scheduler.py",
+]
