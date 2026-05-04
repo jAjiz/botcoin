@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, Body
 
 import core.database as db

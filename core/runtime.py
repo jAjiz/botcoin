@@ -20,7 +20,12 @@ def get_last_balance() -> dict[str, Any]:
         return dict(_shared_data["last_balance"])
 
 
-def update_pair_data(pair: str, price: float | None = None, atr: float | None = None, volatility_level: str | None = None) -> None:
+def update_pair_data(
+    pair: str,
+    price: float | None = None,
+    atr: float | None = None,
+    volatility_level: str | None = None,
+) -> None:
     with _lock:
         if pair not in _shared_data["pairs_data"]:
             _shared_data["pairs_data"][pair] = {}

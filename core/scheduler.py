@@ -1,6 +1,6 @@
 import time
 from collections.abc import Callable
-from typing import Any, TypeVar
+from typing import Any
 
 import core.database as db
 import core.logging as logging
@@ -18,8 +18,6 @@ from trading.positions_manager import (
     update_stop_price,
 )
 
-T = TypeVar("T")
-
 _session_count: int = 0
 READ_ONLY_RETRY_ATTEMPTS: int = 3
 
@@ -27,7 +25,7 @@ READ_ONLY_RETRY_ATTEMPTS: int = 3
 #       check_open_position, and _update_trailing_state.
 
 
-def call_with_retry(func: Callable[..., T], *args: Any) -> T | None:
+def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
     for attempt in range(READ_ONLY_RETRY_ATTEMPTS):
         try:
             result = func(*args)

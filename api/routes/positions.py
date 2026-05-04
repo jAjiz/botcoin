@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, HTTPException
 
 import core.database as db
