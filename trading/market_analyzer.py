@@ -1,5 +1,6 @@
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -102,7 +103,7 @@ def calculate_noise_between_pivots(
     df: pd.DataFrame,
     pivot_pair: tuple[tuple[int, str, float, pd.Timestamp], tuple[int, str, float, pd.Timestamp]],
     atr_percentiles: dict[str, float],
-) -> dict:
+) -> dict[str, Any]:
     start_idx, start_type, start_price, start_dtime = pivot_pair[0]
     end_idx, end_type, end_price, end_dtime = pivot_pair[1]
 

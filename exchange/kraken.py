@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from typing import Any
 
 import krakenex
 import pandas as pd
@@ -14,7 +15,7 @@ _rate_limit_lock = threading.Lock()
 _last_public_call_ts = 0.0
 
 
-def _wait_rate_limit():
+def _wait_rate_limit() -> None:
     global _last_public_call_ts
 
     _rate_limit_lock.acquire()
@@ -28,7 +29,7 @@ def _wait_rate_limit():
         _rate_limit_lock.release()
 
 
-def _query_public_limited(method, data=None):
+def _query_public_limited(method: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     _wait_rate_limit()
     if data is None:
         return api.query_public(method)
@@ -40,7 +41,7 @@ api.key = KRAKEN_API_KEY
 api.secret = KRAKEN_API_SECRET
 
 
-def get_asset_pairs():
+def get_asset_pairs() -> dict[str, Any] | None:
     try:
         response = _query_public_limited("AssetPairs")
         if response.get("error"):
@@ -51,7 +52,7 @@ def get_asset_pairs():
         return None
 
 
-def build_pairs_map(pairs_dict):
+def build_pairs_map(pairs_dict: dict[str, dict[str, Any]]) -> None:
     pairs_info = get_asset_pairs()
     if pairs_info is None:
         return
@@ -70,7 +71,7 @@ def build_pairs_map(pairs_dict):
             del pairs_dict[pair]
 
 
-def get_balance():
+def get_balance() -> dict[str, str] | None:
     try:
         response = api.query_private("Balance")
         if response.get("error"):
@@ -81,7 +82,7 @@ def get_balance():
         return None
 
 
-def get_order_status(order_id):
+def get_order_status(order_id: str) -> str | None:
     try:
         response = api.query_private("QueryOrders", {"txid": order_id})
         if response.get("error"):
@@ -93,7 +94,7 @@ def get_order_status(order_id):
         return None
 
 
-def get_last_prices(pairs_dict):
+def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] | None:
     try:
         response = _query_public_limited("Ticker", {"pair": ",".join(pairs_dict.keys())})
         if response.get("error"):
@@ -107,7 +108,7 @@ def get_last_prices(pairs_dict):
         return None
 
 
-def place_limit_order(pair, side, price, volume):
+def place_limit_order(pair: str, side: str, price: float, volume: float) -> str | None:
     try:
         response = api.query_private(
             "AddOrder",
@@ -129,7 +130,7 @@ def place_limit_order(pair, side, price, volume):
         return None
 
 
-def fetch_ohlc_data(pair, interval, since=None):
+def fetch_ohlc_data(pair: str, interval: int, since: int | None = None) -> pd.DataFrame | None:
     data = {"pair": pair, "interval": interval}
     if since is not None:
         data["since"] = since

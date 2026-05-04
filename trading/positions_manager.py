@@ -1,3 +1,5 @@
+from typing import Any
+
 import core.logging as logging
 from core.config import MIN_VALUE, TRADING_PARAMS
 from core.utils import now_utc
@@ -6,7 +8,13 @@ from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
 
 
-def create_position(pair, balance, last_prices, atr_val, trailing_state):
+def create_position(
+    pair: str,
+    balance: dict[str, Any],
+    last_prices: dict[str, float],
+    atr_val: float,
+    trailing_state: dict[str, Any],
+) -> None:
     current_price = last_prices[pair]
     side, value = calculate_position(pair, balance, last_prices, trailing_state)
     if value < MIN_VALUE:
@@ -32,7 +40,7 @@ def create_position(pair, balance, last_prices, atr_val, trailing_state):
     logging.info(f"[{pair}] 🆕 New {side.upper()} position: activation at {activation_price:,.1f}€", to_telegram=True)
 
 
-def calculate_activation_price(pair, side, entry_price, atr_val):
+def calculate_activation_price(pair: str, side: str, entry_price: float, atr_val: float) -> float:
     k_act = TRADING_PARAMS[pair][side]["K_ACT"]
 
     if k_act is not None:
@@ -48,7 +56,7 @@ def calculate_activation_price(pair, side, entry_price, atr_val):
     return activation_price
 
 
-def update_activation_price(pair, pos, atr_val):
+def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float) -> None:
     side = pos["side"]
     entry_price = pos["entry_price"]
     activation_price = calculate_activation_price(pair, side, entry_price, atr_val)
@@ -56,7 +64,7 @@ def update_activation_price(pair, pos, atr_val):
     pos.update({"activation_price": round(activation_price, 1), "activation_atr": round(atr_val, 1)})
 
 
-def calculate_stop_price(pair, side, trailing_price, atr_val):
+def calculate_stop_price(pair: str, side: str, trailing_price: float, atr_val: float) -> float:
     k_stop = get_k_stop(pair, side, atr_val)
     stop_distance = k_stop * atr_val
 
@@ -64,21 +72,26 @@ def calculate_stop_price(pair, side, trailing_price, atr_val):
     return stop_price
 
 
-def update_stop_price(pair, pos, trailing_price, atr_val):
+def update_stop_price(pair: str, pos: dict[str, Any], trailing_price: float, atr_val: float) -> None:
     side = pos["side"]
     stop_price = calculate_stop_price(pair, side, trailing_price, atr_val)
 
     pos.update({"trailing_price": trailing_price, "stop_price": round(stop_price, 1), "stop_atr": round(atr_val, 1)})
 
 
-def refresh_position(pair, pos, balance, last_prices, trailing_state) -> bool:
+def refresh_position(
+    pair: str,
+    pos: dict[str, Any],
+    balance: dict[str, Any],
+    last_prices: dict[str, float],
+    trailing_state: dict[str, Any],
+) -> bool:
     side = pos["side"]
     current_price = last_prices[pair]
 
     def _drop_position(reason: str):
         logging.warning(f"Dropping {side.upper()} position: {reason}", to_telegram=True)
-        if pair in trailing_state:
-            del trailing_state[pair]
+        trailing_state.pop(pair, None)
 
     _, value = calculate_position(pair, balance, last_prices, trailing_state, force_side=side)
     if value < MIN_VALUE:
@@ -94,7 +107,7 @@ def refresh_position(pair, pos, balance, last_prices, trailing_state) -> bool:
     return True
 
 
-def close_position(pair, pos, last_prices):
+def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> None:
     try:
         side = pos["side"]
         entry_price = pos["entry_price"]

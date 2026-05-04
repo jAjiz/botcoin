@@ -1,5 +1,6 @@
 import logging
 import math
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -10,7 +11,7 @@ from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.market_analyzer import analyze_structural_noise
 
 
-def calculate_k_stops(pair, events):
+def calculate_k_stops(pair: str, events: list[dict[str, Any]]) -> dict[str, float | None]:
     if not events:
         return {lvl: None for lvl in LEVELS}
 
@@ -34,7 +35,7 @@ def calculate_k_stops(pair, events):
     return {lvl: get_pct_k_value(lvl, STOP_PERCENTILES[pair][lvl]) for lvl in LEVELS}
 
 
-def calculate_trading_parameters(pair, infoLog=True):
+def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
     if infoLog:
         logging.info(f"Calculating trading parameters for {pair}...")
 
@@ -66,13 +67,14 @@ def calculate_trading_parameters(pair, infoLog=True):
     if infoLog:
         def fmt(k):
             return f"{k:.2f}" if k is not None else "N/A"
+
         sell_msg = " | ".join(f"{lvl}:{fmt(sell_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_SELL → {sell_msg}")
         buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_BUY  → {buy_msg}")
 
 
-def get_volatility_level(pair, atr_val):
+def get_volatility_level(pair: str, atr_val: float) -> str:
     if atr_val < PAIRS[pair]["atr_20pct"]:
         return "LL"
     elif atr_val < PAIRS[pair]["atr_50pct"]:
@@ -85,7 +87,7 @@ def get_volatility_level(pair, atr_val):
     return "HH"
 
 
-def get_k_stop(pair, side, atr_val):
+def get_k_stop(pair: str, side: str, atr_val: float) -> float | None:
     vol = get_volatility_level(pair, atr_val)
 
     k_stop = TRADING_PARAMS[pair][side]["K_STOP"].get(vol)

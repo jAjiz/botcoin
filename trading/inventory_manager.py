@@ -1,11 +1,13 @@
+from typing import Any
+
 from core.config import ASSET_ALLOCATION, FIAT_CODE, PAIRS
 
 
-def get_fiat_balance(balance: dict) -> float:
+def get_fiat_balance(balance: dict[str, Any]) -> float:
     return float(balance.get(FIAT_CODE, 0.0))
 
 
-def get_portfolio_value(balance: dict, last_prices: dict) -> float:
+def get_portfolio_value(balance: dict[str, Any], last_prices: dict[str, float]) -> float:
     total_value = 0.0
 
     # Convert crypto assets with last prices
@@ -27,7 +29,7 @@ def get_portfolio_value(balance: dict, last_prices: dict) -> float:
     return total_value
 
 
-def get_available_fiat(balance: dict, last_prices: dict, trailing_state: dict) -> float:
+def get_available_fiat(balance: dict[str, Any], last_prices: dict[str, float], trailing_state: dict[str, Any]) -> float:
     fiat_balance = get_fiat_balance(balance)
 
     reserved_fiat = 0.0
@@ -46,7 +48,7 @@ def get_available_fiat(balance: dict, last_prices: dict, trailing_state: dict) -
     return available_fiat if available_fiat > 0 else 0.0
 
 
-def get_base_value(pair: str, balance: dict, current_price: float) -> float:
+def get_base_value(pair: str, balance: dict[str, Any], current_price: float) -> float:
     asset = PAIRS[pair]["base"]
     amount = float(balance.get(asset, 0.0))
     if current_price is not None:
@@ -67,7 +69,9 @@ def get_hodl_value(pair: str, target_value: float) -> float:
     return hodl_value
 
 
-def calculate_pair_values(pair: str, balance: dict, last_prices: dict) -> tuple[float, float, float]:
+def calculate_pair_values(
+    pair: str, balance: dict[str, Any], last_prices: dict[str, float]
+) -> tuple[float, float, float]:
     portfolio_value = get_portfolio_value(balance, last_prices)
     target_value = get_target_value(pair, portfolio_value)
     current_price = last_prices[pair]
@@ -77,7 +81,13 @@ def calculate_pair_values(pair: str, balance: dict, last_prices: dict) -> tuple[
     return target_value, current_value, hodl_value
 
 
-def calculate_position(pair: str, balance: dict, last_prices: dict, trailing_state: dict, force_side=None):
+def calculate_position(
+    pair: str,
+    balance: dict[str, Any],
+    last_prices: dict[str, float],
+    trailing_state: dict[str, Any],
+    force_side: str | None = None,
+) -> tuple[str, float]:
     target_value, current_value, hodl_value = calculate_pair_values(pair, balance, last_prices)
 
     # Exclude self from trailing state to avoid double counting reserved fiat

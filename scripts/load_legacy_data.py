@@ -23,6 +23,7 @@ import os
 import re
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 import pandas as pd
 
@@ -96,7 +97,7 @@ def load_trailing_state(path: str, dry_run: bool = False) -> int:
         return 0
     logger.info("Loading trailing state JSON: %s", path)
     with open(path, encoding="utf-8") as fh:
-        data: dict[str, dict] = json.load(fh)
+        data: dict[str, dict[str, Any]] = json.load(fh)
 
     count = 0
     for pair, state in data.items():
