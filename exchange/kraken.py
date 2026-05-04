@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
 import krakenex
@@ -13,6 +14,10 @@ from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 KRAKEN_MIN_CALL_INTERVAL_SECONDS = 1.0
 _rate_limit_lock = threading.Lock()
 _last_public_call_ts = 0.0
+
+
+class KrakenAPIError(Exception):
+    """Raised when the Kraken API returns a non-empty error field."""
 
 
 def _wait_rate_limit() -> None:
@@ -36,20 +41,24 @@ def _query_public_limited(method: str, data: dict[str, Any] | None = None) -> di
     return api.query_public(method, data)
 
 
+def _safe_call(label: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any] | None:
+    try:
+        response = fn()
+        if response.get("error"):
+            raise KrakenAPIError(response["error"])
+        return response.get("result", {})
+    except Exception as e:
+        logging.error(f"Error fetching {label}: {e}")
+        return None
+
+
 api = krakenex.API()
 api.key = KRAKEN_API_KEY
 api.secret = KRAKEN_API_SECRET
 
 
 def get_asset_pairs() -> dict[str, Any] | None:
-    try:
-        response = _query_public_limited("AssetPairs")
-        if response.get("error"):
-            raise Exception(response["error"])
-        return response.get("result", {})
-    except Exception as e:
-        logging.error(f"Error fetching asset pairs: {e}")
-        return None
+    return _safe_call("asset pairs", lambda: _query_public_limited("AssetPairs"))
 
 
 def build_pairs_map(pairs_dict: dict[str, dict[str, Any]]) -> None:
@@ -72,45 +81,33 @@ def build_pairs_map(pairs_dict: dict[str, dict[str, Any]]) -> None:
 
 
 def get_balance() -> dict[str, str] | None:
-    try:
-        response = api.query_private("Balance")
-        if response.get("error"):
-            raise Exception(response["error"])
-        return response.get("result", {})
-    except Exception as e:
-        logging.error(f"Error fetching balance: {e}")
-        return None
+    return _safe_call("balance", lambda: api.query_private("Balance"))
 
 
 def get_order_status(order_id: str) -> str | None:
-    try:
-        response = api.query_private("QueryOrders", {"txid": order_id})
-        if response.get("error"):
-            raise Exception(response["error"])
-        result = response.get("result", {})
-        return result.get(order_id, {}).get("status")
-    except Exception as e:
-        logging.error(f"Error fetching order status for {order_id}: {e}")
+    result = _safe_call("order status", lambda: api.query_private("QueryOrders", {"txid": order_id}))
+    if result is None:
         return None
+    return result.get(order_id, {}).get("status")
 
 
 def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] | None:
-    try:
-        response = _query_public_limited("Ticker", {"pair": ",".join(pairs_dict.keys())})
-        if response.get("error"):
-            raise Exception(response["error"])
-        prices = {}
-        for pair, info in pairs_dict.items():
-            prices[pair] = round(float(response["result"][info["primary"]]["c"][0]), 1)  # 'c' = last trade price
-        return prices
-    except Exception as e:
-        logging.error(f"Error fetching current prices: {e}")
+    result = _safe_call(
+        "current prices",
+        lambda: _query_public_limited("Ticker", {"pair": ",".join(pairs_dict.keys())}),
+    )
+    if result is None:
         return None
+    prices = {}
+    for pair, info in pairs_dict.items():
+        prices[pair] = round(float(result[info["primary"]]["c"][0]), 1)
+    return prices
 
 
 def place_limit_order(pair: str, side: str, price: float, volume: float) -> str | None:
-    try:
-        response = api.query_private(
+    result = _safe_call(
+        f"{side.upper()} limit order",
+        lambda: api.query_private(
             "AddOrder",
             {
                 "pair": pair,
@@ -119,44 +116,38 @@ def place_limit_order(pair: str, side: str, price: float, volume: float) -> str 
                 "price": str(round(price, 1)),
                 "volume": str(volume),
             },
-        )
-        if response.get("error"):
-            raise Exception(response["error"])
-        new_order = response.get("result", {}).get("txid", [None])[0]
-        logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
-        return new_order
-    except Exception as e:
-        logging.error(f"Error creating {side.upper()} order: {e}")
+        ),
+    )
+    if result is None:
         return None
+    new_order = result.get("txid", [None])[0]
+    logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
+    return new_order
 
 
 def fetch_ohlc_data(pair: str, interval: int, since: int | None = None) -> pd.DataFrame | None:
-    data = {"pair": pair, "interval": interval}
+    data: dict[str, Any] = {"pair": pair, "interval": interval}
     if since is not None:
         data["since"] = since
-    try:
-        response = _query_public_limited("OHLC", data)
-        if response.get("error"):
-            raise Exception(response["error"])
-        result_pair = next(iter(response["result"].keys()))
-        ohlc = pd.DataFrame(response["result"][result_pair])
-        if ohlc.empty:
-            return ohlc
-        ohlc.columns = [
-            "time",
-            "open",
-            "high",
-            "low",
-            "close",
-            "vwap",
-            "volume",
-            "count",
-        ]
-        ohlc["dtime"] = pd.to_datetime(pd.to_numeric(ohlc["time"]), unit="s")
-        for col in ["open", "high", "low", "close", "vwap", "volume"]:
-            ohlc[col] = ohlc[col].astype(float)
-        ohlc.sort_values("time", ascending=False, inplace=True)
-        return ohlc
-    except Exception as e:
-        logging.error(f"Error fetching OHLC data for {pair}: {e}")
+    result = _safe_call(f"OHLC data for {pair}", lambda: _query_public_limited("OHLC", data))
+    if result is None:
         return None
+    result_pair = next(iter(result.keys()))
+    ohlc = pd.DataFrame(result[result_pair])
+    if ohlc.empty:
+        return ohlc
+    ohlc.columns = [
+        "time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "vwap",
+        "volume",
+        "count",
+    ]
+    ohlc["dtime"] = pd.to_datetime(pd.to_numeric(ohlc["time"]), unit="s")
+    for col in ["open", "high", "low", "close", "vwap", "volume"]:
+        ohlc[col] = ohlc[col].astype(float)
+    ohlc.sort_values("time", ascending=False, inplace=True)
+    return ohlc
