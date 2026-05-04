@@ -27,10 +27,10 @@ from typing import Any
 
 import pandas as pd
 
-import core.logging as project_logging
+import logging as stdlib_logging
 from core.database import check_database_connection, save_ohlc_data, save_trailing_state
 
-logger = project_logging.logging.getLogger("load_legacy_data")
+logger = stdlib_logging.getLogger("load_legacy_data")
 
 CSV_PATTERN = re.compile(r"(?P<pair>.+)_ohlc_data_(?P<timeframe>\d+)min\.csv$")
 CSV_COLUMNS = ["time", "open", "high", "low", "close", "vwap", "volume", "count", "atr"]

@@ -24,8 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
-
-import core.logging as logging
+import logging as stdlib_logging
 from core.config import (
     POSTGRES_DB,
     POSTGRES_HOST,
@@ -34,7 +33,7 @@ from core.config import (
     POSTGRES_USER,
 )
 
-logger = logging.logging.getLogger(__name__)
+logger = stdlib_logging.getLogger(__name__)
 
 # ============================================================================
 # Database Setup
