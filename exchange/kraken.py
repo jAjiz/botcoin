@@ -48,7 +48,7 @@ def _safe_call(label: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any] |
             raise KrakenAPIError(response["error"])
         return response.get("result", {})
     except Exception as e:
-        logging.error(f"Error fetching {label}: {e}")
+        logging.error(f"Error in {label}: {e}")
         return None
 
 

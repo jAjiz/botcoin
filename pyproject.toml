@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = ["venv", "logs", "__pycache__"]
+extend-exclude = ["venv", "logs", "scripts/migrations/versions", "__pycache__"]
 
 [tool.ruff.lint]
 # E/W/F = pycodestyle + pyflakes; I = import sorting; UP = pyupgrade;
