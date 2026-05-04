@@ -32,9 +32,7 @@ def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
             if result is not None:
                 return result
         except Exception as e:
-            logging.warning(
-                f"Attempt {attempt + 1}/{READ_ONLY_RETRY_ATTEMPTS} failed for {func.__name__}: {e}"
-            )
+            logging.warning(f"Attempt {attempt + 1}/{READ_ONLY_RETRY_ATTEMPTS} failed for {func.__name__}: {e}")
         if attempt < READ_ONLY_RETRY_ATTEMPTS - 1:
             time.sleep(1)
     return None

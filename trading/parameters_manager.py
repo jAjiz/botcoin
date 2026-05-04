@@ -65,6 +65,7 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
     TRADING_PARAMS[pair]["buy"]["K_STOP"] = buy_k_stops
 
     if infoLog:
+
         def fmt(k):
             return f"{k:.2f}" if k is not None else "N/A"
 

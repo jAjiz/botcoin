@@ -352,9 +352,7 @@ def check_database_connection() -> bool:
 # ============================================================================
 
 
-def load_ohlc_data(
-    pair: str, timeframe: int, since_time: int | None = None, limit: int | None = None
-) -> pd.DataFrame:
+def load_ohlc_data(pair: str, timeframe: int, since_time: int | None = None, limit: int | None = None) -> pd.DataFrame:
     """Load OHLC data from the database.
 
     Args:
