@@ -1,6 +1,7 @@
+import pytest
+
 import trading.market_analyzer as market_analyzer
 import trading.parameters_manager as parameters_manager
-import pytest
 
 
 def test_calculate_k_stops_uses_percentiles_and_rounds_up(monkeypatch) -> None:
@@ -76,7 +77,9 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     monkeypatch.setattr(parameters_manager.db, "load_ohlc_data", lambda _pair, _tf: sample_dataframe.copy())
     real_analyze = market_analyzer.analyze_structural_noise
     monkeypatch.setattr(
-        parameters_manager, "analyze_structural_noise", lambda df: real_analyze(df, order=1),
+        parameters_manager,
+        "analyze_structural_noise",
+        lambda df: real_analyze(df, order=1),
     )
     monkeypatch.setattr(parameters_manager, "LEVELS", ("LL", "LV", "MV", "HV", "HH"))
     monkeypatch.setattr(
@@ -107,7 +110,7 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     assert parameters_manager.PAIRS[pair]["atr_80pct"] == pytest.approx(3.5)
     assert parameters_manager.PAIRS[pair]["atr_95pct"] == pytest.approx(4.5)
 
-    # K_STOP sell side (from real uptrend events, 2 events × 5 vol levels)
+    # K_STOP sell side (from real uptrend events, 2 events X 5 vol levels)
     sell = parameters_manager.TRADING_PARAMS[pair]["sell"]["K_STOP"]
     assert sell["LL"] == 10.0
     assert sell["LV"] == 3.4
@@ -115,7 +118,7 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     assert sell["HV"] == 1.5
     assert sell["HH"] == 1.2
 
-    # K_STOP buy side (from real downtrend events, 2 events × 5 vol levels)
+    # K_STOP buy side (from real downtrend events, 2 events X 5 vol levels)
     buy = parameters_manager.TRADING_PARAMS[pair]["buy"]["K_STOP"]
     assert buy["LL"] == 11.0
     assert buy["LV"] == 3.4

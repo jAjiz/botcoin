@@ -1,6 +1,5 @@
 import exchange.kraken as kraken
 
-
 # ============================================================================
 # Balance
 # ============================================================================
@@ -8,7 +7,8 @@ import exchange.kraken as kraken
 
 def test_get_balance_returns_result_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken.api, "query_private",
+        kraken.api,
+        "query_private",
         lambda *args, **kwargs: {"error": [], "result": {"ZEUR": "1000.0", "XXBT": "0.5"}},
     )
 
@@ -19,7 +19,8 @@ def test_get_balance_returns_result_on_success(monkeypatch) -> None:
 
 def test_get_balance_returns_none_on_api_error(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken.api, "query_private",
+        kraken.api,
+        "query_private",
         lambda *args, **kwargs: {"error": ["EGeneral:Invalid"], "result": {}},
     )
 
@@ -46,7 +47,8 @@ def test_get_balance_returns_none_on_exception(monkeypatch) -> None:
 
 def test_get_order_status_returns_status_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken.api, "query_private",
+        kraken.api,
+        "query_private",
         lambda *args, **kwargs: {"error": [], "result": {"ORDER123": {"status": "closed"}}},
     )
 
@@ -57,7 +59,8 @@ def test_get_order_status_returns_status_on_success(monkeypatch) -> None:
 
 def test_get_order_status_returns_none_on_api_error(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken.api, "query_private",
+        kraken.api,
+        "query_private",
         lambda *args, **kwargs: {"error": ["EOrder:Unknown order"], "result": {}},
     )
 
@@ -73,7 +76,8 @@ def test_get_order_status_returns_none_on_api_error(monkeypatch) -> None:
 
 def test_get_last_prices_returns_prices_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken, "_query_public_limited",
+        kraken,
+        "_query_public_limited",
         lambda *args, **kwargs: {
             "error": [],
             "result": {"XXBTZEUR": {"c": ["82500.0"]}},
@@ -88,7 +92,8 @@ def test_get_last_prices_returns_prices_on_success(monkeypatch) -> None:
 
 def test_get_last_prices_returns_none_on_api_error(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken, "_query_public_limited",
+        kraken,
+        "_query_public_limited",
         lambda *args, **kwargs: {"error": ["EQuery:Unknown asset pair"]},
     )
 
@@ -104,7 +109,8 @@ def test_get_last_prices_returns_none_on_api_error(monkeypatch) -> None:
 
 def test_place_limit_order_returns_order_id_on_success(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken.api, "query_private",
+        kraken.api,
+        "query_private",
         lambda *args, **kwargs: {"error": [], "result": {"txid": ["ORDER456"]}},
     )
 
@@ -115,7 +121,8 @@ def test_place_limit_order_returns_order_id_on_success(monkeypatch) -> None:
 
 def test_place_limit_order_returns_none_on_api_error(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken.api, "query_private",
+        kraken.api,
+        "query_private",
         lambda *args, **kwargs: {"error": ["EOrder:Insufficient funds"], "result": {}},
     )
 
@@ -134,7 +141,8 @@ _OHLC_ROW = ["1713052800", "80000.0", "81000.0", "79500.0", "80500.0", "80200.0"
 
 def test_fetch_ohlc_data_returns_dataframe_on_valid_result(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken, "_query_public_limited",
+        kraken,
+        "_query_public_limited",
         lambda *args, **kwargs: {
             "error": [],
             "result": {"XXBTZEUR": [_OHLC_ROW, _OHLC_ROW]},
@@ -165,7 +173,8 @@ def test_fetch_ohlc_data_passes_since_param(monkeypatch) -> None:
 
 def test_fetch_ohlc_data_returns_none_on_api_error(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken, "_query_public_limited",
+        kraken,
+        "_query_public_limited",
         lambda *args, **kwargs: {"error": ["EGeneral:Invalid"]},
     )
 
@@ -176,7 +185,8 @@ def test_fetch_ohlc_data_returns_none_on_api_error(monkeypatch) -> None:
 
 def test_fetch_ohlc_data_returns_empty_dataframe_on_empty_result(monkeypatch) -> None:
     monkeypatch.setattr(
-        kraken, "_query_public_limited",
+        kraken,
+        "_query_public_limited",
         lambda *args, **kwargs: {"error": [], "result": {"XXBTZEUR": []}},
     )
 

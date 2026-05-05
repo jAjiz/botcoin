@@ -1,12 +1,15 @@
 import time
+from collections.abc import Callable
+from typing import Any
+
+import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-import core.database as db
-from exchange.kraken import get_balance, get_last_prices, get_order_status
-from core.config import SLEEPING_INTERVAL, PAIRS, PARAM_SESSIONS, ATR_DESV_LIMIT
+from core.config import ATR_DESV_LIMIT, PAIRS, PARAM_SESSIONS, SLEEPING_INTERVAL
 from core.utils import now_utc
-from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
+from exchange.kraken import get_balance, get_last_prices, get_order_status
 from trading.market_analyzer import get_current_atr
+from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
 from trading.positions_manager import (
     close_position,
     create_position,
@@ -15,14 +18,14 @@ from trading.positions_manager import (
     update_stop_price,
 )
 
-_session_count = 0
-READ_ONLY_RETRY_ATTEMPTS = 3
+_session_count: int = 0
+READ_ONLY_RETRY_ATTEMPTS: int = 3
 
 # TODO: add unit tests for trading_session, check_closed_position,
 #       check_open_position, and _update_trailing_state.
 
 
-def call_with_retry(func, *args):
+def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
     for attempt in range(READ_ONLY_RETRY_ATTEMPTS):
         try:
             result = func(*args)
@@ -35,7 +38,7 @@ def call_with_retry(func, *args):
     return None
 
 
-def trading_session():
+def trading_session() -> None:
     global _session_count
 
     if db.get_bot_paused():
@@ -56,14 +59,14 @@ def trading_session():
         logging.error("Could not fetch prices. Skipping session.\n")
         return
 
-    for pair in PAIRS.keys():
+    for pair in PAIRS:
         logging.info(f"--- Processing pair: [{pair}] ---")
         trailing_state[pair] = db.load_trailing_state(pair)
         current_price = last_prices.get(pair, None)
         current_atr = call_with_retry(get_current_atr, pair)
 
         if current_price is None or current_atr is None:
-            logging.error(f"Could not fetch price or ATR. Skipping this pair.")
+            logging.error("Could not fetch price or ATR. Skipping this pair.")
             continue
 
         if _session_count % PARAM_SESSIONS == 0:
@@ -87,7 +90,7 @@ def trading_session():
     logging.info(f"Session complete. Next run in {SLEEPING_INTERVAL}s.\n")
 
 
-def check_closed_position(pair, trailing_state):
+def check_closed_position(pair: str, trailing_state: dict[str, Any]) -> bool:
     if pair not in trailing_state or not trailing_state[pair]:
         return True
 
@@ -104,18 +107,21 @@ def check_closed_position(pair, trailing_state):
     return False
 
 
-def check_open_position(pair, trailing_state):
+def check_open_position(pair: str, trailing_state: dict[str, Any]) -> bool:
     if pair not in trailing_state or not trailing_state[pair]:
         return False
 
     closing_order = trailing_state[pair].get("closing_order_id")
-    if closing_order:
-        return False
-
-    return True
+    return not closing_order
 
 
-def _update_trailing_state(pair, current_balance, last_prices, current_atr, trailing_state):
+def _update_trailing_state(
+    pair: str,
+    current_balance: dict[str, Any],
+    last_prices: dict[str, float],
+    current_atr: float,
+    trailing_state: dict[str, Any],
+) -> None:
     current_price = last_prices[pair]
     pos = trailing_state[pair]
     side = pos["side"]
@@ -131,25 +137,34 @@ def _update_trailing_state(pair, current_balance, last_prices, current_atr, trai
             update_activation_price(pair, pos, current_atr)
             logging.info(f"♻️ Recalibrate {side.upper()} position: activation price to {pos['activation_price']:,}€.")
 
-        if (side == "sell" and current_price >= pos["activation_price"]) or \
-                (side == "buy" and current_price <= pos["activation_price"]):
+        if (side == "sell" and current_price >= pos["activation_price"]) or (
+            side == "buy" and current_price <= pos["activation_price"]
+        ):
             pos["activated_at"] = now_utc()
-            logging.info(f"[{pair}] ⚡ Activation price {pos['activation_price']:,}€ reached for {side.upper()} position.",
-                         to_telegram=True)
+            logging.info(
+                f"[{pair}] ⚡ Activation price {pos['activation_price']:,}€ reached for {side.upper()} position.",
+                to_telegram=True,
+            )
             update_stop_price(pair, pos, current_price, current_atr)
-            logging.info(f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
+            logging.info(
+                f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€"
+            )
 
     else:
         if pos["stop_atr"] < atr_limit_min or pos["stop_atr"] > atr_limit_max:
             update_stop_price(pair, pos, pos["trailing_price"], current_atr)
             logging.info(f"♻️ Recalibrate {side.upper()} position: stop price to {pos['stop_price']:,}€.")
 
-        if (side == "sell" and current_price <= pos["stop_price"]) or \
-                (side == "buy" and current_price >= pos["stop_price"]):
+        if (side == "sell" and current_price <= pos["stop_price"]) or (
+            side == "buy" and current_price >= pos["stop_price"]
+        ):
             close_position(pair, pos, last_prices)
             return
 
-        if (side == "sell" and current_price > pos["trailing_price"]) or \
-                (side == "buy" and current_price < pos["trailing_price"]):
+        if (side == "sell" and current_price > pos["trailing_price"]) or (
+            side == "buy" and current_price < pos["trailing_price"]
+        ):
             update_stop_price(pair, pos, current_price, current_atr)
-            logging.info(f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€")
+            logging.info(
+                f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€"
+            )

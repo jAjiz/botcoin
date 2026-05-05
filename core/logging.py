@@ -38,19 +38,19 @@ def _notify(level: str, msg: str) -> None:
         logging.warning(f"Telegram notify failed: {e}")
 
 
-def info(msg, to_telegram=False):
+def info(msg: str, to_telegram: bool = False) -> None:
     logging.info(msg)
     if to_telegram:
         _notify("info", msg)
 
 
-def warning(msg, to_telegram=False):
+def warning(msg: str, to_telegram: bool = False) -> None:
     logging.warning(msg)
     if to_telegram:
         _notify("warning", msg)
 
 
-def error(msg, to_telegram=False):
+def error(msg: str, to_telegram: bool = False) -> None:
     logging.error(msg)
     if to_telegram:
         _notify("error", msg)

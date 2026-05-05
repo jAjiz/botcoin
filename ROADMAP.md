@@ -238,21 +238,21 @@ Detailed execution plan: [`plan/phase-5-fastapi.md`](plan/phase-5-fastapi.md).
 
 ### Phase 6 – Code Quality: Linting & Type Safety
 
-**Goal:** Enforce consistent formatting and type safety across the entire codebase.
+**Goal:** Enforce consistent formatting, complete type coverage, and predictable error handling across the codebase. Phases 4 and 5 introduced type-annotated modules; this phase extends that standard to the pre-Phase-4 modules and locks it in with `ruff`.
 
 **Scope:**
 
-- [ ] Add `ruff` to `requirements-dev.txt`
-- [ ] Add a `pyproject.toml` configuring `ruff` (line length, enabled rule sets) and `pytest` (test paths, markers, coverage settings)
-- [ ] Add type annotations to all public functions across:
-  - `core/` modules
-  - `exchange/kraken.py`
-  - `trading/` modules
-  - `services/telegram.py`
-- [ ] Refactor repeated patterns into shared utilities (e.g., database client factory)
-- [ ] Review and align exception handling: recoverable errors (log and retry/backoff in-session) vs. fatal errors (log and exit)
+- [ ] Pin `ruff` in `requirements-dev.txt`
+- [ ] Add a `pyproject.toml` as the single source of truth for `ruff`, `pytest`, and coverage config (replaces `pytest.ini` and `.coveragerc`)
+- [ ] Annotate the remaining public functions in `core/`, `exchange/kraken.py`, `trading/`, `services/telegram/`, and `scripts/load_legacy_data.py`
+- [ ] Normalize the `core.logging` vs stdlib `logging` import convention; remove the `logger = logging.logging.getLogger(...)` indirection
+- [ ] Collapse repeated boilerplate (`exchange/kraken.py` `try/except/log/return None` shape, `Decimal(str(...))` conversions in `core/database.py`)
+- [ ] Audit `except Exception` blocks — classify each as recoverable (swallow + log + return sentinel) or fatal (propagate) and align the body to the role
+- [ ] Resolve or issue-track the inline `TODO` markers in `core/scheduler.py` and `core/database.py`
 
-**Success criteria:** `ruff check .` and `ruff format --check .` pass cleanly. All public function signatures carry type annotations.
+Detailed execution plan: [`plan/phase-6-code-quality.md`](plan/phase-6-code-quality.md).
+
+**Success criteria:** `ruff check .` and `ruff format --check .` pass cleanly inside Docker. Every public function in the targeted modules carries argument and return-type annotations. The full test suite still passes the 80% coverage gate.
 
 ---
 

@@ -1,19 +1,20 @@
-import sys
-import math
 import itertools
-import numpy as np
+import math
+import sys
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
-# Ensure sibling packages are importable when running as a script.
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+import numpy as np
 
-from core.config import CANDLE_TIMEFRAME, ATR_DESV_LIMIT, PAIRS, TRADING_PARAMS, VOLATILITY_LEVELS as LEVELS, STOP_PERCENTILES
-from trading.backtest import simulate_operations
 import core.database as db
+from core.config import (
+    ATR_DESV_LIMIT,
+    CANDLE_TIMEFRAME,
+    PAIRS,
+    STOP_PERCENTILES,
+    TRADING_PARAMS,
+)
+from core.config import VOLATILITY_LEVELS as LEVELS
+from trading.backtest import simulate_operations
 from trading.market_analyzer import analyze_structural_noise
 
 MODES = ("CONSERVATIVE", "AGGRESSIVE", "CURRENT")
@@ -23,6 +24,7 @@ SPLIT_METHODS = ("RESET", "CONTINUE", "BOTH")
 STOP_PCT_CHOICES = (0.20, 0.35, 0.50, 0.65, 0.75, 0.80, 0.90, 0.95)
 K_ACT_CHOICES = (0.0, 1.0, 2.0, 3.0)
 MIN_MARGIN_CHOICES = (0.000, 0.003, 0.006, 0.009)
+
 
 def _parse_args() -> dict:
     args = {
@@ -85,15 +87,15 @@ def _set_pair_atr_thresholds(pair: str, df) -> None:
     PAIRS[pair]["atr_95pct"] = float(np.percentile(atr, 95))
 
 
-def _quantile_ceiled(values: np.ndarray, pct: float) -> Optional[float]:
+def _quantile_ceiled(values: np.ndarray, pct: float) -> float | None:
     if values.size == 0:
         return None
     q = float(np.quantile(values, pct))
     return math.ceil(q * 10.0) / 10.0
 
 
-def _k_values_by_level(events: List[dict]) -> Dict[str, np.ndarray]:
-    out: Dict[str, List[float]] = {lvl: [] for lvl in LEVELS}
+def _k_values_by_level(events: list[dict]) -> dict[str, np.ndarray]:
+    out: dict[str, list[float]] = {lvl: [] for lvl in LEVELS}
     for e in events:
         vols = e.get("volatility_levels") or {}
         for lvl in LEVELS:
@@ -110,11 +112,11 @@ def _k_values_by_level(events: List[dict]) -> Dict[str, np.ndarray]:
 def _apply_candidate_mode(
     pair: str,
     mode: str,
-    k_act: Optional[float],
-    min_margin: Optional[float],
-    stop_pcts: Dict[str, float],
-    up_k: Dict[str, np.ndarray],
-    down_k: Dict[str, np.ndarray],
+    k_act: float | None,
+    min_margin: float | None,
+    stop_pcts: dict[str, float],
+    up_k: dict[str, np.ndarray],
+    down_k: dict[str, np.ndarray],
 ) -> None:
     if mode == "CURRENT":
         raise ValueError("Use _apply_current_config() for MODE=CURRENT")
@@ -142,14 +144,14 @@ def _apply_candidate_mode(
 
 @dataclass(frozen=True)
 class Candidate:
-    k_act: Optional[float]
-    min_margin: Optional[float]
-    stop_pcts: Dict[str, float]
+    k_act: float | None
+    min_margin: float | None
+    stop_pcts: dict[str, float]
 
 
-def _iter_exhaustive_candidates(mode: str) -> List[Candidate]:
+def _iter_exhaustive_candidates(mode: str) -> list[Candidate]:
     # Exhaustively enumerates the full discrete grid. This can be large.
-    candidates: List[Candidate] = []
+    candidates: list[Candidate] = []
 
     for ll, lv, mv, hv, hh in itertools.product(STOP_PCT_CHOICES, repeat=len(LEVELS)):
         stop_pcts = {"LL": ll, "LV": lv, "MV": mv, "HV": hv, "HH": hh}
@@ -166,7 +168,7 @@ def _iter_exhaustive_candidates(mode: str) -> List[Candidate]:
 
 def _candidate_from_env(pair: str) -> Candidate:
     raw_k_act = TRADING_PARAMS[pair]["buy"].get("K_ACT")
-    k_act: Optional[float]
+    k_act: float | None
     try:
         k_act = float(raw_k_act) if raw_k_act is not None and str(raw_k_act).strip() != "" else None
     except Exception:
@@ -184,9 +186,9 @@ def _candidate_from_env(pair: str) -> Candidate:
 
 def _apply_current_config(
     pair: str,
-    stop_pcts: Dict[str, float],
-    up_k: Dict[str, np.ndarray],
-    down_k: Dict[str, np.ndarray],
+    stop_pcts: dict[str, float],
+    up_k: dict[str, np.ndarray],
+    down_k: dict[str, np.ndarray],
 ) -> None:
     sell_k_stop = {lvl: _quantile_ceiled(up_k[lvl], stop_pcts[lvl]) for lvl in LEVELS}
     buy_k_stop = {lvl: _quantile_ceiled(down_k[lvl], stop_pcts[lvl]) for lvl in LEVELS}
@@ -201,12 +203,12 @@ class Score:
     pnl_samples: int
 
 
-def _score_key(score: Score) -> Tuple[float, int]:
+def _score_key(score: Score) -> tuple[float, int]:
     # Rank: net P&L, then number of P&L samples.
     return (float(score.total_pnl), int(score.pnl_samples))
 
 
-def _robust_key(train: Score, test: Score) -> Tuple[float, int]:
+def _robust_key(train: Score, test: Score) -> tuple[float, int]:
     # Robust rank: worst-case P&L across train/test.
     return (float(min(train.total_pnl, test.total_pnl)), int(min(train.pnl_samples, test.pnl_samples)))
 
@@ -216,7 +218,7 @@ def _overall_robust_key(
     reset_test: Score,
     cont_train: Score,
     cont_test: Score,
-) -> Tuple[float, int]:
+) -> tuple[float, int]:
     rr_pnl, rr_n = _robust_key(reset_train, reset_test)
     cr_pnl, cr_n = _robust_key(cont_train, cont_test)
     return (float(min(rr_pnl, cr_pnl)), int(min(rr_n, cr_n)))
@@ -231,7 +233,7 @@ def _score_run(ops) -> Score:
     return Score(total_pnl=total, ops=len(ops), pnl_samples=pnl_samples)
 
 
-def _split_scores_from_single_run(ops, boundary_time: str) -> Tuple[Score, Score]:
+def _split_scores_from_single_run(ops, boundary_time: str) -> tuple[Score, Score]:
     if not ops:
         empty = Score(total_pnl=-1e18, ops=0, pnl_samples=0)
         return empty, empty
@@ -254,7 +256,7 @@ def _split_scores_from_single_run(ops, boundary_time: str) -> Tuple[Score, Score
     return first_score, second_score
 
 
-def _format_env_lines(pair: str, cand: Candidate) -> List[str]:
+def _format_env_lines(pair: str, cand: Candidate) -> list[str]:
     lines = []
     if cand.k_act is not None:
         lines.append(f"{pair}_K_ACT={cand.k_act:.1f}")
@@ -276,7 +278,7 @@ def main() -> None:
     split_method = args["split_method"]
 
     df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME).dropna(subset=["atr"])
-    
+
     if args["start"]:
         df = df[df["dtime"] >= args["start"]]
     if args["end"]:
@@ -333,13 +335,13 @@ def main() -> None:
 
         if split_method == "RESET":
             robust = _robust_key(train_reset, test_reset)
-            print("Robust rank key (min train/test): " f"pnl={robust[0]:.2f}%")
+            print(f"Robust rank key (min train/test): pnl={robust[0]:.2f}%")
             print(f"Train: pnl={train_reset.total_pnl:.2f}% | ops={train_reset.ops}")
             print(f"Test : pnl={test_reset.total_pnl:.2f}% | ops={test_reset.ops}")
 
         elif split_method == "CONTINUE":
             robust = _robust_key(train_cont, test_cont)
-            print("Robust rank key (min train/test): " f"pnl={robust[0]:.2f}%")
+            print(f"Robust rank key (min train/test): pnl={robust[0]:.2f}%")
             print(f"Train: pnl={train_cont.total_pnl:.2f}% | ops={train_cont.ops}")
             print(f"Test : pnl={test_cont.total_pnl:.2f}% | ops={test_cont.ops}")
 
@@ -347,9 +349,9 @@ def main() -> None:
             robust_reset = _robust_key(train_reset, test_reset)
             robust_cont = _robust_key(train_cont, test_cont)
             overall = _overall_robust_key(train_reset, test_reset, train_cont, test_cont)
-            print("Robust RESET (min train/test): "f"pnl={robust_reset[0]:.2f}%")
-            print("Robust CONTINUE (min train/test): "f"pnl={robust_cont[0]:.2f}%")
-            print("Overall worst-case (min of both methods): "f"pnl={overall[0]:.2f}%")
+            print(f"Robust RESET (min train/test): pnl={robust_reset[0]:.2f}%")
+            print(f"Robust CONTINUE (min train/test): pnl={robust_cont[0]:.2f}%")
+            print(f"Overall worst-case (min of both methods): pnl={overall[0]:.2f}%")
             print(f"RESET    Train: pnl={train_reset.total_pnl:.2f}% | ops={train_reset.ops}")
             print(f"RESET    Test : pnl={test_reset.total_pnl:.2f}% | ops={test_reset.ops}")
             print(f"CONTINUE Train: pnl={train_cont.total_pnl:.2f}% | ops={train_cont.ops}")
@@ -362,14 +364,14 @@ def main() -> None:
         f"ATR_DESV_LIMIT={ATR_DESV_LIMIT} | SPLIT_METHOD={split_method}"
     )
     print(f"Rows: {len(df)} | Train rows: {len(train_df)} | Test rows: {len(test_df)}")
-    
+
     # Generate exhaustive candidate grid for CONSERVATIVE/AGGRESSIVE
     candidates = _iter_exhaustive_candidates(mode)
 
     # Run exhaustive search
-    best: List[Tuple[Score, Candidate]] = []
+    best: list[tuple[Score, Candidate]] = []
     min_ops_required = int(args["min_ops"])
-    evaluated: List[Tuple[Tuple[float, int], Score, Score, Score, Candidate]] = []
+    evaluated: list[tuple[tuple[float, int], Score, Score, Score, Candidate]] = []
     passed_train = 0
     passed_test = 0
 
@@ -454,7 +456,7 @@ def main() -> None:
     robust = _robust_key(train_score, test_score)
     print("\n=== BEST (walk-forward, exhaustive) ===")
     print(f"Split method: {split_method}")
-    
+
     if split_method == "BOTH":
         _apply_candidate_mode(pair, mode, best_cand.k_act, best_cand.min_margin, best_cand.stop_pcts, up_k, down_k)
         ops_all_best = simulate_operations(df, pair, fee_rate=fee_rate, max_ops=None)
@@ -463,9 +465,9 @@ def main() -> None:
         robust_reset = _robust_key(train_score, test_score)
         robust_cont = _robust_key(cont_train_best, cont_test_best)
 
-        print("Robust RESET (min train/test): " f"pnl={robust_reset[0]:.2f}%")
-        print("Robust CONTINUE (min train/test): " f"pnl={robust_cont[0]:.2f}%")
-        print("Overall worst-case (min of both methods): " f"pnl={overall[0]:.2f}%")
+        print(f"Robust RESET (min train/test): pnl={robust_reset[0]:.2f}%")
+        print(f"Robust CONTINUE (min train/test): pnl={robust_cont[0]:.2f}%")
+        print(f"Overall worst-case (min of both methods): pnl={overall[0]:.2f}%")
         print(f"In-sample: pnl={in_sample_score.total_pnl:.2f}% | ops={in_sample_score.ops}")
         print(f"RESET Train: pnl={train_score.total_pnl:.2f}% | ops={train_score.ops}")
         print(f"RESET Test : pnl={test_score.total_pnl:.2f}% | ops={test_score.ops}")
@@ -473,7 +475,7 @@ def main() -> None:
         print(f"CONT Test : pnl={cont_test_best.total_pnl:.2f}% | ops={cont_test_best.ops}")
 
     else:
-        print("Robust key (min train/test): " f"pnl={robust[0]:.2f}%")
+        print(f"Robust key (min train/test): pnl={robust[0]:.2f}%")
         print(f"In-sample: pnl={in_sample_score.total_pnl:.2f}% | ops={in_sample_score.ops}")
         print(f"Train: pnl={train_score.total_pnl:.2f}% | ops={train_score.ops}")
         print(f"Test : pnl={test_score.total_pnl:.2f}% | ops={test_score.ops}")

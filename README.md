@@ -395,6 +395,18 @@ docker compose -f docker-compose.test.yml run --rm -e RUN_LIVE_INTEGRATION=true 
 
 If live credentials are missing, integration tests are skipped automatically.
 
+### Code quality
+
+Run linting and formatting checks inside Docker:
+
+    docker compose -f docker-compose.test.yml run --rm test ruff check .
+    docker compose -f docker-compose.test.yml run --rm test ruff format --check .
+
+Apply automatic fixes:
+
+    docker compose -f docker-compose.test.yml run --rm test ruff check . --fix
+    docker compose -f docker-compose.test.yml run --rm test ruff format .
+
 ### Infrastructure
 
 **Cloud Deployment**: Google Cloud Platform Free Tier VPS

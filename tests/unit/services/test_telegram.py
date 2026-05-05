@@ -146,12 +146,21 @@ async def test_positions_command_shows_open_position(monkeypatch) -> None:
 
     async def _fake_get(url):
         if "/positions" in url:
-            return _mock_response({"pair": "XBTEUR", "position": {
-                "side": "buy", "volume": 0.01, "entry_price": 80000.0,
-                "activation_atr": 500.0, "activation_price": 81000.0,
-                "created_at": "2026-04-01T12:00:00Z",
-                "trailing_price": 82000.0, "stop_price": 78000.0,
-            }})
+            return _mock_response(
+                {
+                    "pair": "XBTEUR",
+                    "position": {
+                        "side": "buy",
+                        "volume": 0.01,
+                        "entry_price": 80000.0,
+                        "activation_atr": 500.0,
+                        "activation_price": 81000.0,
+                        "created_at": "2026-04-01T12:00:00Z",
+                        "trailing_price": 82000.0,
+                        "stop_price": 78000.0,
+                    },
+                }
+            )
         return _mock_response(_MARKET_ITEM)
 
     monkeypatch.setattr(polling, "client", _mock_client(get=_fake_get))
@@ -219,6 +228,7 @@ def _notify_client(monkeypatch):
     mock_tg.bot.send_message = AsyncMock()
     monkeypatch.setattr(tg_module, "tg_app", mock_tg)
     monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(tg_module, "API_SECRET_TOKEN", None)
     app = FastAPI()
     app.add_api_route("/notify", tg_module.notify, methods=["POST"], status_code=202)
     return TestClient(app), mock_tg

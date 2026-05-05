@@ -1,12 +1,11 @@
 import asyncio
 import logging
-from typing import Optional
-
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from typing import Any
 
 from core.config import FIAT_CODE, PAIRS, TELEGRAM_TOKEN, TELEGRAM_USER_ID
 from services.telegram.client import client
+from telegram import Update
+from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -20,7 +19,7 @@ def _check_auth(update: Update) -> bool:
     return update.effective_user.id == int(TELEGRAM_USER_ID)
 
 
-def _pnl_percent(pos: dict, last_price: float) -> Optional[float]:
+def _pnl_percent(pos: dict[str, Any], last_price: float) -> float | None:
     trailing_price = pos.get("trailing_price")
     stop_price = pos.get("stop_price")
     if trailing_price is None or stop_price is None:
@@ -92,9 +91,7 @@ async def market_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     try:
         pair_filter = context.args[0].upper() if context.args else None
         if pair_filter and pair_filter not in PAIRS:
-            await update.message.reply_text(
-                f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}"
-            )
+            await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
             return
 
         market_url = f"/market/{pair_filter}" if pair_filter else "/market"
@@ -112,7 +109,7 @@ async def market_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         market_by_pair = {item["pair"]: item for item in market_items}
 
         msg = "📈 Market Status:\n\n"
-        for pair in ([pair_filter] if pair_filter else list(PAIRS.keys())):
+        for pair in [pair_filter] if pair_filter else list(PAIRS.keys()):
             item = market_by_pair.get(pair, {})
             price = item.get("last_price")
             atr = item.get("atr")
@@ -141,9 +138,7 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     try:
         pair_filter = context.args[0].upper() if context.args else None
         if pair_filter and pair_filter not in PAIRS:
-            await update.message.reply_text(
-                f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}"
-            )
+            await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
             return
 
         positions_url = f"/positions/{pair_filter}" if pair_filter else "/positions"
@@ -178,7 +173,6 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 continue
 
             trailing_active = pos.get("trailing_price") is not None
-            side = pos["side"].lower()
             entry_price = pos["entry_price"]
             base_lines = [
                 f"{pos['side'].upper()}",
@@ -190,11 +184,13 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             if trailing_active:
                 pnl = _pnl_percent(pos, last_price)
                 pnl_symbol = "🟢" if pnl and pnl > 0 else "🔴"
-                base_lines.extend([
-                    f"Trailing: {pos['trailing_price']:,.2f}€",
-                    f"Stop: {pos['stop_price']:,.2f}€",
-                    f"PnL: {pnl_symbol} {pnl:+.2f}%",
-                ])
+                base_lines.extend(
+                    [
+                        f"Trailing: {pos['trailing_price']:,.2f}€",
+                        f"Stop: {pos['stop_price']:,.2f}€",
+                        f"PnL: {pnl_symbol} {pnl:+.2f}%",
+                    ]
+                )
 
             msg += "\n".join(base_lines) + "\n\n"
 
@@ -204,7 +200,7 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(f"❌ Error fetching positions: {e}")
 
 
-def build_tg_app():
+def build_tg_app() -> Application:
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))

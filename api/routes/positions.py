@@ -1,5 +1,3 @@
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException
 
 import core.database as db
@@ -9,15 +7,15 @@ from core.config import PAIRS
 router = APIRouter(tags=["positions"])
 
 
-def _build_position_detail(pair: str) -> Optional[PositionDetail]:
+def _build_position_detail(pair: str) -> PositionDetail | None:
     pos = db.load_trailing_state(pair)
     if pos is None:
         return None
     return PositionDetail(**pos)
 
 
-@router.get("/positions", response_model=dict[str, Optional[PositionDetail]])
-def get_positions() -> dict[str, Optional[PositionDetail]]:
+@router.get("/positions", response_model=dict[str, PositionDetail | None])
+def get_positions() -> dict[str, PositionDetail | None]:
     return {pair: _build_position_detail(pair) for pair in PAIRS}
 
 
