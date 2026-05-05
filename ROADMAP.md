@@ -11,12 +11,12 @@ This document outlines the improvement areas and phased plan for the next iterat
 - [Phased Roadmap](#-phased-roadmap)
   - [Phase 0 - Setup AI-Assisted Development Environment (Completed)](#phase-0---setup-ai-assisted-development-environment-completed)
   - [Phase 1 – Infrastructure First: Docker (Completed)](#phase-1--infrastructure-first-docker-completed)
-  - [Phase 2 – Managed Execution: APScheduler](#phase-2--managed-execution-apscheduler)
+  - [Phase 2 – Managed Execution: APScheduler (Completed)](#phase-2--managed-execution-apscheduler)
     - [Phase 2.1 – API Efficiency (Completed)](#phase-21--api-efficiency-completed)
   - [Phase 3 – Testing Strategy (Completed)](#phase-3--testing-strategy-completed)
   - [Phase 4 – Professional Persistence: PostgreSQL (Completed)](#phase-4--professional-persistence-postgresql)
-  - [Phase 5 – REST API Layer: FastAPI](#phase-5--rest-api-layer-fastapi)
-  - [Phase 6 – Code Quality: Linting & Type Safety](#phase-6--code-quality-linting--type-safety)
+  - [Phase 5 – REST API Layer: FastAPI (Completed)](#phase-5--rest-api-layer-fastapi-completed)
+  - [Phase 6 – Code Quality: Linting & Type Safety (Completed)](#phase-6--code-quality-linting--type-safety-completed)
   - [Phase 7 – CI/CD Pipeline](#phase-7--cicd-pipeline)
   - [Phase 8 – Data Architecture Documentation](#phase-8--data-architecture-documentation)
   - [Phase 9 – Observability: Grafana Dashboard](#phase-9--observability-grafana-dashboard)
@@ -86,7 +86,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ### Phase 0 - Setup AI-Assisted Development Environment (Completed)
 
-**Tracking:** [Issue #19](https://github.com/jAjiz/BoTCoin/issues/19), merged in [PR #20](https://github.com/jAjiz/BoTCoin/pull/20)
+**Tracking:** [Issue #19](https://github.com/jAjiz/BoTCoin/issues/19)
 
 **Goal:** Establish a specialized AI-assisted development environment by integrating Awesome-Copilot resources. This ensures architectural consistency, security, and accelerated delivery for all subsequent V2 phases.
 
@@ -104,7 +104,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ### Phase 1 – Infrastructure First: Docker (Completed)
 
-**Tracking:** [Issue #11](https://github.com/jAjiz/BoTCoin/issues/11), merged in [PR #22](https://github.com/jAjiz/BoTCoin/pull/22)
+**Tracking:** [Issue #11](https://github.com/jAjiz/BoTCoin/issues/11)
 
 **Goal:** Establish a fully containerized development and production environment. All subsequent phases build on top of this foundation.
 
@@ -126,7 +126,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ### Phase 2 – Managed Execution: APScheduler (Completed)
 
-**Tracking:** [Issue #12](https://github.com/jAjiz/BoTCoin/issues/12), merged in [PR #24](https://github.com/jAjiz/BoTCoin/pull/24)
+**Tracking:** [Issue #12](https://github.com/jAjiz/BoTCoin/issues/12)
 
 **Goal:** Replace the unmanaged `while True` loop in `main.py` with an APScheduler-driven periodic execution model, giving every session predictable scheduling, robust retry control, and graceful shutdown.
 
@@ -147,7 +147,7 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 #### Phase 2.1 – API Efficiency (Completed)
 
-**Tracking:** [Issue #23](https://github.com/jAjiz/BoTCoin/issues/23), merged in [PR #24](https://github.com/jAjiz/BoTCoin/pull/24)
+**Tracking:** [Issue #23](https://github.com/jAjiz/BoTCoin/issues/23)
 
 **Goal:** Improve API efficiency and data reliability by implementing rate limiting on public Kraken calls, ensuring OHLC data excludes incomplete candles, and streamlining the main bot loop.
 
@@ -215,20 +215,22 @@ Phases are ordered by dependency — each phase is a prerequisite for the next. 
 
 ---
 
-### Phase 5 – REST API Layer: FastAPI
+### Phase 5 – REST API Layer: FastAPI (Completed)
+
+**Tracking:** [Issue #15](https://github.com/jAjiz/BoTCoin/issues/15)
 
 **Goal:** Expose the bot's state and controls through a FastAPI service, and isolate Telegram as its own container so its long-lived polling lifecycle cannot stall the trading loop. The bot and API share a single process (splitting them would deliver no real benefit on a single-user bot and would force the in-memory runtime cache into Postgres solely to bridge containers).
 
 **Scope:**
 
-- [ ] Add `fastapi`, `uvicorn`, and `httpx` as runtime dependencies
-- [ ] Swap `BlockingScheduler` for an `AsyncIOScheduler` started from a FastAPI `lifespan` hook, with a dedicated `ThreadPoolExecutor` so scheduler jobs never run on the API event loop
-- [ ] Expose `GET /market`, `GET /positions`, `GET /balance`, `GET /status`, `POST /control/pause`, `POST /control/resume` (Swagger UI via FastAPI defaults)
-- [ ] Add a global FastAPI exception handler so no route error can propagate into the scheduler thread
-- [ ] Harden `core/runtime`: add `last_run_at`, drop the now-redundant `trailing_state` mirror, return copies from getters
-- [ ] Split `services/telegram.py` into an independent FastAPI service that runs the polling loop, exposes `POST /notify`, and delegates all command handlers to the API via `httpx`
-- [ ] Rewire `core/logging.py` so `to_telegram=True` posts to the Telegram service's `/notify` endpoint (best-effort, short timeout, errors swallowed)
-- [ ] Update `docker-compose.yml`: run `botc` via `uvicorn`, add a `telegram` service, wire `API_BASE_URL` / `TELEGRAM_SERVICE_URL`
+- [x] Add `fastapi`, `uvicorn`, and `httpx` as runtime dependencies
+- [x] Swap `BlockingScheduler` for an `AsyncIOScheduler` started from a FastAPI `lifespan` hook, with a dedicated `ThreadPoolExecutor` so scheduler jobs never run on the API event loop
+- [x] Expose `GET /market`, `GET /positions`, `GET /balance`, `GET /status`, `POST /control/pause`, `POST /control/resume` (Swagger UI via FastAPI defaults)
+- [x] Add a global FastAPI exception handler so no route error can propagate into the scheduler thread
+- [x] Harden `core/runtime`: add `last_run_at`, drop the now-redundant `trailing_state` mirror, return copies from getters
+- [x] Split `services/telegram.py` into an independent FastAPI service that runs the polling loop, exposes `POST /notify`, and delegates all command handlers to the API via `httpx`
+- [x] Rewire `core/logging.py` so `to_telegram=True` posts to the Telegram service's `/notify` endpoint (best-effort, short timeout, errors swallowed)
+- [x] Update `docker-compose.yml`: run `botc` via `uvicorn`, add a `telegram` service, wire `API_BASE_URL` / `TELEGRAM_SERVICE_URL`
 
 Detailed execution plan: [`plan/phase-5-fastapi.md`](plan/phase-5-fastapi.md).
 
@@ -236,19 +238,21 @@ Detailed execution plan: [`plan/phase-5-fastapi.md`](plan/phase-5-fastapi.md).
 
 ---
 
-### Phase 6 – Code Quality: Linting & Type Safety
+### Phase 6 – Code Quality: Linting & Type Safety (Completed)
+
+**Tracking:** [Issue #26](https://github.com/jAjiz/BoTCoin/issues/26)
 
 **Goal:** Enforce consistent formatting, complete type coverage, and predictable error handling across the codebase. Phases 4 and 5 introduced type-annotated modules; this phase extends that standard to the pre-Phase-4 modules and locks it in with `ruff`.
 
 **Scope:**
 
-- [ ] Pin `ruff` in `requirements-dev.txt`
-- [ ] Add a `pyproject.toml` as the single source of truth for `ruff`, `pytest`, and coverage config (replaces `pytest.ini` and `.coveragerc`)
-- [ ] Annotate the remaining public functions in `core/`, `exchange/kraken.py`, `trading/`, `services/telegram/`, and `scripts/load_legacy_data.py`
-- [ ] Normalize the `core.logging` vs stdlib `logging` import convention; remove the `logger = logging.logging.getLogger(...)` indirection
-- [ ] Collapse repeated boilerplate (`exchange/kraken.py` `try/except/log/return None` shape, `Decimal(str(...))` conversions in `core/database.py`)
-- [ ] Audit `except Exception` blocks — classify each as recoverable (swallow + log + return sentinel) or fatal (propagate) and align the body to the role
-- [ ] Resolve or issue-track the inline `TODO` markers in `core/scheduler.py` and `core/database.py`
+- [x] Pin `ruff` in `requirements-dev.txt`
+- [x] Add a `pyproject.toml` as the single source of truth for `ruff`, `pytest`, and coverage config (replaces `pytest.ini` and `.coveragerc`)
+- [x] Annotate the remaining public functions in `core/`, `exchange/kraken.py`, `trading/`, `services/telegram/`, and `scripts/load_legacy_data.py`
+- [x] Normalize the `core.logging` vs stdlib `logging` import convention; remove the `logger = logging.logging.getLogger(...)` indirection
+- [x] Collapse repeated boilerplate (`exchange/kraken.py` `try/except/log/return None` shape, `Decimal(str(...))` conversions in `core/database.py`)
+- [x] Audit `except Exception` blocks — classify each as recoverable (swallow + log + return sentinel) or fatal (propagate) and align the body to the role
+- [x] Resolve or issue-track the inline `TODO` markers in `core/scheduler.py` and `core/database.py`
 
 Detailed execution plan: [`plan/phase-6-code-quality.md`](plan/phase-6-code-quality.md).
 
