@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from core.config import API_SECRET_TOKEN, TELEGRAM_POLL_INTERVAL, TELEGRAM_USER_ID
+from core.config import API_SECRET_TOKEN, TELEGRAM_ENABLED, TELEGRAM_POLL_INTERVAL, TELEGRAM_USER_ID
 from services.telegram.polling import build_tg_app
 from telegram.ext import Application
 
@@ -23,6 +23,9 @@ class NotifyRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global tg_app
+    if not TELEGRAM_ENABLED:
+        yield
+        return
     tg_app = build_tg_app()
     await tg_app.initialize()
     await tg_app.start()
@@ -50,6 +53,8 @@ app = FastAPI(title="BoTC Telegram", version="0.1.0", lifespan=lifespan)
 async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=None)) -> dict[str, bool]:
     if API_SECRET_TOKEN and x_api_token != API_SECRET_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid or missing API token")
+    if tg_app is None:
+        return {"accepted": False, "reason": "Telegram is disabled"}
     try:
         await tg_app.bot.send_message(
             chat_id=int(TELEGRAM_USER_ID),
