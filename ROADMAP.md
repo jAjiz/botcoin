@@ -262,21 +262,23 @@ Detailed execution plan: [`plan/phase-6-code-quality.md`](plan/phase-6-code-qual
 
 ### Phase 7 – CI/CD Pipeline
 
-**Goal:** Add lint and test quality gates that run inside Docker before any deployment step is allowed.
+**Tracking:** [Issue #31](https://github.com/jAjiz/BoTC/issues/31)
+
+**Goal:** Replace the broken SSH-based deploy with a unified pipeline that gates quality on every PR, builds and publishes a container image on every push to `main`, and deploys that image to the VPS.
 
 **Scope:**
 
-- [ ] Add a `ci.yml` GitHub Actions workflow triggered on every pull request that:
-  - Builds the Docker image
-  - Runs `ruff check .` and `ruff format --check .` inside the container
-  - Spins up the full `docker-compose.test.yml` stack and runs `pytest tests/unit` and `pytest tests/integration`
-- [ ] Update the existing `deploy.yml` workflow to:
-  - Depend on the `ci.yml` checks passing (via `workflow_run` trigger or branch protection rules)
-  - Run tests inside the Docker container before executing the SSH deploy step
-- [ ] Pin all GitHub Actions to specific commit SHAs (consistently — the `ssh-action` is already pinned; apply to `actions/checkout` and any new actions)
-- [ ] Add CI status and Python version badges to `README.md`
+- [ ] Add `docker-compose.prod.yml` — a Compose override that replaces `build:` with `image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}` for the `botc` and `telegram` services
+- [ ] Add `.github/workflows/ci.yml` — a single unified workflow replacing `deploy.yml` with five jobs in `needs:` order:
+  - `Lint (ruff)`, `Unit tests`, `Integration tests` — run on every PR and push
+  - `Build and push image` — builds the production image and pushes `ghcr.io/jajiz/botc:main` + `:sha-<short>` to GHCR (push to `main` only)
+  - `Deploy to VPS` — SSHes to the VPS, fast-forwards the deploy clone, runs `docker compose pull && up -d` (push to `main` only)
+- [ ] Delete `.github/workflows/deploy.yml` — fully superseded by `ci.yml`
+- [ ] Pin all GitHub Actions to specific commit SHAs; add CI status and Python version badges to `README.md`
 
-**Success criteria:** A PR with a failing test or lint error is blocked from merging. The deploy workflow only runs after all checks pass on `main`.
+Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
+
+**Success criteria:** A PR with a failing lint or test is blocked. On every push to `main`, a fresh production image is published to GHCR and deployed to the VPS via the `ci.yml` job graph. The VPS keeps running the previous image if any gate fails.
 
 ---
 
