@@ -1,6 +1,6 @@
 # BoTCoin V2 – Roadmap
 
-This document outlines the improvement areas and phased plan for the next iteration of BoTCoin, with a focus on **Data Engineering and Cloud Architecture** principles. The goal is to evolve the project into a managed data pipeline with professional-grade persistence, observability, and testability.
+This document outlines the improvement areas and phased plan for the next iteration of BoTCoin, with a focus on **modern backend engineering practices**. The goal is to evolve the project into a production-grade backend service with professional persistence, observability, and testability.
 
 ---
 
@@ -18,8 +18,9 @@ This document outlines the improvement areas and phased plan for the next iterat
   - [Phase 5 – REST API Layer: FastAPI (Completed)](#phase-5--rest-api-layer-fastapi-completed)
   - [Phase 6 – Code Quality: Linting & Type Safety (Completed)](#phase-6--code-quality-linting--type-safety-completed)
   - [Phase 7 – CI/CD Pipeline](#phase-7--cicd-pipeline)
-  - [Phase 8 – Data Architecture Documentation](#phase-8--data-architecture-documentation)
-  - [Phase 9 – Observability: Grafana Dashboard](#phase-9--observability-grafana-dashboard)
+  - [Phase 8 – Observability: Grafana Dashboard](#phase-8--observability-grafana-dashboard)
+  - [Phase 9 – Project Documentation & Portfolio Framing](#phase-9--project-documentation--portfolio-framing)
+  - [Phase 10 – Trading Tools Integration: Backtest + Optimizer](#phase-10--trading-tools-integration-backtest--optimizer)
 - [Out of Scope](#-out-of-scope)
 
 ---
@@ -39,7 +40,8 @@ Key gaps identified before starting V2 work:
 | Active state store | ⚠️ JSON file on disk — no schema or transactional guarantees |
 | CI pipeline | ⚠️ Deploy-only — no lint or test step before production |
 | Code quality tooling | ❌ No linter or formatter configured |
-| Data architecture docs | ❌ No ERD or data model documentation |
+| Project documentation | ⚠️ README covers usage but lacks architecture diagram, ERD, and portfolio framing |
+| Trading analysis tooling | ⚠️ `backtest.py` and `optimize_params.py` are CLI-only and mutate global config |
 
 ---
 
@@ -70,11 +72,14 @@ Consistent formatting and type annotations improve IDE support, reduce cognitive
 ### 7. CI/CD Pipeline
 The current pipeline deploys on every push to `main` with no validation. Tests must run inside Docker before any deployment step is allowed, ensuring what is tested is exactly what is deployed.
 
-### 8. Data Architecture Documentation
-With the PostgreSQL-backed persistence layer in place, the data model must be documented explicitly. The PostgreSQL schema (ERD) should be added to `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
-
-### 9. Observability: Grafana Dashboard
+### 8. Observability: Grafana Dashboard
 With structured data in PostgreSQL, a Grafana service can expose market metrics, trading performance, and system health as persistent, queryable dashboards. Running Grafana as a Docker Compose service keeps the observability layer co-located with the rest of the stack and reproducible with a single `docker compose up`.
+
+### 9. Project Documentation & Portfolio Framing
+The README is the project's cover letter. It must lead with engineering decisions, an architecture diagram, CI badges, and Grafana screenshots so a reader can grasp the project's scope and maturity in under a minute. Deep configuration reference and trading-strategy theory move out of the README into dedicated documents under `docs/`, keeping the top-level reading experience focused on the engineering story. The PostgreSQL ERD and data-flow diagram (originally a standalone phase) are folded in as one section among many.
+
+### 10. Trading Tools Integration: Backtest + Optimizer
+The V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) are CLI-only and mutate global trading config — a hazard the live bot is currently isolated from only because they are invoked out-of-process. Folding them into the API as JSON endpoints — sync `/backtest`, async `/optimizer/jobs` with Postgres persistence and a single-slot `multiprocessing` worker — turns one-off scripts into reusable services without risking the live bot's config state, while introducing Numba JIT and Optuna TPE search to keep both endpoints fast.
 
 ---
 
@@ -282,25 +287,9 @@ Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
 
 ---
 
-### Phase 8 – Data Architecture Documentation
+### Phase 8 – Observability: Grafana Dashboard
 
-**Goal:** Document the V2 data architecture — the PostgreSQL schema and data flow — in `README.md` as the authoritative reference for understanding how the bot stores and accesses data.
-
-**Scope:**
-
-- [ ] Add a **Data Architecture** section to `README.md` covering:
-  - **PostgreSQL ERD**: Entity-Relationship Diagram showing the `ohlc_data`, `closed_positions`, `trailing_state`, and `bot_control` tables, their columns, data types, primary keys, and indexes
-  - **Data Flow Diagram**: illustrate how data moves from the Kraken API → PostgreSQL (OHLC, active state) → closed positions on trade close
-- [ ] Add a `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, tracking changes from the V2 milestone onwards (V1 history is not retroactively documented)
-- [ ] Update the `README.md` Quick Start section to reflect the full V2 Docker Compose setup (bot + PostgreSQL)
-
-**Success criteria:** A developer unfamiliar with the project can understand the full data model and how to query or inspect it using only the repository documentation.
-
----
-
-### Phase 9 – Observability: Grafana Dashboard
-
-**Goal:** Integrate Grafana as a persistent observability layer, connected directly to PostgreSQL, so that market, performance, and system metrics are always visible and the environment is fully reproducible.
+**Goal:** Integrate Grafana as a persistent observability layer, connected directly to PostgreSQL, so that market, performance, and system metrics are always visible and the environment is fully reproducible. Lands before the documentation revamp so dashboard screenshots can be embedded directly in the new README.
 
 **Scope:**
 
@@ -317,6 +306,56 @@ Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
 - [ ] Document the Grafana setup in `README.md` (port, default credentials, how to access)
 
 **Success criteria:** `docker compose up` starts the bot, databases, and Grafana. The dashboard loads automatically with no manual configuration. Dashboard state persists across container restarts.
+
+---
+
+### Phase 9 – Project Documentation & Portfolio Framing
+
+**Goal:** Restructure the project's documentation so the README reads as the engineering cover letter — architecture, decisions, badges, and screenshots — while moving deep configuration and trading-strategy theory into dedicated documents under `docs/`. This is the last phase before the project is published as a portfolio piece.
+
+**Scope:**
+
+#### `README.md` revamp (top-level reading experience)
+- [ ] **Hero section**: tagline, one-paragraph problem statement, badges (CI status, coverage, Python version), one Grafana dashboard screenshot
+- [ ] **Architecture diagram** (Mermaid, rendered inline by GitHub) showing the `botc` + `telegram` + `postgres` + `grafana` services, their responsibilities, and the data flow between them
+- [ ] **Quick start** — `docker compose up` walkthrough, link to `.env.example`, link to Swagger UI
+- [ ] **Key engineering decisions** — short bullets, each linking to the relevant phase plan under `plan/` (the planning artifacts themselves become part of the portfolio signal)
+- [ ] **Data model section** — PostgreSQL ERD (`ohlc_data`, `closed_positions`, `trailing_state`, `bot_control`) and a data-flow diagram showing Kraken → Postgres → closed positions on trade close (folded in from the original Phase 8 scope)
+- [ ] **Roadmap & future work** — link to `ROADMAP.md`; explicitly point to `plan/phase-10-trading-tools-integration.md` as a designed-but-unimplemented extension
+
+#### `docs/` subfolder (deep references, not for first-time readers)
+- [ ] `docs/configuration.md` — every `.env` variable, default, and effect (extracted from current README)
+- [ ] `docs/trading-strategy.md` — ATR-based volatility regimes, K_STOP ladder, activation/trailing semantics (extracted from current README and inline code comments)
+- [ ] `docs/operations.md` — running locally, deploying to the VPS, manual rollback, troubleshooting
+
+#### Project metadata
+- [ ] Add a `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, tracking changes from the V2 milestone onwards (V1 history is not retroactively documented)
+- [ ] Frame the project consistently as a **backend engineering project that happens to use crypto market data** — never lead with trading-bot positioning
+
+**Success criteria:** A recruiter scanning the repo for under a minute can identify the project's scope, the engineering decisions made, and the maturity level (CI, observability, docs, planned extensions). A developer wanting to run, configure, or extend the project has a clear, single-source-of-truth document for each concern.
+
+---
+
+### Phase 10 – Trading Tools Integration: Backtest + Optimizer
+
+**Goal:** Fold the V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) into the FastAPI service as JSON endpoints, eliminating their global-state mutation hazard and making them reusable from any client. Introduce Numba JIT for the simulator core, an auto-lookback window selector via K_STOP stability sweep, an Optuna TPE search to replace the exhaustive grid, and a `multiprocessing.spawn` worker with a single-slot lock and Postgres-persisted job state for the long-running optimizer.
+
+**Scope:**
+
+- [ ] Add `trading/engine.py` — pure simulator with config-as-argument (`PairCalibration`, `EngineConfig`, `simulate_operations`); JIT-compile the inner loop with Numba
+- [ ] Refactor `parameters_manager.calculate_trading_parameters` to auto-select the lookback window via a K_STOP stability sweep across `[30d, 45d, 60d, 90d, 120d, 180d, 240d, 365d]`; cache events + window in `core/runtime`
+- [ ] Refactor `trading/market_analyzer.py` to library-only (drop CLI, drop `print_results`); delete the now-orphaned `print_*` helpers from `core/utils.py`
+- [ ] Replace `trading/backtest.py`'s CLI with `run_backtest(req) -> BacktestResult`; sync endpoint `POST /backtest`
+- [ ] Rename `trading/optimize_params.py` → `trading/optimizer.py`; replace exhaustive grid with Optuna TPE; expose `run_optimize(req) -> OptimizerResult`
+- [ ] New `optimizer_jobs` Postgres table + Alembic migration; orphan-cleanup hook on FastAPI lifespan startup
+- [ ] New `optimizer/` package: `JobStore` (in-memory single-slot lock + DB persistence), `worker.py` (multiprocessing.spawn entrypoint), supervisor task scheduled from FastAPI lifespan
+- [ ] Endpoints: `POST /optimizer/jobs` (202 + `job_id`, 409 if busy), `GET /optimizer/jobs/{id}`, `GET /optimizer/jobs`
+- [ ] Telegram notifications on optimizer start, completion, and failure
+- [ ] Pin `numba` and `optuna` exactly in `requirements.txt`
+
+Detailed execution plan: [`plan/phase-10-trading-tools-integration.md`](plan/phase-10-trading-tools-integration.md).
+
+**Success criteria:** `POST /backtest` returns a populated result in under a second on 60d of 15-min OHLC. `POST /optimizer/jobs` returns a `job_id` immediately; results persist to Postgres; a second submission while one is running returns `409`. A crash mid-run leaves the row marked `failed` after the next startup, never `running` indefinitely. The two scripts in `trading/` no longer have CLI entry points and never mutate global trading config.
 
 ---
 
