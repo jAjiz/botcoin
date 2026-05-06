@@ -11,7 +11,6 @@ def test_validate_common_params_collects_expected_errors(monkeypatch) -> None:
     monkeypatch.setattr(validation, "SLEEPING_INTERVAL", 0)
     monkeypatch.setattr(validation, "PARAM_SESSIONS", 0)
     monkeypatch.setattr(validation, "CANDLE_TIMEFRAME", 0)
-    monkeypatch.setattr(validation, "MARKET_DATA_DAYS", 0)
     monkeypatch.setattr(validation, "ATR_PERIOD", 0)
     monkeypatch.setattr(validation, "ATR_DESV_LIMIT", -0.1)
     monkeypatch.setattr(validation, "PAIRS", {})

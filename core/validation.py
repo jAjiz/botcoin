@@ -6,7 +6,6 @@ from core.config import (
     CANDLE_TIMEFRAME,
     KRAKEN_API_KEY,
     KRAKEN_API_SECRET,
-    MARKET_DATA_DAYS,
     PAIRS,
     PARAM_SESSIONS,
     SLEEPING_INTERVAL,
@@ -41,8 +40,6 @@ def validate_common_params(errors: list[str]) -> None:
         errors.append("PARAM_SESSIONS must be a positive integer")
     if CANDLE_TIMEFRAME <= 0:
         errors.append("CANDLE_TIMEFRAME must be a positive integer")
-    if MARKET_DATA_DAYS <= 0:
-        errors.append("MARKET_DATA_DAYS must be a positive integer")
     if ATR_PERIOD <= 0:
         errors.append("ATR_PERIOD must be a positive integer")
     if ATR_DESV_LIMIT < 0:
@@ -70,7 +67,6 @@ def log_configuration_summary() -> None:
     logging.info(f"Session interval: {SLEEPING_INTERVAL}s")
     logging.info(f"Parameter calculation sessions: {PARAM_SESSIONS}")
     logging.info(f"Candle timeframe: {CANDLE_TIMEFRAME}min")
-    logging.info(f"Market data storage: {MARKET_DATA_DAYS} days")
     logging.info(f"ATR period: {ATR_PERIOD} candles")
     logging.info(f"Pairs to trade: {', '.join(PAIRS.keys())}")
     logging.info("-" * 60 + "\n")

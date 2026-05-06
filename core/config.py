@@ -29,7 +29,6 @@ API_SECRET_TOKEN = os.getenv("API_SECRET_TOKEN")
 SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute
 PARAM_SESSIONS = int(os.getenv("PARAM_SESSIONS", 720))  # 720 sessions (1min between) = 12 hours
 CANDLE_TIMEFRAME = int(os.getenv("CANDLE_TIMEFRAME", 15))  # Candle timeframe in minutes
-MARKET_DATA_DAYS = int(os.getenv("MARKET_DATA_DAYS", 60))  # 60 days
 ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))  # ATR calculation period in candles
 ATR_DESV_LIMIT = float(os.getenv("ATR_DESV_LIMIT", 0.2))  # ATR recalibration limit (20%)
 MIN_VALUE = float(os.getenv("MIN_VALUE", 10))  # Minimum value operation in fiat
