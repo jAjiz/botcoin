@@ -52,43 +52,37 @@ def test_reanchor_activation_price_returns_false_when_gap_within_expected(monkey
 
     pos: dict[str, Any] = {"side": "sell", "activation_price": 110.0, "entry_price": 100.0, "activation_atr": 5.0}
     # gap = 110 - 100 = 10, expected = 20 → gap <= expected → no re-anchor
-    result = positions_manager.reanchor_activation_price("XBTEUR", pos, current_price=100.0, atr_val=5.0)
+    result = positions_manager.reanchor_activation_price("XBTEUR", pos, current_price=100.0)
 
     assert result is False
-    assert pos["entry_price"] == 100.0
+    assert pos["activation_price"] == 110.0
 
 
 def test_reanchor_activation_price_updates_sell_when_gap_exceeds_expected(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "calculate_activation_distance", lambda *_: 5.0)
-    monkeypatch.setattr(
-        positions_manager,
-        "update_activation_price",
-        lambda pair, pos, atr: pos.update({"activation_price": 115.0, "activation_atr": atr}),
-    )
+    monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_: 115.0)
 
     pos: dict[str, Any] = {"side": "sell", "activation_price": 130.0, "entry_price": 90.0, "activation_atr": 5.0}
     # gap = 130 - 110 = 20, expected = 5 → gap > expected → re-anchor
-    result = positions_manager.reanchor_activation_price("XBTEUR", pos, current_price=110.0, atr_val=5.0)
+    result = positions_manager.reanchor_activation_price("XBTEUR", pos, current_price=110.0)
 
     assert result is True
-    assert pos["entry_price"] == 110.0
+    assert pos["entry_price"] == 90.0
+    assert pos["activation_atr"] == 5.0
     assert pos["activation_price"] == 115.0
 
 
 def test_reanchor_activation_price_updates_buy_when_gap_exceeds_expected(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "calculate_activation_distance", lambda *_: 5.0)
-    monkeypatch.setattr(
-        positions_manager,
-        "update_activation_price",
-        lambda pair, pos, atr: pos.update({"activation_price": 85.0, "activation_atr": atr}),
-    )
+    monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_: 85.0)
 
     pos: dict[str, Any] = {"side": "buy", "activation_price": 70.0, "entry_price": 110.0, "activation_atr": 5.0}
     # gap = 90 - 70 = 20, expected = 5 → gap > expected → re-anchor
-    result = positions_manager.reanchor_activation_price("XBTEUR", pos, current_price=90.0, atr_val=5.0)
+    result = positions_manager.reanchor_activation_price("XBTEUR", pos, current_price=90.0)
 
     assert result is True
-    assert pos["entry_price"] == 90.0
+    assert pos["entry_price"] == 110.0
+    assert pos["activation_atr"] == 5.0
     assert pos["activation_price"] == 85.0
 
 
@@ -283,10 +277,11 @@ def test_tick_position_recalibrates_activation_when_atr_out_of_range(monkeypatch
     monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.1)
     monkeypatch.setattr(positions_manager, "reanchor_activation_price", lambda *_: False)
 
-    calibrated_with: list[float] = []
-    monkeypatch.setattr(
-        positions_manager, "update_activation_price", lambda pair, pos, atr: calibrated_with.append(atr)
-    )
+    def fake_update_activation(pair, pos, atr) -> None:
+        pos["activation_price"] = 80.0
+        pos["activation_atr"] = atr
+
+    monkeypatch.setattr(positions_manager, "update_activation_price", fake_update_activation)
 
     # activation_atr=2.0, current atr=5.0: 2.0 < 5.0*(1-0.1)=4.5 → out of range
     pos: dict[str, Any] = {"side": "buy", "activation_atr": 2.0, "activation_price": 85.0}
@@ -295,7 +290,41 @@ def test_tick_position_recalibrates_activation_when_atr_out_of_range(monkeypatch
         "XBTEUR", pos, balance={}, last_prices={"XBTEUR": 90.0}, atr_val=5.0, trailing_state=trailing_state
     )
 
-    assert calibrated_with == [5.0]
+    assert pos["activation_price"] == 80.0
+    assert pos["activation_atr"] == 5.0
+
+
+def test_tick_position_recalibrates_then_reanchors_when_both_conditions_met(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *_: True)
+    monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.1)
+
+    update_order: list[str] = []
+
+    def fake_update_activation(pair, pos, atr) -> None:
+        update_order.append("atr_recalib")
+        pos["activation_price"] = 88.0
+        pos["activation_atr"] = atr
+
+    monkeypatch.setattr(positions_manager, "update_activation_price", fake_update_activation)
+
+    def fake_reanchor(pair, pos, current_price) -> bool:
+        update_order.append("reanchor")
+        pos["activation_price"] = 92.0
+        return True
+
+    monkeypatch.setattr(positions_manager, "reanchor_activation_price", fake_reanchor)
+
+    # activation_atr=2.0, current atr=5.0: out of range → recalib fires; reanchor also fires
+    # current_price=80 stays below final activation_price=92 (sell) so activation does not trigger
+    pos: dict[str, Any] = {"side": "sell", "activation_atr": 2.0, "activation_price": 130.0}
+    trailing_state: dict[str, Any] = {"XBTEUR": pos}
+    positions_manager.tick_position(
+        "XBTEUR", pos, balance={}, last_prices={"XBTEUR": 80.0}, atr_val=5.0, trailing_state=trailing_state
+    )
+
+    assert update_order == ["atr_recalib", "reanchor"]
+    assert pos["activation_price"] == 92.0
+    assert pos["activation_atr"] == 5.0
 
 
 def test_tick_position_activates_sell_when_price_reaches_activation(monkeypatch) -> None:
@@ -357,3 +386,26 @@ def test_tick_position_updates_trailing_when_sell_price_moves_up(monkeypatch) ->
     )
 
     assert updated_prices == [110.0]
+
+
+def test_tick_position_recalibrates_stop_when_stop_atr_out_of_range(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *_: True)
+    monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.1)
+
+    def fake_update_stop(pair, pos, price, atr) -> None:
+        pos["stop_price"] = 70.0
+        pos["stop_atr"] = atr
+
+    monkeypatch.setattr(positions_manager, "update_stop_price", fake_update_stop)
+
+    # stop_atr=2.0, current atr=5.0: 2.0 < 5.0*(1-0.1)=4.5 → out of range
+    # current_price=90 does not hit recalibrated stop (70) and does not exceed trailing (100)
+    pos: dict[str, Any] = {"side": "sell", "trailing_price": 100.0, "stop_price": 85.0, "stop_atr": 2.0}
+    trailing_state: dict[str, Any] = {"XBTEUR": pos}
+    positions_manager.tick_position(
+        "XBTEUR", pos, balance={}, last_prices={"XBTEUR": 90.0}, atr_val=5.0, trailing_state=trailing_state
+    )
+
+    # recalibration passes trailing_price as the reference, not current_price
+    assert pos["stop_price"] == 70.0
+    assert pos["stop_atr"] == 5.0

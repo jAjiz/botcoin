@@ -67,15 +67,15 @@ def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float) -> N
     pos.update({"activation_price": round(activation_price, 1), "activation_atr": round(atr_val, 1)})
 
 
-def reanchor_activation_price(pair: str, pos: dict[str, Any], current_price: float, atr_val: float) -> bool:
+def reanchor_activation_price(pair: str, pos: dict[str, Any], current_price: float) -> bool:
     side = pos["side"]
+    atr_val = pos["activation_atr"]
     expected_distance = calculate_activation_distance(pair, side, current_price, atr_val)
     gap = pos["activation_price"] - current_price if side == "sell" else current_price - pos["activation_price"]
     if gap <= expected_distance:
         return False
 
-    pos["entry_price"] = current_price
-    update_activation_price(pair, pos, atr_val)
+    pos["activation_price"] = round(calculate_activation_price(pair, side, current_price, atr_val), 1)
     return True
 
 
@@ -158,7 +158,7 @@ def tick_position(
             update_activation_price(pair, pos, atr_val)
             logging.info(f"♻️ Recalibrate {side.upper()} position: activation price to {pos['activation_price']:,}€.")
 
-        if reanchor_activation_price(pair, pos, current_price, atr_val):
+        if reanchor_activation_price(pair, pos, current_price):
             logging.info(
                 f"🧭 Re-anchor {side.upper()} position: activation price to {pos['activation_price']:,}€ (market drifted)."
             )

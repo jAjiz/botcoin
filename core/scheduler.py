@@ -74,7 +74,7 @@ def trading_session() -> None:
         logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
         runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
 
-        if is_closing_complete(trailing_state[pair]):
+        if is_closing_complete(trailing_state.get(pair)):
             db.save_closed_position(pair, trailing_state[pair])
             db.delete_trailing_state(pair)
             del trailing_state[pair]
