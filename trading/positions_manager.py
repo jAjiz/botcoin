@@ -23,21 +23,25 @@ def create_position(
 
     volume = value / current_price if current_price else 0.0
     if volume <= 0:
-        logging.warning(f"Cannot create {side.upper()} position: volume {volume:.8f} <= 0")
+        logging.info(f"Cannot create {side.upper()} position: volume {volume:.8f} <= 0")
         return
 
     activation_price = calculate_activation_price(pair, side, current_price, atr_val)
+    stored_volume = round(volume, 8)
 
     trailing_state[pair] = {
         "side": side,
-        "volume": round(volume, 8),
+        "volume": stored_volume,
         "entry_price": current_price,
         "activation_atr": round(atr_val, 1),
         "activation_price": round(activation_price, 1),
         "created_at": now_utc(),
     }
 
-    logging.info(f"[{pair}] 🆕 New {side.upper()} position: activation at {activation_price:,.1f}€", to_telegram=True)
+    logging.info(
+        f"[{pair}] 🆕 New {side.upper()} position: {stored_volume:.8f} vol | {stored_volume * current_price:,.1f}€ cost | activation at {activation_price:,.1f}€",
+        to_telegram=True,
+    )
 
 
 def calculate_activation_distance(pair: str, side: str, reference_price: float, atr_val: float) -> float:
@@ -160,7 +164,7 @@ def tick_position(
 
         if reanchor_activation_price(pair, pos, current_price):
             logging.info(
-                f"🧭 Re-anchor {side.upper()} position: activation price to {pos['activation_price']:,}€ (market drifted)."
+                f"🧭 Re-anchor {side.upper()} position: activation price to {pos['activation_price']:,}€."
             )
 
         if (side == "sell" and current_price >= pos["activation_price"]) or (
