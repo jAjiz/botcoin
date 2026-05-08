@@ -1,28 +1,15 @@
-# docker-compose.prod.yml — production overrides for Linux VPS deployment.
+# Production override. Used on the VPS as:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml <up|pull|...>
 #
-# Usage:
-#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-#
-# This file is layered on top of docker-compose.yml. It:
-#   - Replaces the host bind-mount for logs with a named volume so that the
-#     container's non-root user (appuser) has correct ownership regardless of
-#     host UIDs.
-#   - Restarts the service unconditionally (suitable for a long-lived VPS process).
-#   - Adds no-new-privileges to prevent privilege escalation at runtime.
-#   - Caps CPU and memory to avoid resource exhaustion on a shared VPS.
+# IMAGE_TAG defaults to `main` (the moving tag pushed by CI on every main build).
+# Set IMAGE_TAG=sha-<short> in the deploy environment to pin a specific build for
+# rollback.
 
 services:
   botc:
-    restart: always
-    volumes:
-      - botc_logs:/app/logs
-    security_opt:
-      - no-new-privileges:true
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 512M
+    image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}
+    build: !reset null
 
-volumes:
-  botc_logs:
+  telegram:
+    image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}
+    build: !reset null
