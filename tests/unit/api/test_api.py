@@ -86,7 +86,7 @@ def test_lifespan_validate_config_fails(monkeypatch):
     monkeypatch.setattr(api_app, "validate_config", lambda: False)
 
     async def _run():
-        async with lifespan(None):
+        async with lifespan(MagicMock()):
             pass
 
     with pytest.raises(RuntimeError, match="Configuration validation failed"):
@@ -98,7 +98,7 @@ def test_lifespan_db_connection_fails(monkeypatch):
     monkeypatch.setattr(api_app.db, "check_database_connection", lambda: False)
 
     async def _run():
-        async with lifespan(None):
+        async with lifespan(MagicMock()):
             pass
 
     with pytest.raises(RuntimeError, match="Cannot connect to PostgreSQL"):
@@ -108,12 +108,13 @@ def test_lifespan_db_connection_fails(monkeypatch):
 def test_lifespan_success_starts_and_stops_scheduler(monkeypatch):
     monkeypatch.setattr(api_app, "validate_config", lambda: True)
     monkeypatch.setattr(api_app.db, "check_database_connection", lambda: True)
+    monkeypatch.setattr(api_app, "scheduler", None)
 
     mock_scheduler = MagicMock()
     monkeypatch.setattr(api_app, "AsyncIOScheduler", lambda **kwargs: mock_scheduler)
 
     async def _run():
-        async with lifespan(None):
+        async with lifespan(MagicMock()):
             pass
 
     asyncio.run(_run())
