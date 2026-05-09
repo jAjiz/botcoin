@@ -242,13 +242,13 @@ Postgres runs as a compose service inside `docker-compose.test.yml` so the test 
       - name: Apply Alembic migrations
         run: |
           docker compose -f docker-compose.test.yml run --rm \
-            -e DATABASE_URL=postgresql+psycopg://botc:botc@postgres:5432/DBbotc \
+            -e POSTGRES_PASSWORD=botc \
             test alembic upgrade head
 
       - name: Run integration tests
         run: |
           docker compose -f docker-compose.test.yml run --rm \
-            -e DATABASE_URL=postgresql+psycopg://botc:botc@postgres:5432/DBbotc \
+            -e POSTGRES_PASSWORD=botc \
             -e RUN_DB_INTEGRATION=true \
             test pytest tests/integration
 
