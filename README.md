@@ -1,5 +1,8 @@
 # BoTCoin - Autonomous Digital Asset Manager
 
+[![CI](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+
 BoTCoin is a 24/7 autonomous digital asset management system that analyzes market conditions in real-time and dynamically adapts trading behavior based on measured volatility. The system integrates with Kraken exchange and provides real-time monitoring and alerts through Telegram.
 
 ---
@@ -413,38 +416,25 @@ Apply automatic fixes:
 - **Reliability**: Automatic restart on failure
 - **Cost**: Zero infrastructure cost
 
-**CI/CD Pipeline** (`.github/workflows/deploy.yml`):
+### Continuous integration and deployment
 
-```yaml
-name: Deploy BoTC
+A single workflow (`.github/workflows/ci.yml`) runs on every PR and every push to `main`:
 
-on:
-  push:
-    branches:
-      - main
+| Job | When | What |
+|---|---|---|
+| `Lint (ruff)` | always | `ruff check` + `ruff format --check` inside the dev image |
+| `Unit tests` | always | `pytest tests/unit` with the 80% coverage gate |
+| `Integration tests` | always | `pytest tests/integration` against an ephemeral Postgres service (Kraken-gated tests are skipped in CI) |
+| `Build and push image` | `push: main` only | Builds the production image and publishes it to `ghcr.io/jajiz/botc:main` and `ghcr.io/jajiz/botc:sha-<short>` |
+| `Deploy to VPS` | `push: main` only | SSHes to the VPS, fetches the two compose files by commit SHA, and runs `docker compose pull && up -d` |
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    
-    - name: Execute remote deploy script via SSH
-      uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-      with:
-        host: ${{ secrets.VM_IP }}
-        username: ${{ secrets.VM_USER }}
-        key: ${{ secrets.VM_KEY }}
-        script: "bash ~/deploy_BoTC.sh"
-```
+The `needs:` chain in the workflow file enforces ordering: a failing lint/test job blocks the image push and the deploy. Branch protection on `main` is optional — the pipeline gate is the workflow's job graph, not the branch rule.
 
-**Deployment Flow**:
-1. Push code to `main` branch
-2. GitHub Actions triggers deployment workflow
-3. SSH connection to production VPS
-4. Remote script pulls latest code
-5. Service restart with zero downtime
+To roll back to a previous image without reverting the commit:
+
+    # On the VPS
+    cd ~/BoTC
+    IMAGE_TAG=sha-abc1234 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ### Configuration Validation & Logging
 
@@ -647,7 +637,7 @@ BoTCoin/
 │
 └── .github/
     └── workflows/
-        └── deploy.yml          # CI/CD automation
+        └── ci.yml              # CI/CD automation
 ```
 
 ## 🔒 Security Considerations
