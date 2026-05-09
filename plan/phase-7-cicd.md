@@ -223,24 +223,12 @@ The `--cov-fail-under=80` flag is in `pyproject.toml`, so coverage is enforced a
 
 ### 2.4 Job: `integration`
 
+Postgres runs as a compose service inside `docker-compose.test.yml` so the test container reaches it by hostname over the shared Docker network — no `--network host` or GH Actions `services:` block needed. `docker compose run` does not support `--network` as a flag.
+
 ```yaml
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: DBbotc
-          POSTGRES_USER: botc
-          POSTGRES_PASSWORD: botc
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U botc -d DBbotc"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
     steps:
       - name: Checkout
         uses: actions/checkout@<sha> # v4
@@ -248,26 +236,30 @@ The `--cov-fail-under=80` flag is in `pyproject.toml`, so coverage is enforced a
       - name: Build dev image
         run: docker compose -f docker-compose.test.yml build
 
+      - name: Start postgres
+        run: docker compose -f docker-compose.test.yml up -d --wait postgres
+
       - name: Apply Alembic migrations
         run: |
           docker compose -f docker-compose.test.yml run --rm \
-            -e DATABASE_URL=postgresql+psycopg://botc:botc@127.0.0.1:5432/DBbotc \
-            --network host \
+            -e DATABASE_URL=postgresql+psycopg://botc:botc@postgres:5432/DBbotc \
             test alembic upgrade head
 
       - name: Run integration tests
         run: |
           docker compose -f docker-compose.test.yml run --rm \
-            -e DATABASE_URL=postgresql+psycopg://botc:botc@127.0.0.1:5432/DBbotc \
+            -e DATABASE_URL=postgresql+psycopg://botc:botc@postgres:5432/DBbotc \
             -e RUN_DB_INTEGRATION=true \
-            --network host \
             test pytest tests/integration
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
 ```
 
 Implementation notes:
-- The `psycopg+psycopg` driver string assumes psycopg v3. Inspect `core/database.py` at execution time to confirm the actual driver and adjust if the project still uses `psycopg2`.
+- `--wait` blocks until the postgres healthcheck passes (requires Compose v2.1.1+, available on `ubuntu-latest`).
 - `RUN_KRAKEN_INTEGRATION` is **not** set — those tests skip with a clean message. We do not put live Kraken credentials in CI.
-- `--network host` is required so the test container can reach the postgres service running on the runner host at `127.0.0.1:5432`.
 
 ### 2.5 Job: `build-and-push`
 
