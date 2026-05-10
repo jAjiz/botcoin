@@ -1,11 +1,17 @@
-import math
 import logging
+import math
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from core.config import PAIRS, TRADING_PARAMS, STOP_PERCENTILES, VOLATILITY_LEVELS as LEVELS
-from trading.market_analyzer import load_data, analyze_structural_noise
 
-def calculate_k_stops(pair, events):
+import core.database as db
+from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
+from core.config import VOLATILITY_LEVELS as LEVELS
+from trading.market_analyzer import analyze_structural_noise
+
+
+def calculate_k_stops(pair: str, events: list[dict[str, Any]]) -> dict[str, float | None]:
     if not events:
         return {lvl: None for lvl in LEVELS}
 
@@ -29,16 +35,16 @@ def calculate_k_stops(pair, events):
     return {lvl: get_pct_k_value(lvl, STOP_PERCENTILES[pair][lvl]) for lvl in LEVELS}
 
 
-def calculate_trading_parameters(pair, infoLog=True):
+def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
     if infoLog:
         logging.info(f"Calculating trading parameters for {pair}...")
 
     try:
-        df = load_data(pair)
+        df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME).dropna(subset=["atr"])
     except Exception as e:
         logging.error(f"Error loading data for {pair}: {e}")
         raise e
-    
+
     PAIRS[pair]["atr_20pct"] = np.percentile(df["atr"], 20)
     PAIRS[pair]["atr_50pct"] = np.percentile(df["atr"], 50)
     PAIRS[pair]["atr_80pct"] = np.percentile(df["atr"], 80)
@@ -47,26 +53,29 @@ def calculate_trading_parameters(pair, infoLog=True):
     if infoLog:
         logging.info(
             "ATR percentiles → P20:{:,.1f}€ | P50:{:,.1f}€ | P80:{:,.1f}€ | P95:{:,.1f}€".format(
-                PAIRS[pair]["atr_20pct"], PAIRS[pair]["atr_50pct"], PAIRS[pair]["atr_80pct"], PAIRS[pair]["atr_95pct"])
+                PAIRS[pair]["atr_20pct"], PAIRS[pair]["atr_50pct"], PAIRS[pair]["atr_80pct"], PAIRS[pair]["atr_95pct"]
+            )
         )
-    
+
     uptrend_events, downtrend_events = analyze_structural_noise(df)
     sell_k_stops = calculate_k_stops(pair, uptrend_events)
     buy_k_stops = calculate_k_stops(pair, downtrend_events)
-    
+
     TRADING_PARAMS[pair]["sell"]["K_STOP"] = sell_k_stops
     TRADING_PARAMS[pair]["buy"]["K_STOP"] = buy_k_stops
-    
-    fmt = lambda k: f"{k:.2f}" if k is not None else "N/A"
-    sell_msg = " | ".join(f"{lvl}:{fmt(sell_k_stops[lvl])}" for lvl in LEVELS)
-    buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
 
     if infoLog:
+
+        def fmt(k):
+            return f"{k:.2f}" if k is not None else "N/A"
+
+        sell_msg = " | ".join(f"{lvl}:{fmt(sell_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_SELL → {sell_msg}")
+        buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_BUY  → {buy_msg}")
 
 
-def get_volatility_level(pair, atr_val):
+def get_volatility_level(pair: str, atr_val: float) -> str:
     if atr_val < PAIRS[pair]["atr_20pct"]:
         return "LL"
     elif atr_val < PAIRS[pair]["atr_50pct"]:
@@ -75,23 +84,23 @@ def get_volatility_level(pair, atr_val):
         return "MV"
     elif atr_val < PAIRS[pair]["atr_95pct"]:
         return "HV"
-    
+
     return "HH"
 
 
-def get_k_stop(pair, side, atr_val):
+def get_k_stop(pair: str, side: str, atr_val: float) -> float | None:
     vol = get_volatility_level(pair, atr_val)
-    
+
     k_stop = TRADING_PARAMS[pair][side]["K_STOP"].get(vol)
     if k_stop is not None:
         return k_stop
-    
+
     # Try opposite side K_STOP as fallback
     op_side = "buy" if side == "sell" else "sell"
     k_stop = TRADING_PARAMS[pair][op_side]["K_STOP"].get(vol)
     if k_stop is not None:
         return k_stop
-    
+
     # Search neighboring levels
     idx = LEVELS.index(vol)
     for offset in range(1, len(LEVELS)):
@@ -100,5 +109,5 @@ def get_k_stop(pair, side, atr_val):
                 k_stop = TRADING_PARAMS[pair][side]["K_STOP"].get(LEVELS[neighbor])
                 if k_stop is not None:
                     return k_stop
-    
+
     return None

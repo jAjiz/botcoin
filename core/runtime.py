@@ -1,23 +1,31 @@
 import threading
-import copy
+from datetime import datetime
+from typing import Any
 
-# Thread-safe shared data between main thread and Telegram thread
 _lock = threading.Lock()
 _shared_data = {
     "last_balance": {},
     "pairs_data": {},  # {pair: {"last_price": float, "atr": float}}
-    "trailing_state": {}  # {pair: position_data}
+    "last_run_at": None,
 }
 
-def update_balance(balance):
+
+def update_balance(balance: dict[str, Any] | None) -> None:
     with _lock:
         _shared_data["last_balance"] = balance if balance else {}
 
-def get_last_balance():
-    with _lock:
-        return _shared_data["last_balance"]
 
-def update_pair_data(pair, price=None, atr=None, volatility_level=None):
+def get_last_balance() -> dict[str, Any]:
+    with _lock:
+        return dict(_shared_data["last_balance"])
+
+
+def update_pair_data(
+    pair: str,
+    price: float | None = None,
+    atr: float | None = None,
+    volatility_level: str | None = None,
+) -> None:
     with _lock:
         if pair not in _shared_data["pairs_data"]:
             _shared_data["pairs_data"][pair] = {}
@@ -28,15 +36,17 @@ def update_pair_data(pair, price=None, atr=None, volatility_level=None):
         if volatility_level is not None:
             _shared_data["pairs_data"][pair]["volatility_level"] = volatility_level
 
-def get_pair_data(pair):
-    with _lock:
-        return _shared_data["pairs_data"].get(pair, {})
 
-def update_trailing_state(trailing_state):
+def get_pair_data(pair: str) -> dict[str, Any]:
     with _lock:
-        _shared_data["trailing_state"] = trailing_state if trailing_state else {}
+        return dict(_shared_data["pairs_data"].get(pair, {}))
 
-def get_trailing_state():
+
+def update_last_run_at(last_run_at: datetime) -> None:
     with _lock:
-        # Return a deep copy to avoid modifications from the reading thread
-        return copy.deepcopy(_shared_data["trailing_state"])
+        _shared_data["last_run_at"] = last_run_at
+
+
+def get_last_run_at() -> datetime | None:
+    with _lock:
+        return _shared_data["last_run_at"]

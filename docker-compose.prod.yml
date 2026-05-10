@@ -1,0 +1,39 @@
+# Production override. Used on the VPS as:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml <up|pull|...>
+#
+# IMAGE_TAG defaults to `main` (the moving tag pushed by CI on every main build).
+# Set IMAGE_TAG=sha-<short> in the deploy environment to pin a specific build for
+# rollback.
+
+services:
+  botc:
+    image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}
+    build: !reset null
+    restart: always
+    volumes:
+      - botc_logs:/app/logs
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+
+  telegram:
+    image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}
+    build: !reset null
+    restart: always
+    volumes:
+      - telegram_logs:/app/logs
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+
+volumes:
+  botc_logs:
+  telegram_logs:

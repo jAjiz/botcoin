@@ -1,0 +1,25 @@
+services:
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
+    environment:
+      PYTHONPATH: /app
+    working_dir: /app
+    entrypoint: [""]
+    command: ["pytest", "tests"]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: DBbotc
+      POSTGRES_USER: botc
+      POSTGRES_PASSWORD: botc
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U botc -d DBbotc"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s

@@ -1,5 +1,8 @@
 # BoTCoin - Autonomous Digital Asset Manager
 
+[![CI](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+
 BoTCoin is a 24/7 autonomous digital asset management system that analyzes market conditions in real-time and dynamically adapts trading behavior based on measured volatility. The system integrates with Kraken exchange and provides real-time monitoring and alerts through Telegram.
 
 ---
@@ -16,6 +19,7 @@ BoTCoin is a 24/7 autonomous digital asset management system that analyzes marke
 - [Configuration & Deployment](#-configuration--deployment)
 - [Quick Start](#-quick-start)
 - [Project Structure](#-project-structure)
+- [Testing](#-testing)
 - [Security Considerations](#-security-considerations)
 - [Performance Metrics](#-performance-metrics)
 - [Technical Highlights](#-technical-highlights)
@@ -41,7 +45,7 @@ BoTCoin operates as an autonomous trading agent that:
 - 📱 **Telegram Bot Interface** for monitoring and control
 - 🔐 **Secure Configuration** via environment variables
 - 🚀 **Automated CI/CD** deployment through GitHub Actions
-- 💾 **Data Persistence** with CSV-based data sinks for audit and analysis
+- 💾 **Data Persistence** with PostgreSQL for all runtime state, history, and market data
 - 🔄 **24/7 Autonomous Operation** on Google Cloud Platform (Free Tier VPS)
 
 ## 🏗️ Architecture & Trading Engine
@@ -133,8 +137,8 @@ The system uses Pandas DataFrames for efficient market data manipulation and Num
 
 - **OHLC Data Ingestion**: Fetches candlestick data from Kraken via `fetch_ohlc_data`
 - **ATR Calculation**: Rolling window calculation using True Range components (H-L, H-PC, L-PC)
-- **Historical Persistence**: Stores market data in CSV files (`data/{pair}_ohlc_data_{timeframe}min.csv`)
-- **Incremental Updates**: Appends only new candles to existing datasets
+- **Historical Persistence**: Stores market data in the `ohlc_data` PostgreSQL table; CSV caches under `data/` are consumed by offline analysis tools only
+- **Incremental Updates**: Appends only new candles using upsert semantics (`ON CONFLICT DO NOTHING`)
 
 ### Volatility Classification
 
@@ -172,57 +176,39 @@ The system uses `calculate_trading_parameters` and `calculate_k_stops` from `par
 
 ## 💾 Persistence & Data Structure
 
+Phase 4 introduces Alembic-backed PostgreSQL schema management. The initial migration bootstrap lives in `alembic.ini` and `scripts/migrations/`, and migrations run against `DATABASE_URL`.
+
+### Database Migrations
+
+Use Alembic for schema changes instead of ad hoc SQL:
+
+```bash
+alembic upgrade head
+```
+
+To generate a new revision after Phase 4 changes:
+
+```bash
+alembic revision -m "describe change"
+```
+
 ### State Management
 
-**Active Positions** (`data/trailing_state.json`):
-```json
-{
-  "XBTEUR": {
-    "side": "sell",
-    "volume": 0.00123456,
-    "entry_price": 45000.0,
-    "activation_atr": 1250.0,
-    "activation_price": 47500.0,
-    "activation_time": "2026-02-03 10:30:15",
-    "trailing_price": 48200.0,
-    "stop_price": 46950.0,
-    "stop_atr": 1250.0,
-    "creation_time": "2026-02-03 08:15:00"
-  }
-}
-```
+State (active trailing state, closed positions, and bot control flags) is persisted in PostgreSQL via the centralized Data Access Layer implemented in `core/database.py`.
 
-**Closed Positions** (`data/closed_positions.json`):
-```json
-{
-  "XBTEUR": [
-    {
-      "side": "sell",
-      "volume": 0.00123456,
-      "entry_price": 45000.0,
-      "activation_atr": 1250.0,
-      "activation_price": 47500.0,
-      "creation_time": "2026-02-03 08:15:00",
-      "activation_time": "2026-02-03 10:30:15",
-      "trailing_price": 48200.0,
-      "stop_price": 46950.0,
-      "stop_atr": 1250.0,
-      "closing_price": 46950.0,
-      "closing_order": "OXY7KL-XXXXX-XXXXXX",
-      "closing_time": "2026-02-03 12:45:30",
-      "pnl": 4.33
-    }
-  ]
-}
-```
+- **Active positions:** stored in the `trailing_state` table and accessed via DAL functions (`load_trailing_state`, `save_trailing_state`).
+- **Closed positions:** stored in the `closed_positions` table and accessed via DAL functions (`save_closed_position`, `load_closed_positions`).
+
+Legacy JSON files under `data/` (e.g., `trailing_state.json`, `closed_positions.json`) are deprecated and no longer used by the runtime.
 
 ### Data Sink Architecture
 
-The system uses **CSV files as data sinks** for:
+CSV files (`data/*_ohlc_data_*.csv`) are retained as read-only inputs for the offline analysis tools:
 
-- **Market Data**: Historical OHLC and ATR calculations
-- **Audit Trail**: Immutable record of all closed positions
-- **Performance Analysis**: Enable post-operation backtesting and optimization
+- **Backtest & Optimizer**: `trading/backtest.py` and `trading/optimize_params.py` consume CSV market data caches
+- **Performance Analysis**: Enable post-operation backtesting and parameter optimization
+
+All runtime persistence (OHLC ingestion, position state, closed positions, and bot control flags) is stored in PostgreSQL.
 
 ## 🔌 Exchange Integration
 
@@ -285,7 +271,7 @@ The system sends real-time notifications for:
 
 **Usage**:
 ```bash
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01 MAX_OPS=50
+PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01 MAX_OPS=50
 ```
 
 ### Optimizer Module
@@ -304,7 +290,7 @@ python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01
 
 **Usage**:
 ```bash
-python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26 TRAIN_SPLIT=0.7
+PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26 TRAIN_SPLIT=0.7
 ```
 
 ### ⚠️ Transparency Note
@@ -331,7 +317,6 @@ TELEGRAM_POLL_INTERVAL=10          # Polling interval in seconds (default: 0)
 SLEEPING_INTERVAL=60               # Seconds between trading sessions (default: 60)
 PARAM_SESSIONS=720                 # Sessions before recalculating parameters (default: 720, ~12h)
 CANDLE_TIMEFRAME=15                # Candle size in minutes (default: 15)
-MARKET_DATA_DAYS=60                # Days of historical data to store (default: 60)
 ATR_PERIOD=14                      # ATR calculation period in candles (default: 14)
 ATR_DESV_LIMIT=0.2                 # ATR deviation threshold for recalibration (default: 0.2, 20%)
 MIN_VALUE=10                       # Minimum operation value in EUR (default: 10)
@@ -372,6 +357,58 @@ ETHEUR_STOP_PCT_HH=0.90            # Stop percentile for Very High volatility (9
 - If **K_ACT** is defined, activation uses: `activation_distance = K_ACT * ATR`
 - If **K_ACT** is not defined, activation uses: `activation_distance = K_STOP * ATR + MIN_MARGIN * entry_price`
 
+## 🧪 Testing
+
+The project uses a two-tier pytest strategy with Docker-first execution and an enforced coverage gate.
+
+- **Unit tests** (`tests/unit`): pure logic tests for `core/`, `trading/`, and mocked exchange wrappers in `exchange/`.
+- **Integration tests** (`tests/integration`): optional live Kraken connectivity checks, skipped by default unless explicitly enabled.
+- **Coverage gate**: `pytest.ini` enforces `--cov-fail-under=80` across `core`, `trading`, and `exchange`.
+
+### Local setup (without Docker)
+
+```bash
+pip install -r requirements-dev.txt
+pytest tests
+```
+
+### Docker setup (recommended for parity)
+
+```bash
+docker compose -f docker-compose.test.yml build test
+docker compose -f docker-compose.test.yml run --rm test pytest tests
+```
+
+The dedicated `test` service in `docker-compose.test.yml` sets `PYTHONPATH=/app`, so the container resolves the repo's flat module layout the same way as the local environment.
+
+To run live Kraken integration tests, set:
+
+```bash
+RUN_LIVE_INTEGRATION=true
+KRAKEN_API_KEY=...
+KRAKEN_API_SECRET=...
+```
+
+Or override only for a single Docker run:
+
+```bash
+docker compose -f docker-compose.test.yml run --rm -e RUN_LIVE_INTEGRATION=true test pytest tests/integration
+```
+
+If live credentials are missing, integration tests are skipped automatically.
+
+### Code quality
+
+Run linting and formatting checks inside Docker:
+
+    docker compose -f docker-compose.test.yml run --rm test ruff check .
+    docker compose -f docker-compose.test.yml run --rm test ruff format --check .
+
+Apply automatic fixes:
+
+    docker compose -f docker-compose.test.yml run --rm test ruff check . --fix
+    docker compose -f docker-compose.test.yml run --rm test ruff format .
+
 ### Infrastructure
 
 **Cloud Deployment**: Google Cloud Platform Free Tier VPS
@@ -379,38 +416,57 @@ ETHEUR_STOP_PCT_HH=0.90            # Stop percentile for Very High volatility (9
 - **Reliability**: Automatic restart on failure
 - **Cost**: Zero infrastructure cost
 
-**CI/CD Pipeline** (`.github/workflows/deploy.yml`):
+### Continuous integration and deployment
 
-```yaml
-name: Deploy BoTC
+A single workflow (`.github/workflows/ci.yml`) runs on every PR and every push to `main`:
 
-on:
-  push:
-    branches:
-      - main
+| Job | When | What |
+|---|---|---|
+| `Lint, unit and integration tests` | always | Builds the dev image once, then runs `ruff check`, `ruff format --check`, `pytest tests/unit` (with the 80% coverage gate), and `pytest tests/integration` against an ephemeral Postgres service. Kraken-gated tests are skipped in CI. |
+| `Build and push image` | `push: main` only | Builds the production image and publishes it to `ghcr.io/jajiz/botc:main` and `ghcr.io/jajiz/botc:sha-<short>` |
+| `Deploy to VPS` | `push: main` only | SSHes to the VPS, fetches the two compose files by commit SHA, and runs `docker compose pull && up -d` |
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    
-    - name: Execute remote deploy script via SSH
-      uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
-      with:
-        host: ${{ secrets.VM_IP }}
-        username: ${{ secrets.VM_USER }}
-        key: ${{ secrets.VM_KEY }}
-        script: "bash ~/deploy_BoTC.sh"
+The `needs:` chain in the workflow file enforces ordering: a failing test job blocks the image push and the deploy. Branch protection on `main` is optional — the pipeline gate is the workflow's job graph, not the branch rule.
+
+#### Rolling back to a previous image with `IMAGE_TAG`
+
+Every successful `push: main` build is tagged twice on GHCR:
+
+- `ghcr.io/jajiz/botc:main` — the moving tag, what `docker compose pull` resolves to by default.
+- `ghcr.io/jajiz/botc:sha-<short>` — an immutable tag pinned to the commit SHA. This is the rollback target.
+
+`docker-compose.prod.yml` reads the tag from the `IMAGE_TAG` environment variable and defaults to `main`. To roll back without reverting the commit on `main`:
+
+```bash
+# On the VPS, in the deploy directory containing the two compose files:
+cd "$DEPLOY_PATH"
+
+# 1. Identify the last known-good build. Either:
+#      - pick the SHA from a previous successful "Deploy to VPS" run on GitHub Actions, or
+#      - list locally available tags:
+docker image ls ghcr.io/jajiz/botc
+
+# 2. Pin IMAGE_TAG to that SHA and bring the stack up. Persist the value
+#    in the shell session so subsequent compose commands keep using it.
+export IMAGE_TAG=sha-abc1234
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+
+# 3. Verify both services are healthy.
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+curl -fsS http://127.0.0.1:8000/health
+
+# 4. To return to the latest main once the underlying issue is fixed:
+unset IMAGE_TAG
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
 ```
 
-**Deployment Flow**:
-1. Push code to `main` branch
-2. GitHub Actions triggers deployment workflow
-3. SSH connection to production VPS
-4. Remote script pulls latest code
-5. Service restart with zero downtime
+Notes:
+
+- The rollback is service-only. Database state is **not** rewound — if the bad release applied an Alembic migration, run the matching `alembic downgrade` before rolling back the image, otherwise the older image may not understand the new schema.
+- `IMAGE_TAG` is read at compose evaluation time, so set it in the same shell that runs `docker compose ... up`, or place it in a `.env` file next to the compose files for persistence across SSH sessions.
+- To make the rollback durable across reboots, keep `IMAGE_TAG=sha-<short>` in `.env` until you are ready to roll forward.
 
 ### Configuration Validation & Logging
 
@@ -464,68 +520,144 @@ All logs include timestamps and are organized by:
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### Docker
+
+Two Compose files are provided:
+
+| File | Purpose |
+|---|---|
+| `docker-compose.yml` | **Development** – bind-mounts `./data` and `./logs` so you can inspect files directly on the host. |
+| `docker-compose.prod.yml` | **Production (VPS)** – layered override that switches to named volumes (fixes Linux ownership for the non-root container user), enforces `restart: always`, and adds runtime hardening. |
+
+#### Services
+
+`docker compose up` starts three containers:
+
+| Container | Port | Role |
+|---|---|---|
+| `botc` | `8000` | FastAPI trading service + APScheduler |
+| `botc-telegram` | `8001` | Telegram bot (polling + `/notify` webhook) |
+| `botc-postgres` | `5432` | PostgreSQL database |
+
+#### Development
+
+1. Copy the environment template:
 
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
 ```
 
-**Dependencies**:
-- `pandas` & `numpy`: Data analysis and vectorized calculations
-- `scipy`: Statistical signal processing for pivot detection
-- `krakenex`: Kraken exchange integration
-- `python-telegram-bot`: Telegram bot interface
-- `python-dotenv`: Environment configuration management
+2. Build and start all services:
 
-### Local Execution
-
-1. **Configure Environment**:
-   
-   Create a `.env` file in the project root with the configuration variables shown in the [Environment Variables](#environment-variables) section above.
-
-2. **Run Bot**:
 ```bash
-python main.py
+docker compose up -d --build
 ```
+
+3. Explore the API (Swagger UI):
+
+```
+http://localhost:8000/docs
+```
+
+4. Watch logs:
+
+```bash
+docker compose logs -f botc
+docker compose logs -f botc-telegram
+```
+
+5. Stop services:
+
+```bash
+docker compose down
+```
+
+#### Production (Linux VPS)
+
+Layer the production override on top of the base file:
+
+```bash
+# First deploy
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+# Watch logs
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f botc
+
+# Stop
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+```
+
+> **Note:** On production, `./data` and `./logs` are stored in Docker named volumes (`botc_data` and `botc_logs`). To find the exact runtime volume names run `docker volume ls | grep botc`, then inspect with `docker volume inspect <volume-name>` or copy files out with `docker cp`.
 
 ### Analysis Tools
 
+Run analysis scripts using Docker:
+
 **Market Structure Analysis**:
 ```bash
-python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+docker compose run --rm botc python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
 ```
 
 **Backtest Strategy**:
 ```bash
-python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
+docker compose run --rm botc python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01
 ```
 
 **Parameter Optimization**:
 ```bash
-python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
+docker compose run --rm botc python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
+```
+
+Or run locally with Python (set `PYTHONPATH` so the flat module layout is resolvable):
+```bash
+PYTHONPATH=. python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
+PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
+PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
 ```
 
 ## 📈 Project Structure
 
 ```
 BoTCoin/
-├── main.py                      # Application entry point
+├── main.py                      # Uvicorn entry point (uvicorn main:app)
+├── docker-compose.yml           # Three-container stack (botc, botc-telegram, postgres)
+├── alembic.ini                  # Alembic migration configuration
 ├── requirements.txt             # Python dependencies
 ├── .env                         # Configuration (not in repo)
 │
+├── api/                         # FastAPI trading service
+│   ├── app.py                  # App factory + APScheduler lifespan
+│   ├── schemas.py              # Pydantic v2 response models
+│   └── routes/
+│       ├── market.py           # GET /market, /market/{pair}
+│       ├── balance.py          # GET /balance
+│       ├── positions.py        # GET /positions, /positions/{pair}
+│       ├── status.py           # GET /status
+│       └── control.py          # POST /control/pause|resume
+│
 ├── core/
 │   ├── config.py               # Configuration loader
-│   ├── runtime.py              # Thread-safe shared state
-│   ├── state.py                # Position persistence
-│   ├── logging.py              # Logging utilities
+│   ├── database.py             # Data Access Layer (PostgreSQL ORM + operations)
+│   ├── runtime.py              # Thread-safe shared state (runtime data)
+│   ├── scheduler.py            # Trading session orchestrator
+│   ├── logging.py              # Logging + Telegram notification dispatch
 │   ├── utils.py                # Common utilities
-│   └── validation.py           # Configuration validation
+│   └── validation.py           # Startup configuration validation
 │
 ├── exchange/
 │   └── kraken.py               # Kraken API integration
 │
+├── scripts/
+│   ├── load_legacy_data.py     # One-time CSV/JSON → PostgreSQL migration
+│   └── migrations/             # Alembic migration versions
+│       └── versions/
+│           └── 20260414_01_phase4_initial_schema.py
+│
 ├── services/
-│   └── telegram.py             # Telegram bot interface
+│   └── telegram/               # Telegram bot service (uvicorn services.telegram.app:app)
+│       ├── app.py              # FastAPI app + PTB polling lifespan + /notify route
+│       ├── polling.py          # Command handlers (pause, resume, status, market, positions)
+│       └── client.py           # httpx.AsyncClient pointed at the botc API
 │
 ├── trading/
 │   ├── inventory_manager.py   # Portfolio calculation logic
@@ -535,14 +667,9 @@ BoTCoin/
 │   ├── backtest.py            # Historical simulation
 │   └── optimize_params.py     # Parameter optimization
 │
-├── data/                        # Runtime data (CSV + JSON)
-│   ├── trailing_state.json     # Active positions
-│   ├── closed_positions.json   # Historical operations
-│   └── *_ohlc_data_*.csv      # Market data cache
-│
 └── .github/
     └── workflows/
-        └── deploy.yml          # CI/CD automation
+        └── ci.yml              # CI/CD automation
 ```
 
 ## 🔒 Security Considerations
@@ -560,26 +687,23 @@ The system tracks and logs:
 - **Market Metrics**: Volatility distribution, ATR percentiles, price movements
 - **Operational Metrics**: Session count, position refresh cycles, recalibration events
 
-All data persists in CSV format for:
-- Historical performance analysis
-- Strategy backtesting
-- Parameter optimization
-- Audit compliance
-
 ## 🛠️ Technical Highlights
 
 ### Core Technologies
 - **Python 3.x**: Main programming language
+- **FastAPI + Uvicorn**: REST API for trading operations and Telegram webhook
+- **APScheduler**: Non-blocking interval scheduler for the trading session
+- **python-telegram-bot**: Telegram command interface
+- **httpx**: Async HTTP client for inter-service communication
 - **Pandas & Numpy**: High-performance data analysis
 - **Scipy**: Advanced statistical calculations
-- **AsyncIO**: Asynchronous Telegram bot integration
-- **Threading**: Concurrent operation (trading loop + bot interface)
 
 ### Design Patterns
+- **Two-container API architecture**: `botc` (trading API on :8000) and `botc-telegram` (bot service on :8001) communicate over a shared Docker network
 - **Modular Architecture**: Separation of concerns (trading, exchange, services)
 - **Configuration as Code**: Environment-driven behavior
-- **State Persistence**: JSON for active state, CSV for historical audit
-- **Thread-Safe State**: Locking mechanism for concurrent access
+- **State Persistence**: PostgreSQL for all runtime state (trailing stop, closed positions, bot control, OHLC)
+- **Thread-Safe State**: Locking mechanism for concurrent access between APScheduler and FastAPI request handlers
 
 ### Key Algorithms
 - **ATR-Based Volatility**: Dynamic stop distances using True Range
