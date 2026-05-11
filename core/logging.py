@@ -6,19 +6,24 @@ import httpx
 
 from core.config import API_SECRET_TOKEN, TELEGRAM_ENABLED
 
-os.makedirs("logs", exist_ok=True)
-file_handler = TimedRotatingFileHandler(
-    filename="logs/BoTC.log",
-    when="midnight",
-    interval=1,
-    backupCount=7,
-    encoding="utf-8",
-)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[file_handler, logging.StreamHandler()],
-)
+
+def configure_logging(filename: str = "BoTC.log") -> None:
+    os.makedirs("logs", exist_ok=True)
+    file_handler = TimedRotatingFileHandler(
+        filename=f"logs/{filename}",
+        when="midnight",
+        interval=1,
+        backupCount=7,
+        encoding="utf-8",
+    )
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[file_handler, logging.StreamHandler()],
+    )
+
+
+configure_logging()
 
 TELEGRAM_SERVICE_URL = os.getenv("TELEGRAM_SERVICE_URL")
 

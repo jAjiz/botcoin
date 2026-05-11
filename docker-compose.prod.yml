@@ -10,8 +10,6 @@ services:
     image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}
     build: !reset null
     restart: always
-    volumes:
-      - botc_logs:/app/logs
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -24,8 +22,6 @@ services:
     image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}
     build: !reset null
     restart: always
-    volumes:
-      - telegram_logs:/app/logs
     security_opt:
       - no-new-privileges:true
     deploy:
@@ -33,7 +29,3 @@ services:
         limits:
           cpus: "0.5"
           memory: 256M
-
-volumes:
-  botc_logs:
-  telegram_logs:

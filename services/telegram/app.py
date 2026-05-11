@@ -8,8 +8,11 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, TELEGRAM_ENABLED, TELEGRAM_POLL_INTERVAL, TELEGRAM_USER_ID
+from core.logging import configure_logging
 from services.telegram.polling import build_tg_app
 from telegram.ext import Application
+
+configure_logging("Telegram.log")
 
 tg_app: Application | None = None
 
