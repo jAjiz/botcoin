@@ -32,6 +32,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from core.database import (
     ClosedPosition,
+    TrailingState,
     check_database_connection,
     get_session,
     save_ohlc_data,
@@ -112,9 +113,7 @@ def _closed_position_row(pair: str, entry: dict[str, Any]) -> dict[str, Any]:
         "activation_atr": entry.get("activation_atr"),
         "activation_price": entry.get("activation_price"),
         "created_at": _parse_datetime(entry["creation_time"]),
-        "activated_at": (
-            _parse_datetime(entry["activation_time"]) if entry.get("activation_time") else None
-        ),
+        "activated_at": (_parse_datetime(entry["activation_time"]) if entry.get("activation_time") else None),
         "trailing_price": entry.get("trailing_price"),
         "stop_price": entry.get("stop_price"),
         "stop_atr": entry.get("stop_atr"),
@@ -123,6 +122,15 @@ def _closed_position_row(pair: str, entry: dict[str, Any]) -> dict[str, Any]:
         "closed_at": _parse_datetime(entry["closing_time"]),
         "pnl_percent": entry["pnl"],
     }
+
+
+def clean_trailing_state(dry_run: bool = False) -> None:
+    # Wipe stale state so the bot rebuilds it from the freshly migrated data on next start.
+    if dry_run:
+        return
+    with get_session() as session:
+        session.query(TrailingState).delete()
+    logger.info("Cleared trailing_state table")
 
 
 def load_closed_positions(path: str, dry_run: bool = False) -> int:
@@ -144,7 +152,9 @@ def load_closed_positions(path: str, dry_run: bool = False) -> int:
             except KeyError as e:
                 logger.warning(
                     "Skipping closed position for %s (missing field %s): %s",
-                    pair, e, entry.get("closing_order"),
+                    pair,
+                    e,
+                    entry.get("closing_order"),
                 )
 
     logger.info("Prepared %d closed-position rows", len(rows))
@@ -152,9 +162,7 @@ def load_closed_positions(path: str, dry_run: bool = False) -> int:
         return len(rows)
 
     # Bulk insert with conflict skip on unique closing_order_id so re-runs are safe.
-    stmt = pg_insert(ClosedPosition.__table__).values(rows).on_conflict_do_nothing(
-        index_elements=["closing_order_id"]
-    )
+    stmt = pg_insert(ClosedPosition.__table__).values(rows).on_conflict_do_nothing(index_elements=["closing_order_id"])
     with get_session() as session:
         result = session.execute(stmt)
     inserted = result.rowcount if result.rowcount is not None else len(rows)
@@ -178,6 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Closed positions JSON file",
     )
     parser.add_argument("--dry-run", action="store_true", help="Don't write to the database; just report counts")
+    parser.add_argument("--clean-trailing-state", action="store_true", help="Delete all rows from trailing_state before importing")
     parser.add_argument("--yes", action="store_true", help="Don't prompt for confirmation")
 
     args = parser.parse_args(argv)
@@ -223,15 +232,19 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             closed_count = 0
 
-    logger.info(
-        "Planned import: %d CSV rows, %d closed-position entries", total_rows, closed_count
-    )
+    logger.info("Planned import: %d CSV rows, %d closed-position entries", total_rows, closed_count)
 
     if args.dry_run:
         logger.info("Dry run requested; no writes will be performed")
     elif not args.yes and not confirm("Proceed with import? [y/N]: "):
         logger.info("Aborted by user")
         return 1
+
+    if args.clean_trailing_state:
+        try:
+            clean_trailing_state(dry_run=args.dry_run)
+        except Exception as e:
+            logger.exception("Error cleaning trailing state: %s", e)
 
     imported = 0
     for p in csv_files:
