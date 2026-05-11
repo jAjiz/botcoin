@@ -15,10 +15,6 @@ venv/
 .vscode/
 .idea/
 
-# Local runtime/state folders mounted in compose
-logs/
-data/
-
 # Secrets and local env files
 .env
 .env.*

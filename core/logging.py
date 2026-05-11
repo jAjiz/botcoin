@@ -1,26 +1,22 @@
 import logging
 import os
-from logging.handlers import TimedRotatingFileHandler
 
 import httpx
 
 from core.config import API_SECRET_TOKEN, TELEGRAM_ENABLED
 
 
-def configure_logging(filename: str = "BoTC.log") -> None:
-    os.makedirs("logs", exist_ok=True)
-    file_handler = TimedRotatingFileHandler(
-        filename=f"logs/{filename}",
-        when="midnight",
-        interval=1,
-        backupCount=7,
-        encoding="utf-8",
-    )
+def configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[file_handler, logging.StreamHandler()],
+        handlers=[logging.StreamHandler()],
+        force=True,
     )
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        lg = logging.getLogger(name)
+        lg.handlers.clear()
+        lg.propagate = True
 
 
 configure_logging()

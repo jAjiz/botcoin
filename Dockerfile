@@ -29,14 +29,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN groupadd --system --gid 1001 appgroup \
-    && useradd --system --uid 1001 --gid appgroup --create-home appuser
+RUN groupadd --system appgroup \
+    && useradd --system --gid appgroup --create-home appuser
 
 COPY --from=builder /opt/venv /opt/venv
 COPY . /app
 
-RUN mkdir -p /app/logs \
-    && chown -R appuser:appgroup /app \
+RUN chown -R appuser:appgroup /app \
     && chmod +x /app/scripts/entrypoint.sh
 
 USER appuser

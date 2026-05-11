@@ -526,8 +526,8 @@ Two Compose files are provided:
 
 | File | Purpose |
 |---|---|
-| `docker-compose.yml` | **Development** – bind-mounts `./data` and `./logs` so you can inspect files directly on the host. |
-| `docker-compose.prod.yml` | **Production (VPS)** – layered override that switches to named volumes (fixes Linux ownership for the non-root container user), enforces `restart: always`, and adds runtime hardening. |
+| `docker-compose.yml` | **Development** – bind-mounts `./data` so you can inspect files directly on the host. Logs go to stdout (`docker compose logs`). |
+| `docker-compose.prod.yml` | **Production (VPS)** – layered override that switches `./data` to a named volume (fixes Linux ownership for the non-root container user), enforces `restart: always`, and adds runtime hardening. |
 
 #### Services
 
@@ -587,7 +587,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f botc
 docker compose -f docker-compose.yml -f docker-compose.prod.yml down
 ```
 
-> **Note:** On production, `./data` and `./logs` are stored in Docker named volumes (`botc_data` and `botc_logs`). To find the exact runtime volume names run `docker volume ls | grep botc`, then inspect with `docker volume inspect <volume-name>` or copy files out with `docker cp`.
+> **Note:** On production, `./data` is stored in a Docker named volume (`botc_data`). To find the exact runtime volume name run `docker volume ls | grep botc`, then inspect with `docker volume inspect <volume-name>` or copy files out with `docker cp`. Logs are read via `docker compose logs` and persist only for the lifetime of the container — for long-term retention, switch the logging driver to `journald` in `docker-compose.prod.yml`.
 
 ### Analysis Tools
 

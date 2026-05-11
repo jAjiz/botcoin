@@ -5,7 +5,7 @@ from typing import Any
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-from core.config import PAIRS, PARAM_SESSIONS, SLEEPING_INTERVAL
+from core.config import PAIRS, PARAM_SESSIONS
 from core.utils import now_utc
 from exchange.kraken import get_balance, get_last_prices
 from trading.market_analyzer import get_current_atr
@@ -91,4 +91,4 @@ def trading_session() -> None:
 
     _session_count += 1
     runtime.update_last_run_at(now_utc())
-    logging.info(f"Session complete. Next run in {SLEEPING_INTERVAL}s.\n")
+    logging.info("======== SESSION COMPLETE ========")

@@ -55,7 +55,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         resp.raise_for_status()
         data = resp.json()
         status = "⏸ PAUSED" if data["paused"] else "▶️ RUNNING"
-        await update.message.reply_text(f"Status: {status}\nPairs: {', '.join(PAIRS.keys())}\n")
+        last_run_at = data.get("last_run_at") or "N/A"
+        await update.message.reply_text(f"Status: {status}\nLast run: {last_run_at}")
     except Exception as e:
         logging.error(f"Error in status_command: {e}")
         await update.message.reply_text("❌ Could not fetch bot status.")

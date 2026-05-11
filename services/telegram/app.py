@@ -12,7 +12,7 @@ from core.logging import configure_logging
 from services.telegram.polling import build_tg_app
 from telegram.ext import Application
 
-configure_logging("Telegram.log")
+configure_logging()
 
 tg_app: Application | None = None
 
