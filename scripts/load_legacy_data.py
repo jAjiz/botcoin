@@ -4,7 +4,8 @@ This is a small, guarded ETL useful for one-off migration runs.
 
 - Loads CSV files matching `*_ohlc_data_*min.csv` from the `data/` directory
   and saves rows into `ohlc_data` using `core.database.save_ohlc_data`.
-- Loads `trailing_state.json` and upserts rows using `core.database.save_trailing_state`.
+- Loads `closed_positions.json` and inserts rows into `closed_positions`.
+  Existing `closing_order_id` values are skipped (idempotent re-runs).
 
 Design choices:
 - Reuses existing `core.database` helpers so behavior and validation match application logic.
@@ -12,7 +13,7 @@ Design choices:
 - Avoids embedding long-running IO inside Alembic migrations.
 
 Run example:
-    python scripts/load_legacy_data.py --data-dir data --json-file data/trailing_state.json
+    python scripts/load_legacy_data.py --data-dir data
 """
 
 from __future__ import annotations
@@ -27,14 +28,21 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pandas as pd
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from core.database import check_database_connection, save_ohlc_data, save_trailing_state
+from core.database import (
+    ClosedPosition,
+    check_database_connection,
+    get_session,
+    save_ohlc_data,
+)
 
 logger = stdlib_logging.getLogger("load_legacy_data")
 
 CSV_PATTERN = re.compile(r"(?P<pair>.+)_ohlc_data_(?P<timeframe>\d+)min\.csv$")
 CSV_COLUMNS = ["time", "open", "high", "low", "close", "vwap", "volume", "count", "atr"]
-_TRAILING_STATE_DATETIME_FIELDS = ("created_at", "activated_at", "closing_requested_at")
+# Stay under PostgreSQL's 65535-parameter limit: ~14 cols per OHLC row → 4000 rows ≈ 56k params.
+OHLC_BATCH_SIZE = 4000
 
 
 def _parse_datetime(value: str) -> datetime:
@@ -86,30 +94,72 @@ def load_csv_file(path: str, dry_run: bool = False) -> int:
     if dry_run:
         return len(df_selected)
 
-    # Use existing application helper to save rows (per-row ORM insert).
-    save_ohlc_data(pair, timeframe, df_selected)
-    return len(df_selected)
+    total = len(df_selected)
+    for start in range(0, total, OHLC_BATCH_SIZE):
+        chunk = df_selected.iloc[start : start + OHLC_BATCH_SIZE]
+        save_ohlc_data(pair, timeframe, chunk)
+        logger.info("  %s: saved %d/%d rows", pair, min(start + OHLC_BATCH_SIZE, total), total)
+    return total
 
 
-def load_trailing_state(path: str, dry_run: bool = False) -> int:
+def _closed_position_row(pair: str, entry: dict[str, Any]) -> dict[str, Any]:
+    """Map a legacy closed-position JSON entry to a `closed_positions` row dict."""
+    return {
+        "pair": pair,
+        "side": entry["side"],
+        "volume": entry["volume"],
+        "entry_price": entry["entry_price"],
+        "activation_atr": entry.get("activation_atr"),
+        "activation_price": entry.get("activation_price"),
+        "created_at": _parse_datetime(entry["creation_time"]),
+        "activated_at": (
+            _parse_datetime(entry["activation_time"]) if entry.get("activation_time") else None
+        ),
+        "trailing_price": entry.get("trailing_price"),
+        "stop_price": entry.get("stop_price"),
+        "stop_atr": entry.get("stop_atr"),
+        "closing_price": entry["closing_price"],
+        "closing_order_id": entry["closing_order"],
+        "closed_at": _parse_datetime(entry["closing_time"]),
+        "pnl_percent": entry["pnl"],
+    }
+
+
+def load_closed_positions(path: str, dry_run: bool = False) -> int:
     if not os.path.exists(path):
-        logger.info("Trailing state JSON not found: %s", path)
+        logger.info("Closed positions JSON not found: %s", path)
         return 0
-    logger.info("Loading trailing state JSON: %s", path)
+    logger.info("Loading closed positions JSON: %s", path)
     with open(path, encoding="utf-8") as fh:
-        data: dict[str, dict[str, Any]] = json.load(fh)
+        data: dict[str, list[dict[str, Any]]] = json.load(fh)
 
-    count = 0
-    for pair, state in data.items():
-        count += 1
-        logger.info("Found trailing state for %s", pair)
-        if not dry_run:
-            parsed = dict(state)
-            for field in _TRAILING_STATE_DATETIME_FIELDS:
-                if field in parsed and parsed[field] is not None:
-                    parsed[field] = _parse_datetime(parsed[field])
-            save_trailing_state(pair, parsed)
-    return count
+    rows: list[dict[str, Any]] = []
+    for pair, entries in data.items():
+        if not isinstance(entries, list):
+            logger.warning("Skipping %s: expected list of positions", pair)
+            continue
+        for entry in entries:
+            try:
+                rows.append(_closed_position_row(pair, entry))
+            except KeyError as e:
+                logger.warning(
+                    "Skipping closed position for %s (missing field %s): %s",
+                    pair, e, entry.get("closing_order"),
+                )
+
+    logger.info("Prepared %d closed-position rows", len(rows))
+    if dry_run or not rows:
+        return len(rows)
+
+    # Bulk insert with conflict skip on unique closing_order_id so re-runs are safe.
+    stmt = pg_insert(ClosedPosition.__table__).values(rows).on_conflict_do_nothing(
+        index_elements=["closing_order_id"]
+    )
+    with get_session() as session:
+        result = session.execute(stmt)
+    inserted = result.rowcount if result.rowcount is not None else len(rows)
+    logger.info("Inserted %d new closed positions (skipped %d duplicates)", inserted, len(rows) - inserted)
+    return inserted
 
 
 def confirm(prompt: str) -> bool:
@@ -122,11 +172,20 @@ def confirm(prompt: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Load legacy CSV/JSON data into the database")
     parser.add_argument("--data-dir", default="data", help="Directory containing legacy CSV files")
-    parser.add_argument("--json-file", default="data/trailing_state.json", help="Trailing state JSON file")
+    parser.add_argument(
+        "--closed-positions-file",
+        default="data/closed_positions.json",
+        help="Closed positions JSON file",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Don't write to the database; just report counts")
     parser.add_argument("--yes", action="store_true", help="Don't prompt for confirmation")
 
     args = parser.parse_args(argv)
+
+    stdlib_logging.basicConfig(
+        level=stdlib_logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
     if not os.path.isdir(args.data_dir):
         logger.error("Data directory not found: %s", args.data_dir)
@@ -138,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         return 3
 
     csv_files = find_csv_files(args.data_dir)
-    if not csv_files and not os.path.exists(args.json_file):
+    if not csv_files and not os.path.exists(args.closed_positions_file):
         logger.info("No CSV or JSON files found to import in %s", args.data_dir)
         return 0
 
@@ -154,16 +213,19 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             logger.debug("Could not count rows for %s", p)
 
-    trailing_count = 0
-    if os.path.exists(args.json_file):
+    closed_count = 0
+    if os.path.exists(args.closed_positions_file):
         try:
-            with open(args.json_file, encoding="utf-8") as fh:
+            with open(args.closed_positions_file, encoding="utf-8") as fh:
                 j = json.load(fh)
-            trailing_count = len(j.keys()) if isinstance(j, dict) else 0
+            if isinstance(j, dict):
+                closed_count = sum(len(v) for v in j.values() if isinstance(v, list))
         except Exception:
-            trailing_count = 0
+            closed_count = 0
 
-    logger.info("Planned import: %d CSV rows, %d trailing_state entries", total_rows, trailing_count)
+    logger.info(
+        "Planned import: %d CSV rows, %d closed-position entries", total_rows, closed_count
+    )
 
     if args.dry_run:
         logger.info("Dry run requested; no writes will be performed")
@@ -171,7 +233,6 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Aborted by user")
         return 1
 
-    # Process CSVs
     imported = 0
     for p in csv_files:
         try:
@@ -181,13 +242,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             logger.exception("Error processing %s: %s", p, e)
 
-    # Process trailing_state.json
     try:
-        n = load_trailing_state(args.json_file, dry_run=args.dry_run)
-        logger.info("Processed trailing state entries: %d", n)
+        n = load_closed_positions(args.closed_positions_file, dry_run=args.dry_run)
+        logger.info("Processed closed-position entries: %d", n)
         imported += n
     except Exception as e:
-        logger.exception("Error loading trailing state: %s", e)
+        logger.exception("Error loading closed positions: %s", e)
 
     logger.info("Import complete. Total rows/entries processed: %d", imported)
     return 0
