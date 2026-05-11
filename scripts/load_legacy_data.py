@@ -186,7 +186,9 @@ def main(argv: list[str] | None = None) -> int:
         help="Closed positions JSON file",
     )
     parser.add_argument("--dry-run", action="store_true", help="Don't write to the database; just report counts")
-    parser.add_argument("--clean-trailing-state", action="store_true", help="Delete all rows from trailing_state before importing")
+    parser.add_argument(
+        "--clean-trailing-state", action="store_true", help="Delete all rows from trailing_state before importing"
+    )
     parser.add_argument("--yes", action="store_true", help="Don't prompt for confirmation")
 
     args = parser.parse_args(argv)
