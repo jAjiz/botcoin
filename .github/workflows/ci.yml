@@ -107,7 +107,9 @@ jobs:
           envs: DEPLOY_PATH,IMAGE_TAG,COMMIT_SHA
           script: |
             set -euo pipefail
-            mkdir -p "$DEPLOY_PATH"
+            mkdir -p "$DEPLOY_PATH/logs"
+            chown -R 1001:1001 "$DEPLOY_PATH/logs"
+
             curl -fsSL "https://raw.githubusercontent.com/jAjiz/BoTC/${COMMIT_SHA}/docker-compose.yml" \
               -o "$DEPLOY_PATH/docker-compose.yml"
             curl -fsSL "https://raw.githubusercontent.com/jAjiz/BoTC/${COMMIT_SHA}/docker-compose.prod.yml" \

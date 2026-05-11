@@ -29,8 +29,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN groupadd --system appgroup \
-    && useradd --system --gid appgroup --create-home appuser
+RUN groupadd --system --gid 1001 appgroup \
+    && useradd --system --uid 1001 --gid appgroup --create-home appuser
 
 COPY --from=builder /opt/venv /opt/venv
 COPY . /app
