@@ -24,6 +24,9 @@ PYTHONPATH=. pytest tests/unit/trading/test_positions_manager.py::test_is_closin
 # Run integration tests (require live DB + Kraken credentials)
 RUN_DB_INTEGRATION=true PYTHONPATH=. pytest tests/integration/
 
+# Run all unit tests + ruff (the full local test pass)
+PYTHONPATH=. pytest tests/unit/ && python -m ruff check . && python -m ruff format --check .
+
 # Lint + format check
 python -m ruff check .
 python -m ruff format --check .
