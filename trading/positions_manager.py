@@ -27,7 +27,7 @@ def create_position(
         return
 
     activation_price = calculate_activation_price(pair, side, current_price, atr_val)
-    stored_volume = round(volume, 8)
+    stored_volume = int(volume * 1e8) / 1e8
 
     trailing_state[pair] = {
         "side": side,
@@ -122,7 +122,7 @@ def refresh_position(
         _drop_position(f"volume {volume:.8f} <= 0")
         return False
 
-    pos["volume"] = round(volume, 8)
+    pos["volume"] = int(volume * 1e8) / 1e8
     return True
 
 
@@ -212,11 +212,11 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
         side = pos["side"]
         stop_price = pos["stop_price"]
         current_price = last_prices[pair]
-        logging.info(
-            f"[{pair}] ⛔ Stop price {stop_price:,}€ hitted: placing LIMIT {side.upper()} order", to_telegram=True
-        )
-
         volume = float(pos.get("volume", 0.0))
+        logging.info(
+            f"[{pair}] ⛔ Stop price {stop_price:,}€ hitted: placing LIMIT {side.upper()} order | {volume:.8f} @ {current_price:,.1f}€",
+            to_telegram=True,
+        )
 
         closing_order = place_limit_order(pair, side, current_price, volume)
         if not closing_order:

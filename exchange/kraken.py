@@ -128,7 +128,7 @@ def place_limit_order(pair: str, side: str, price: float, volume: float) -> str 
     if result is None:
         return None
     new_order = result.get("txid", [None])[0]
-    logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} BTC @ {price:,.1f}€)")
+    logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} @ {price:,.1f}€)")
     return new_order
 
 
