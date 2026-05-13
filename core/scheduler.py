@@ -25,12 +25,9 @@ READ_ONLY_RETRY_ATTEMPTS: int = 3
 
 def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
     for attempt in range(READ_ONLY_RETRY_ATTEMPTS):
-        try:
-            result = func(*args)
-            if result is not None:
-                return result
-        except Exception as e:
-            logging.warning(f"Attempt {attempt + 1}/{READ_ONLY_RETRY_ATTEMPTS} failed for {func.__name__}: {e}")
+        result = func(*args)
+        if result is not None:
+            return result
         if attempt < READ_ONLY_RETRY_ATTEMPTS - 1:
             time.sleep(1)
     return None
