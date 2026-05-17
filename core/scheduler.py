@@ -85,6 +85,8 @@ def trading_session() -> None:
 
         if trailing_state.get(pair):
             db.save_trailing_state(pair, trailing_state[pair])
+        else:
+            db.delete_trailing_state(pair)
 
     _session_count += 1
     runtime.update_last_run_at(now_utc())
