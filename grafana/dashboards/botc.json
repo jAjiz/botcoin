@@ -216,7 +216,7 @@
         {
           "datasource": { "type": "postgres", "uid": "botc-postgres" },
           "format": "table",
-          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - MAX(ended_at))) FROM sessions WHERE status = 'ok'",
+          "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - MAX(ended_at))) FROM sessions WHERE status = 'completed'",
           "refId": "A"
         }
       ],

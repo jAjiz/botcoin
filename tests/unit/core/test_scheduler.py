@@ -27,7 +27,7 @@ def test_trading_session_records_successful_session(monkeypatch):
 
     final = calls[0]
     assert final["session_id"] == 1
-    assert final["status"] == "ok"
+    assert final["status"] == "completed"
     assert final["balance"] == {"EUR": "100"}
     assert final["pair_data"] == {}
     assert any("SESSION COMPLETE" in m["message"] for m in final["log_messages"])

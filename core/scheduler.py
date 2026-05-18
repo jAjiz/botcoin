@@ -125,7 +125,7 @@ def trading_session() -> None:
         _session_count += 1
         runtime.update_last_run_at(now_utc())
         logging.info("======== SESSION COMPLETE ========")
-        status = "ok"
+        status = "completed"
     except Exception:
         logging.exception("Unhandled exception in trading_session")
         status = "failed"
