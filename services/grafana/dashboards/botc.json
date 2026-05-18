@@ -31,7 +31,7 @@
         {
           "datasource": { "type": "postgres", "uid": "botc-postgres" },
           "format": "time_series",
-          "rawSql": "SELECT to_timestamp(\"time\") AS time, pair AS metric, close FROM ohlc_data WHERE pair IN ($pair) AND $__timeFilter(to_timestamp(\"time\")) ORDER BY 1",
+          "rawSql": "SELECT to_timestamp(\"time\") AS time, pair AS metric, close FROM ohlc_data WHERE pair IN ($pair) AND $__unixEpochFilter(\"time\") ORDER BY 1",
           "refId": "A"
         }
       ],
@@ -51,7 +51,7 @@
         {
           "datasource": { "type": "postgres", "uid": "botc-postgres" },
           "format": "time_series",
-          "rawSql": "SELECT to_timestamp(\"time\") AS time, pair AS metric, atr FROM ohlc_data WHERE pair IN ($pair) AND $__timeFilter(to_timestamp(\"time\")) AND atr IS NOT NULL ORDER BY 1",
+          "rawSql": "SELECT to_timestamp(\"time\") AS time, pair AS metric, atr FROM ohlc_data WHERE pair IN ($pair) AND $__unixEpochFilter(\"time\") AND atr IS NOT NULL ORDER BY 1",
           "refId": "A"
         }
       ],
