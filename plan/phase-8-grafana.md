@@ -683,51 +683,48 @@ Before exporting, set the dashboard properties:
 
 ### 5.3 Panel spec
 
-Three rows, twelve panels total. All panels target the `PostgreSQL` datasource (uid `botc-postgres`). Time-series panels use Grafana's built-in `$__timeFilter()` macro so the dashboard's time range controls them automatically.
+Four rows, twelve panels total. All panels target the `PostgreSQL` datasource (uid `botc-postgres`). The `pair` variable is **single-select, no All option** — queries use `pair = '$pair'` throughout.
 
-#### Row 1 — Market metrics
-
-| # | Title | Panel type | Query |
-|---|---|---|---|
-| 1 | Close price | Time series | `SELECT to_timestamp("time") AS time, pair AS metric, close FROM ohlc_data WHERE pair IN ($pair) AND $__timeFilter(to_timestamp("time")) ORDER BY 1` |
-| 2 | ATR | Time series | `SELECT to_timestamp("time") AS time, pair AS metric, atr FROM ohlc_data WHERE pair IN ($pair) AND $__timeFilter(to_timestamp("time")) AND atr IS NOT NULL ORDER BY 1` |
-| 3 | Latest close per pair | Stat (repeat by `$pair`) | `SELECT close FROM ohlc_data WHERE pair = '$pair' ORDER BY "time" DESC LIMIT 1` |
-
-#### Row 2 — Performance metrics
+#### Row 1 — System metrics
 
 | # | Title | Panel type | Query |
 |---|---|---|---|
-| 4 | Total closed positions | Stat | `SELECT COUNT(*) FROM closed_positions WHERE $__timeFilter(closed_at)` |
-| 5 | Cumulative PnL % | Stat | `SELECT COALESCE(SUM(pnl_percent), 0) FROM closed_positions WHERE $__timeFilter(closed_at)` |
-| 6 | Win/loss ratio | Stat | `SELECT CASE WHEN SUM(CASE WHEN pnl_percent <= 0 THEN 1 ELSE 0 END) = 0 THEN NULL ELSE SUM(CASE WHEN pnl_percent > 0 THEN 1 ELSE 0 END)::float / SUM(CASE WHEN pnl_percent <= 0 THEN 1 ELSE 0 END)::float END FROM closed_positions WHERE $__timeFilter(closed_at)` |
-| 7 | PnL per close | Bar chart | `SELECT closed_at AS time, pair AS metric, pnl_percent FROM closed_positions WHERE $__timeFilter(closed_at) AND pair IN ($pair) ORDER BY closed_at` |
-| 8 | Cumulative PnL over time | Time series | `SELECT closed_at AS time, SUM(pnl_percent) OVER (ORDER BY closed_at) AS cumulative_pnl FROM closed_positions WHERE $__timeFilter(closed_at) ORDER BY closed_at` |
-| 9 | Open positions | Table | `SELECT pair, side, entry_price, activation_price, trailing_price, stop_price, updated_at FROM trailing_state WHERE closing_order_id IS NULL AND pair IN ($pair) ORDER BY pair` |
+| 1 | Bot paused | Stat (value mapping: `1` → "PAUSED" red, `0` → "RUNNING" green) | `SELECT (control_value = 'true')::int FROM bot_control WHERE control_key = 'bot_paused'` |
+| 2 | Last successful session | Stat (unit: dateTimeAsLocal) | `SELECT MAX(ended_at) AS last_session FROM sessions WHERE status = 'completed'` |
 
-#### Row 3 — System metrics
+#### Row 2 — Market metrics
 
 | # | Title | Panel type | Query |
 |---|---|---|---|
-| 10 | Seconds since last successful session | Stat (thresholds: green ≤ 120, yellow ≤ 300, red > 300) | `SELECT EXTRACT(EPOCH FROM (now() - MAX(ended_at))) FROM sessions WHERE status = 'ok'` |
-| 11 | Bot paused | Stat (value mapping: `1` → "PAUSED" red, `0` → "RUNNING" green) | `SELECT (control_value = 'true')::int FROM bot_control WHERE control_key = 'bot_paused'` |
-| 12 | OHLC ingestion rate | Time series | `SELECT date_trunc('hour', updated_at) AS time, pair AS metric, COUNT(*) AS rows FROM ohlc_data WHERE $__timeFilter(updated_at) AND pair IN ($pair) GROUP BY 1, pair ORDER BY 1` |
+| 3 | Price | Candlestick | `SELECT to_timestamp("time") AS time, open::float AS open, high::float AS high, low::float AS low, close::float AS close FROM ohlc_data WHERE pair = '$pair' AND $__unixEpochFilter("time") ORDER BY 1` |
+| 4 | ATR | Time series | `SELECT to_timestamp("time") AS time, atr::float AS atr FROM ohlc_data WHERE pair = '$pair' AND $__unixEpochFilter("time") AND atr IS NOT NULL ORDER BY 1` |
+| 5 | Open positions | Table | `SELECT pair, side, entry_price, activation_price, trailing_price, stop_price, updated_at FROM trailing_state WHERE closing_order_id IS NULL AND pair = '$pair' ORDER BY pair` |
+
+#### Row 3 — Performance metrics (all-time, no time filter)
+
+| # | Title | Panel type | Query |
+|---|---|---|---|
+| 6 | Total closed positions | Stat | `SELECT COUNT(*) AS total FROM closed_positions WHERE pair = '$pair'` |
+| 7 | Win/loss ratio | Stat | `SELECT COALESCE(SUM(CASE WHEN pnl_percent > 0 THEN 1.0 ELSE 0.0 END) / NULLIF(SUM(CASE WHEN pnl_percent <= 0 THEN 1.0 ELSE 0.0 END), 0), 0) AS win_loss_ratio FROM closed_positions WHERE pair = '$pair'` |
+| 8 | PnL per close | Bar chart | `SELECT closed_at AS time, pnl_percent FROM closed_positions WHERE pair = '$pair' ORDER BY closed_at` |
+| 9 | Cumulative PnL over time | Time series | `SELECT closed_at AS time, SUM(pnl_percent) OVER (ORDER BY closed_at) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' ORDER BY closed_at` |
 
 #### Row 4 — Sessions
 
 | # | Title | Panel type | Query |
 |---|---|---|---|
-| 13 | Sessions per hour by status | Time series (stacked) | `SELECT date_trunc('hour', started_at) AS time, status AS metric, COUNT(*) AS sessions FROM sessions WHERE $__timeFilter(started_at) GROUP BY 1, status ORDER BY 1` |
-| 14 | Session failure rate (last 24h) | Stat (thresholds: green ≤ 0.05, yellow ≤ 0.20, red > 0.20) | `SELECT COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0), 0) FROM sessions WHERE started_at >= now() - interval '24 hours'` |
-| 15 | Recent sessions | Table | `SELECT id, started_at, ended_at, status, EXTRACT(EPOCH FROM (ended_at - started_at)) AS duration_s, jsonb_array_length(COALESCE(log_messages, '[]'::jsonb)) AS log_count FROM sessions ORDER BY started_at DESC LIMIT 50` |
-| 16 | Last session log | Logs | `SELECT (msg->>'ts')::timestamptz AS time, msg->>'level' AS level, msg->>'message' AS body FROM sessions, jsonb_array_elements(log_messages) AS msg WHERE id = (SELECT MAX(id) FROM sessions) ORDER BY time` |
+| 10 | Sessions by status | Bar chart | `SELECT status, COUNT(*) AS sessions FROM sessions WHERE $__timeFilter(started_at) GROUP BY status ORDER BY status` |
+| 11 | Recent sessions | Table | `SELECT id, started_at, ended_at, status, EXTRACT(EPOCH FROM (ended_at - started_at)) AS duration_s, CASE WHEN log_messages::text ILIKE '%Stop%' THEN 'close' WHEN log_messages::text ILIKE '%New%' THEN 'open' WHEN log_messages::text ILIKE '%Update%' OR log_messages::text ILIKE '%Recalibrate%' OR log_messages::text ILIKE '%Re-anchor%' THEN 'update' ELSE '-' END AS activity FROM sessions ORDER BY started_at DESC LIMIT 50` |
+| 12 | Last session log | Table | `SELECT (msg->>'ts')::timestamptz AS time, msg->>'level' AS level, msg->>'message' AS message FROM sessions, jsonb_array_elements(log_messages) AS msg WHERE id = (SELECT MAX(id) FROM sessions) ORDER BY time` |
 
 Implementation notes for the panel author:
-- Every time-series query orders by `time ASC` because Grafana's Postgres datasource requires it for proper graph rendering.
-- Panel 11's value mapping is a Grafana UI feature, not part of the SQL. Configure `Field overrides → Value mappings`.
-- Panel 7 uses `Bar chart`, not `Time series`, because `pnl_percent` is a discrete per-close value, not a continuous metric.
-- Panel 9 ("Open positions") deliberately reads `trailing_state` rather than synthesising from `closed_positions` — the table directly reflects the live state and updates within one tick.
-- Panel 16 uses Grafana's `Logs` panel type against a SQL source. Configure the field mapping so `body` is the message body and `level` drives row coloring. The `jsonb_array_elements` unrolls the per-record JSON written by `_SessionLogCollector` (Step 1.4) into one Grafana row per log line.
-- Panel 13's stacked time series makes a sudden spike in `failed` or `paused` sessions visually obvious — pair it with Panel 14 for the at-a-glance rate.
+- `ohlc_data.time` is a BigInt unix epoch — use `$__unixEpochFilter("time")` (not `$__timeFilter`). The `to_timestamp()` wrapper is only in the `SELECT` to give Grafana a proper time axis.
+- Panel 3 (Candlestick) uses `format: table`; Grafana auto-maps columns named `open`, `high`, `low`, `close`.
+- Panel 7 (Win/loss) uses `COALESCE(..., 0)` with explicit `1.0` literals to avoid integer division and to return `0` instead of `NULL` when there are no losing trades. The previous `THEN NULL` approach rendered as `0` in the stat panel.
+- Performance panels (6–9) have no time filter — they show all-time stats for the selected pair.
+- Panel 10 (Sessions by status) is a bar chart grouped by `status` — shows total count per status in the selected time range, not a time series.
+- Panel 11 (Recent sessions) derives `activity` from `log_messages::text ILIKE` pattern matching: `'%Stop%'` → close, `'%New%'` → open, `'%Update%'`/`'%Recalibrate%'`/`'%Re-anchor%'` → update.
+- Panel 12 (Last session log) is a plain `table` panel — raw rows of `time`, `level`, `message`. Simpler than the `Logs` panel type.
 
 ### 5.4 Verify the dashboard JSON file
 
