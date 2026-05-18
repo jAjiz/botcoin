@@ -15,15 +15,17 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    String,
     Text,
     and_,
     create_engine,
     desc,
     func,
     text,
+    update,
 )
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
+from sqlalchemy.orm import Mapped, Session as SASession, declarative_base, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from core.config import (
@@ -259,13 +261,27 @@ class BotControl(Base):
         }
 
 
+class Session(Base):
+    """Per-scheduler-tick session telemetry."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    balance: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    pair_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    log_messages: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+
+
 # ============================================================================
 # Session Management
 # ============================================================================
 
 
 @contextmanager
-def get_session() -> Iterator[Session]:
+def get_session() -> Iterator[SASession]:
     """Context manager for database sessions."""
     session = SessionLocal()
     try:
@@ -626,3 +642,38 @@ def get_bot_paused() -> bool:
 def set_bot_paused(paused: bool, updated_by: str | None = None) -> None:
     """Set bot paused state in bot_control table."""
     set_control_value("bot_paused", "true" if paused else "false", updated_by=updated_by)
+
+
+# ============================================================================
+# Session Telemetry Operations
+# ============================================================================
+
+
+def create_session(started_at: datetime) -> int:
+    with SessionLocal() as s, s.begin():
+        row = Session(started_at=started_at, status="running")
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def finalize_session(
+    session_id: int,
+    ended_at: datetime,
+    status: str,
+    balance: dict | None,
+    pair_data: dict | None,
+    log_messages: list[dict],
+) -> None:
+    with SessionLocal() as s, s.begin():
+        s.execute(
+            update(Session)
+            .where(Session.id == session_id)
+            .values(
+                ended_at=ended_at,
+                status=status,
+                balance=balance,
+                pair_data=pair_data,
+                log_messages=log_messages,
+            )
+        )
