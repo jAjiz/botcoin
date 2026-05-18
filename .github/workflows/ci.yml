@@ -39,12 +39,14 @@ jobs:
         run: |
           docker compose -f docker-compose.test.yml run --rm \
             -e POSTGRES_PASSWORD=botc \
+            -e GRAFANA_DB_PASSWORD=ci_grafana_password \
             test alembic upgrade head
 
       - name: Run integration tests
         run: |
           docker compose -f docker-compose.test.yml run --rm \
             -e POSTGRES_PASSWORD=botc \
+            -e GRAFANA_DB_PASSWORD=ci_grafana_password \
             -e RUN_DB_INTEGRATION=true \
             test pytest tests/integration --no-cov
 
