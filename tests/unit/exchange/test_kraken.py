@@ -135,22 +135,24 @@ def test_place_limit_order_returns_none_on_api_error(monkeypatch) -> None:
 _OHLC_ROW = ["1713052800", "80000.0", "81000.0", "79500.0", "80500.0", "80200.0", "1.5", 42]
 
 
-def test_fetch_ohlc_data_returns_dataframe_on_valid_result(monkeypatch) -> None:
+def test_fetch_ohlc_data_returns_dataframe_and_last_on_valid_result(monkeypatch) -> None:
     monkeypatch.setattr(
         kraken,
         "_query_public_limited",
         lambda *args, **kwargs: {
             "error": [],
-            "result": {"XXBTZEUR": [_OHLC_ROW, _OHLC_ROW]},
+            "result": {"XXBTZEUR": [_OHLC_ROW, _OHLC_ROW], "last": 1713053700},
         },
     )
 
     result = kraken.fetch_ohlc_data("XBTEUR", 15)
 
     assert result is not None
-    assert not result.empty
-    assert {"open", "high", "low", "close", "volume"}.issubset(result.columns)
-    assert result["close"].dtype == float
+    df, last = result
+    assert not df.empty
+    assert {"open", "high", "low", "close", "volume"}.issubset(df.columns)
+    assert df["close"].dtype == float
+    assert last == 1713053700
 
 
 def test_fetch_ohlc_data_passes_since_param(monkeypatch) -> None:
@@ -158,7 +160,7 @@ def test_fetch_ohlc_data_passes_since_param(monkeypatch) -> None:
 
     def _mock(method, data=None):
         captured["data"] = data
-        return {"error": [], "result": {"XXBTZEUR": [_OHLC_ROW]}}
+        return {"error": [], "result": {"XXBTZEUR": [_OHLC_ROW], "last": 1713053700}}
 
     monkeypatch.setattr(kraken, "_query_public_limited", _mock)
 
@@ -179,14 +181,16 @@ def test_fetch_ohlc_data_returns_none_on_api_error(monkeypatch) -> None:
     assert result is None
 
 
-def test_fetch_ohlc_data_returns_empty_dataframe_on_empty_result(monkeypatch) -> None:
+def test_fetch_ohlc_data_returns_empty_dataframe_and_last_on_empty_result(monkeypatch) -> None:
     monkeypatch.setattr(
         kraken,
         "_query_public_limited",
-        lambda *args, **kwargs: {"error": [], "result": {"XXBTZEUR": []}},
+        lambda *args, **kwargs: {"error": [], "result": {"XXBTZEUR": [], "last": 1713053700}},
     )
 
     result = kraken.fetch_ohlc_data("XBTEUR", 15)
 
     assert result is not None
-    assert result.empty
+    df, last = result
+    assert df.empty
+    assert last == 1713053700

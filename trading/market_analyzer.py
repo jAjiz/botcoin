@@ -1,5 +1,4 @@
 import sys
-from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
@@ -18,53 +17,95 @@ MINIMUM_CHANGE_PCT = MARKET_ANALYZER["MINIMUM_CHANGE_PCT"]
 
 def get_current_atr(pair: str) -> float | None:
     try:
-        db_ohlc = db.load_ohlc_data(pair, CANDLE_TIMEFRAME, limit=ATR_PERIOD + 1)
+        control_key = f"ohlc_last_{pair}_{CANDLE_TIMEFRAME}"
 
-        since_ts = None
-        last_atr = None
-        if not db_ohlc.empty:
-            since_ts = int(db_ohlc.iloc[0]["time"]) + 1
-            last_atr = float(db_ohlc.iloc[0]["atr"]) if pd.notna(db_ohlc.iloc[0]["atr"]) else None
+        stored_since = db.get_control_value(control_key)
+        since_ts = int(stored_since) if stored_since is not None else None
 
-        xchange_ohlc = fetch_ohlc_data(pair, CANDLE_TIMEFRAME, since_ts)
+        fetch_result = fetch_ohlc_data(pair, CANDLE_TIMEFRAME, since_ts)
+        if fetch_result is None:
+            return _latest_db_atr(pair)
 
-        if xchange_ohlc is None or xchange_ohlc.empty:
-            return last_atr
+        xchange_ohlc, last_ts = fetch_result
 
-        # If the most recent fetched candle is still open, exclude it from calculations
-        if xchange_ohlc.iloc[0]["time"] + CANDLE_TIMEFRAME * 60 > int(datetime.now(UTC).timestamp()):
-            xchange_ohlc = xchange_ohlc.iloc[1:]
-            if xchange_ohlc.empty:
-                return last_atr
+        if xchange_ohlc.empty:
+            db.set_control_value(control_key, str(last_ts))
+            return _latest_db_atr(pair)
 
-        all_rows = pd.concat([xchange_ohlc, db_ohlc], ignore_index=True) if not db_ohlc.empty else xchange_ohlc.copy()
+        xchange_ohlc = xchange_ohlc.sort_values("time").reset_index(drop=True)
+        earliest_fetched = int(xchange_ohlc.iloc[0]["time"])
 
-        # Change order to oldest to newest for easier ATR calculation
-        all_rows.sort_values("time", inplace=True)
-        all_rows.drop_duplicates(subset=["time"], keep="last", inplace=True)
+        seed = db.load_ohlc_data(pair, CANDLE_TIMEFRAME, before_time=earliest_fetched, limit=1)
+        if not seed.empty and pd.notna(seed.iloc[0]["atr"]):
+            xchange_ohlc["atr"] = _wilder_atr_incremental(
+                xchange_ohlc,
+                prev_close=float(seed.iloc[0]["close"]),
+                prev_atr=float(seed.iloc[0]["atr"]),
+            )
+        else:
+            xchange_ohlc["atr"] = _wilder_atr_from_scratch(xchange_ohlc, ATR_PERIOD)
 
-        # Calculate ATR using True Range method
-        all_rows["H-L"] = all_rows["high"] - all_rows["low"]
-        all_rows["H-PC"] = (all_rows["high"] - all_rows["close"].shift(1)).abs()
-        all_rows["L-PC"] = (all_rows["low"] - all_rows["close"].shift(1)).abs()
-        all_rows["TR"] = all_rows[["H-L", "H-PC", "L-PC"]].max(axis=1)
-        all_rows["atr"] = all_rows["TR"].rolling(ATR_PERIOD).mean()
+        db.save_ohlc_data(pair, CANDLE_TIMEFRAME, xchange_ohlc.sort_values("time", ascending=False))
+        db.set_control_value(control_key, str(last_ts))
 
-        # Remove intermediate columns and sort back to newest to oldest
-        all_rows.drop(columns=["H-L", "H-PC", "L-PC", "TR"], inplace=True)
-        all_rows.sort_values("time", ascending=False, inplace=True)
-
-        new_rows = all_rows.copy() if since_ts is None else all_rows[all_rows["time"] > since_ts].copy()
-
-        if not new_rows.empty:
-            db.save_ohlc_data(pair, CANDLE_TIMEFRAME, new_rows)
-            if pd.notna(new_rows["atr"].iloc[0]):
-                return float(new_rows["atr"].iloc[0])
-
-        return last_atr
+        match = xchange_ohlc[xchange_ohlc["time"] == last_ts]
+        if not match.empty and pd.notna(match["atr"].iloc[0]):
+            return float(match["atr"].iloc[0])
+        return _latest_db_atr(pair)
     except Exception as e:
         logging.error(f"Error getting ATR for {pair}: {e}")
         return None
+
+
+def _latest_db_atr(pair: str) -> float | None:
+    latest = db.load_ohlc_data(pair, CANDLE_TIMEFRAME, limit=1)
+    if not latest.empty and pd.notna(latest.iloc[0]["atr"]):
+        return float(latest.iloc[0]["atr"])
+    return None
+
+
+def _wilder_atr_incremental(df: pd.DataFrame, prev_close: float, prev_atr: float) -> list[float]:
+    atrs: list[float] = []
+    close = prev_close
+    atr = prev_atr
+    period = ATR_PERIOD
+    for high, low, c in zip(df["high"], df["low"], df["close"], strict=True):
+        tr = max(high - low, abs(high - close), abs(low - close))
+        atr = (atr * (period - 1) + tr) / period
+        atrs.append(atr)
+        close = c
+    return atrs
+
+
+def _wilder_atr_from_scratch(df: pd.DataFrame, period: int) -> list[float | None]:
+    n = len(df)
+    result: list[float | None] = [None] * n
+    if n <= period:
+        return result
+
+    highs = df["high"].tolist()
+    lows = df["low"].tolist()
+    closes = df["close"].tolist()
+
+    # TR series; index 0 has no previous close, so its TR is undefined and unused.
+    trs = [0.0]
+    for i in range(1, n):
+        trs.append(
+            max(
+                highs[i] - lows[i],
+                abs(highs[i] - closes[i - 1]),
+                abs(lows[i] - closes[i - 1]),
+            )
+        )
+
+    # Seed Wilder ATR with the simple mean of the first `period` TRs (TR[1..period]).
+    atr = sum(trs[1 : period + 1]) / period
+    result[period] = atr
+    for i in range(period + 1, n):
+        atr = (atr * (period - 1) + trs[i]) / period
+        result[i] = atr
+
+    return result
 
 
 def detect_pivots(df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[int, str, float, pd.Timestamp]]:

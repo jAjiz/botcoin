@@ -356,23 +356,32 @@ def check_database_connection() -> bool:
 # ============================================================================
 
 
-def load_ohlc_data(pair: str, timeframe: int, since_time: int | None = None, limit: int | None = None) -> pd.DataFrame:
+def load_ohlc_data(
+    pair: str,
+    timeframe: int,
+    since_time: int | None = None,
+    before_time: int | None = None,
+    limit: int | None = None,
+) -> pd.DataFrame:
     """Load OHLC data from the database.
 
     Args:
         pair: Trading pair.
         timeframe: Candle timeframe in minutes.
-        since_time: Optional Unix timestamp filter.
+        since_time: Optional inclusive lower bound on `time` (Unix timestamp).
+        before_time: Optional exclusive upper bound on `time` (Unix timestamp).
         limit: Optional maximum number of rows to return.
 
     Returns:
-        A DataFrame with OHLC data and a datetime column.
+        A DataFrame with OHLC data and a datetime column, ordered newest first.
     """
     try:
         with get_session() as session:
             query = session.query(OHLCData).filter(and_(OHLCData.pair == pair, OHLCData.timeframe_minutes == timeframe))
             if since_time is not None:
                 query = query.filter(OHLCData.time >= since_time)
+            if before_time is not None:
+                query = query.filter(OHLCData.time < before_time)
             query = query.order_by(desc(OHLCData.time))
             if limit is not None:
                 query = query.limit(limit)
