@@ -41,6 +41,7 @@ def get_current_atr(pair: str) -> float | None:
                 xchange_ohlc,
                 prev_close=float(seed.iloc[0]["close"]),
                 prev_atr=float(seed.iloc[0]["atr"]),
+                period=ATR_PERIOD,
             )
         else:
             xchange_ohlc["atr"] = _wilder_atr_from_scratch(xchange_ohlc, ATR_PERIOD)
@@ -64,11 +65,10 @@ def _latest_db_atr(pair: str) -> float | None:
     return None
 
 
-def _wilder_atr_incremental(df: pd.DataFrame, prev_close: float, prev_atr: float) -> list[float]:
+def _wilder_atr_incremental(df: pd.DataFrame, prev_close: float, prev_atr: float, period: int) -> list[float]:
     atrs: list[float] = []
     close = prev_close
     atr = prev_atr
-    period = ATR_PERIOD
     for high, low, c in zip(df["high"], df["low"], df["close"], strict=True):
         tr = max(high - low, abs(high - close), abs(low - close))
         atr = (atr * (period - 1) + tr) / period

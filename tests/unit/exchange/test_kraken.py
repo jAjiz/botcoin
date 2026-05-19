@@ -164,9 +164,13 @@ def test_fetch_ohlc_data_passes_since_param(monkeypatch) -> None:
 
     monkeypatch.setattr(kraken, "_query_public_limited", _mock)
 
-    kraken.fetch_ohlc_data("XBTEUR", 15, since=1713052800)
+    result = kraken.fetch_ohlc_data("XBTEUR", 15, since=1713052800)
 
     assert captured["data"].get("since") == 1713052800
+    assert result is not None
+    df, last = result
+    assert not df.empty
+    assert last == 1713053700
 
 
 def test_fetch_ohlc_data_returns_none_on_api_error(monkeypatch) -> None:

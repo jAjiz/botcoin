@@ -140,7 +140,7 @@ def fetch_ohlc_data(pair: str, interval: int, since: int | None = None) -> tuple
     if result is None:
         return None
     last = int(result["last"])
-    result_pair = next(k for k in result.keys() if k != "last")
+    result_pair = next(k for k in result if k != "last")
     ohlc = pd.DataFrame(result[result_pair])
     if ohlc.empty:
         return ohlc, last
