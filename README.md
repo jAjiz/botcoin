@@ -674,7 +674,6 @@ BoTCoin/
 │   └── kraken.py               # Kraken API integration
 │
 ├── scripts/
-│   ├── load_legacy_data.py     # One-time CSV/JSON → PostgreSQL migration
 │   └── migrations/             # Alembic migration versions
 │       └── versions/
 │           └── 20260414_01_phase4_initial_schema.py

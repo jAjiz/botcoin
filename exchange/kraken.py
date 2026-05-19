@@ -132,17 +132,18 @@ def place_limit_order(pair: str, side: str, price: float, volume: float) -> str 
     return new_order
 
 
-def fetch_ohlc_data(pair: str, interval: int, since: int | None = None) -> pd.DataFrame | None:
+def fetch_ohlc_data(pair: str, interval: int, since: int | None = None) -> tuple[pd.DataFrame, int] | None:
     data: dict[str, Any] = {"pair": pair, "interval": interval}
     if since is not None:
         data["since"] = since
     result = _safe_call(f"OHLC data for {pair}", lambda: _query_public_limited("OHLC", data))
     if result is None:
         return None
-    result_pair = next(iter(result.keys()))
+    last = int(result["last"])
+    result_pair = next(k for k in result if k != "last")
     ohlc = pd.DataFrame(result[result_pair])
     if ohlc.empty:
-        return ohlc
+        return ohlc, last
     ohlc.columns = [
         "time",
         "open",
@@ -153,8 +154,9 @@ def fetch_ohlc_data(pair: str, interval: int, since: int | None = None) -> pd.Da
         "volume",
         "count",
     ]
-    ohlc["dtime"] = pd.to_datetime(pd.to_numeric(ohlc["time"]), unit="s")
+    ohlc["time"] = pd.to_numeric(ohlc["time"]).astype(int)
+    ohlc["dtime"] = pd.to_datetime(ohlc["time"], unit="s")
     for col in ["open", "high", "low", "close", "vwap", "volume"]:
         ohlc[col] = ohlc[col].astype(float)
     ohlc.sort_values("time", ascending=False, inplace=True)
-    return ohlc
+    return ohlc, last
