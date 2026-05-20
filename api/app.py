@@ -1,3 +1,4 @@
+import logging
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -10,11 +11,14 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 
 import core.database as db
-import core.logging as logging
 from api.routes import balance, control, market, positions, status
 from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, SLEEPING_INTERVAL
 from core.scheduler import trading_session
 from core.validation import validate_config
+
+# Dedicated logger kept outside the "botc" tree so API records are not folded
+# into per-session telemetry by the scheduler's log collector.
+logger = logging.getLogger("api")
 
 scheduler: AsyncIOScheduler | None = None
 
@@ -54,7 +58,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         scheduler.shutdown(wait=True)
-        logging.info("Scheduler stopped.")
+        logger.info("Scheduler stopped.")
 
 
 app = FastAPI(title="BoTC API", version="0.1.0", lifespan=lifespan)
@@ -64,7 +68,7 @@ _auth = [Depends(verify_token)]
 
 @app.exception_handler(Exception)
 async def _unhandled(request: Request, exc: Exception):
-    logging.error(f"Unhandled error in {request.method} {request.url.path}: {exc}")
+    logger.error(f"Unhandled error in {request.method} {request.url.path}: {exc}")
     return JSONResponse(status_code=500, content={"detail": "internal error"})
 
 

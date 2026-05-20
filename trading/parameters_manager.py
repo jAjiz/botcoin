@@ -1,4 +1,3 @@
-import logging
 import math
 from typing import Any
 
@@ -6,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 import core.database as db
+import core.logging as logging
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.market_analyzer import analyze_structural_noise

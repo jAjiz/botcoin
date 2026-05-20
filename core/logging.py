@@ -23,6 +23,8 @@ configure_logging()
 
 TELEGRAM_SERVICE_URL = os.getenv("TELEGRAM_SERVICE_URL")
 
+_logger = logging.getLogger("botc")
+
 
 def _notify(level: str, msg: str) -> None:
     if not TELEGRAM_ENABLED or not TELEGRAM_SERVICE_URL:
@@ -36,22 +38,28 @@ def _notify(level: str, msg: str) -> None:
             timeout=2.0,
         )
     except Exception as e:
-        logging.warning(f"Telegram notify failed: {e}")
+        _logger.warning(f"Telegram notify failed: {e}")
 
 
 def info(msg: str, to_telegram: bool = False) -> None:
-    logging.info(msg)
+    _logger.info(msg)
     if to_telegram:
         _notify("info", msg)
 
 
 def warning(msg: str, to_telegram: bool = False) -> None:
-    logging.warning(msg)
+    _logger.warning(msg)
     if to_telegram:
         _notify("warning", msg)
 
 
 def error(msg: str, to_telegram: bool = False) -> None:
-    logging.error(msg)
+    _logger.error(msg)
+    if to_telegram:
+        _notify("error", msg)
+
+
+def exception(msg: str, to_telegram: bool = False) -> None:
+    _logger.exception(msg)
     if to_telegram:
         _notify("error", msg)

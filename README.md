@@ -210,6 +210,27 @@ CSV files (`data/*_ohlc_data_*.csv`) are retained as read-only inputs for the of
 
 All runtime persistence (OHLC ingestion, position state, closed positions, and bot control flags) is stored in PostgreSQL.
 
+## 📡 Observability — Grafana
+
+A pre-provisioned Grafana instance ships with the stack. It runs as a Docker Compose service on `127.0.0.1:3000` and reads from PostgreSQL through a least-privilege `grafana_reader` role (created by Alembic migration `20260512_01`).
+
+**What is on the default dashboard (`BoTC Overview`):**
+
+- Market: close price and ATR per pair, latest close
+- Performance: total closed positions, cumulative PnL %, win/loss ratio, per-close PnL, cumulative PnL over time, open positions table
+- System: seconds since last successful session (thresholded), paused/running state, OHLC ingestion rate
+- Sessions: sessions per hour by status, 24h failure rate, recent sessions table, last session log
+
+Every scheduler tick writes one row to the `sessions` table (also created by migration `20260512_01`) capturing start/end timestamps, completion status, the balance snapshot, per-pair market data (price/ATR/volatility level), and the log lines emitted during the session — these power the Sessions row of the dashboard.
+
+**Provisioning:**
+
+- `services/grafana/provisioning/datasources/postgres.yaml` — datasource (read-only, uid `botc-postgres`)
+- `services/grafana/provisioning/dashboards/botc.yaml` — dashboard provider config
+- `services/grafana/dashboards/botc.json` — the dashboard payload (committed to the repo)
+
+The dashboard is the source of truth in the repo. To edit it, open the UI, save as a new dashboard, then `Share → Export → Save to file` and replace `services/grafana/dashboards/botc.json`. UI updates to the provisioned dashboard are disabled (`allowUiUpdates: false`) so changes cannot drift silently.
+
 ## 🔌 Exchange Integration
 
 ### Kraken API
@@ -552,6 +573,11 @@ cp .env.example .env
 ```bash
 docker compose up -d --build
 ```
+
+After the stack is running:
+
+- API:       <http://localhost:8000/docs>
+- Grafana:   <http://localhost:3000>  (anonymous Viewer access; `admin` login for edits)
 
 3. Explore the API (Swagger UI):
 

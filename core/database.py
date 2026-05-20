@@ -15,13 +15,16 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    String,
     Text,
     and_,
     create_engine,
     desc,
     func,
     text,
+    update,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -257,6 +260,20 @@ class BotControl(Base):
             "updated_at": self.updated_at,
             "updated_by": self.updated_by,
         }
+
+
+class SessionRecord(Base):
+    """Per-scheduler-tick session telemetry."""
+
+    __tablename__ = "sessions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(16), nullable=False)
+    balance = Column(JSONB, nullable=True)
+    pair_data = Column(JSONB, nullable=True)
+    log_messages = Column(Text, nullable=True)
 
 
 # ============================================================================
@@ -635,3 +652,38 @@ def get_bot_paused() -> bool:
 def set_bot_paused(paused: bool, updated_by: str | None = None) -> None:
     """Set bot paused state in bot_control table."""
     set_control_value("bot_paused", "true" if paused else "false", updated_by=updated_by)
+
+
+# ============================================================================
+# Session Telemetry Operations
+# ============================================================================
+
+
+def create_session(started_at: datetime) -> int:
+    with get_session() as session:
+        row = SessionRecord(started_at=started_at, status="running")
+        session.add(row)
+        session.flush()
+        return row.id
+
+
+def finalize_session(
+    session_id: int,
+    ended_at: datetime,
+    status: str,
+    balance: dict | None,
+    pair_data: dict | None,
+    log_messages: str | None,
+) -> None:
+    with get_session() as session:
+        session.execute(
+            update(SessionRecord)
+            .where(SessionRecord.id == session_id)
+            .values(
+                ended_at=ended_at,
+                status=status,
+                balance=balance,
+                pair_data=pair_data,
+                log_messages=log_messages,
+            )
+        )
