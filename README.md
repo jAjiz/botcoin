@@ -445,7 +445,7 @@ A single workflow (`.github/workflows/ci.yml`) runs on every PR and every push t
 |---|---|---|
 | `Lint, unit and integration tests` | always | Builds the dev image once, then runs `ruff check`, `ruff format --check`, `pytest tests/unit` (with the 80% coverage gate), and `pytest tests/integration` against an ephemeral Postgres service. Kraken-gated tests are skipped in CI. |
 | `Build and push image` | `push: main` only | Builds the production image and publishes it to `ghcr.io/jajiz/botc:main` and `ghcr.io/jajiz/botc:sha-<short>` |
-| `Deploy to VPS` | `push: main` only | SSHes to the VPS, fetches the two compose files by commit SHA, and runs `docker compose pull && up -d` |
+| `Deploy to VPS` | `push: main` only | SSHes to the VPS, fetches the two compose files plus the Grafana provisioning/dashboard files by commit SHA (the Grafana service bind-mounts them from the host), and runs `docker compose pull && up -d` |
 
 The `needs:` chain in the workflow file enforces ordering: a failing test job blocks the image push and the deploy. Branch protection on `main` is optional — the pipeline gate is the workflow's job graph, not the branch rule.
 

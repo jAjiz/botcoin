@@ -114,6 +114,20 @@ jobs:
               -o "$DEPLOY_PATH/docker-compose.yml"
             curl -fsSL "https://raw.githubusercontent.com/jAjiz/BoTC/${COMMIT_SHA}/docker-compose.prod.yml" \
               -o "$DEPLOY_PATH/docker-compose.prod.yml"
+            # Grafana provisioning + dashboards are bind-mounted from the host
+            # (see the grafana service in docker-compose.yml), so the deploy must
+            # also place these files next to the compose files. Add a line here
+            # whenever a new dashboard JSON is committed.
+            mkdir -p "$DEPLOY_PATH/services/grafana/provisioning/datasources" \
+                     "$DEPLOY_PATH/services/grafana/provisioning/dashboards" \
+                     "$DEPLOY_PATH/services/grafana/dashboards"
+            base="https://raw.githubusercontent.com/jAjiz/BoTC/${COMMIT_SHA}"
+            curl -fsSL "$base/services/grafana/provisioning/datasources/postgres.yaml" \
+              -o "$DEPLOY_PATH/services/grafana/provisioning/datasources/postgres.yaml"
+            curl -fsSL "$base/services/grafana/provisioning/dashboards/botc.yaml" \
+              -o "$DEPLOY_PATH/services/grafana/provisioning/dashboards/botc.yaml"
+            curl -fsSL "$base/services/grafana/dashboards/botc.json" \
+              -o "$DEPLOY_PATH/services/grafana/dashboards/botc.json"
             cd "$DEPLOY_PATH"
             docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
             docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
