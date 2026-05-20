@@ -24,8 +24,10 @@ from sqlalchemy import (
     text,
     update,
 )
-from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
-from sqlalchemy.orm import Mapped, Session as SASession, declarative_base, mapped_column, sessionmaker
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, sessionmaker
+from sqlalchemy.orm import Session as SASession
 from sqlalchemy.pool import QueuePool
 
 from core.config import (

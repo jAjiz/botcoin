@@ -23,7 +23,7 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": 1,
   "links": [],
   "panels": [
@@ -434,7 +434,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name",
+            "seriesBy": "min"
           },
           "custom": {
             "axisBorderShow": false,
@@ -580,7 +581,7 @@
         ]
       },
       "gridPos": {
-        "h": 4,
+        "h": 3,
         "w": 10,
         "x": 0,
         "y": 13
@@ -600,6 +601,10 @@
           "values": false
         },
         "showPercentChange": false,
+        "text": {
+          "titleSize": 15,
+          "valueSize": 30
+        },
         "textMode": "auto",
         "wideLayout": true
       },
@@ -661,17 +666,44 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byRegexp",
-              "options": ".*price.*"
+              "id": "byType",
+              "options": "number"
             },
             "properties": [
               {
-                "id": "unit",
-                "value": "locale"
+                "id": "noValue",
+                "value": "-"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Side"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "buy": {
+                        "color": "green",
+                        "index": 1,
+                        "text": "BUY"
+                      },
+                      "sell": {
+                        "color": "red",
+                        "index": 0,
+                        "text": "SELL"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
               },
               {
-                "id": "decimals",
-                "value": 1
+                "id": "color"
               }
             ]
           },
@@ -682,22 +714,22 @@
             },
             "properties": [
               {
-                "id": "noValue",
-                "value": "-"
+                "id": "unit",
+                "value": "locale"
               }
             ]
           }
         ]
       },
       "gridPos": {
-        "h": 4,
+        "h": 3,
         "w": 14,
         "x": 10,
         "y": 13
       },
       "id": 5,
       "options": {
-        "colorMode": "none",
+        "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
         "orientation": "vertical",
@@ -710,7 +742,10 @@
           "values": false
         },
         "showPercentChange": false,
-        "text": {},
+        "text": {
+          "titleSize": 15,
+          "valueSize": 30
+        },
         "textMode": "auto",
         "wideLayout": true
       },
@@ -724,7 +759,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT side, entry_price, activation_price, trailing_price, stop_price FROM trailing_state WHERE closing_order_id IS NULL AND pair = '$pair' ORDER BY pair",
+          "rawSql": "SELECT side AS \"Side\", entry_price AS \"Entry\", activation_price AS \"Activation\", trailing_price AS \"Trailing\", stop_price AS \"Stop\" FROM trailing_state WHERE closing_order_id IS NULL AND pair = '$pair' ORDER BY pair",
           "refId": "A",
           "sql": {
             "columns": [
@@ -745,7 +780,7 @@
           }
         }
       ],
-      "title": "Open positions",
+      "title": "Open position",
       "type": "stat"
     },
     {
@@ -754,7 +789,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 17
+        "y": 16
       },
       "id": 102,
       "panels": [],
@@ -769,7 +804,9 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "fixedColor": "orange",
+            "mode": "continuous-RdYlGr",
+            "seriesBy": "max"
           },
           "custom": {
             "axisBorderShow": false,
@@ -780,8 +817,8 @@
             "barAlignment": 0,
             "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "fillOpacity": 0,
-            "gradientMode": "none",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
@@ -789,12 +826,15 @@
             },
             "insertNulls": false,
             "lineInterpolation": "linear",
-            "lineWidth": 2,
+            "lineStyle": {
+              "fill": "solid"
+            },
+            "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
               "type": "linear"
             },
-            "showPoints": "auto",
+            "showPoints": "never",
             "spanNulls": false,
             "stacking": {
               "group": "A",
@@ -804,6 +844,7 @@
               "mode": "off"
             }
           },
+          "fieldMinMax": false,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -811,22 +852,43 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
           "unit": "percent"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "__systemRef": "hideSeriesFrom",
+            "matcher": {
+              "id": "byNames",
+              "options": {
+                "mode": "exclude",
+                "names": [
+                  "cumulative_pnl"
+                ],
+                "prefix": "All except:",
+                "readOnly": true
+              }
+            },
+            "properties": [
+              {
+                "id": "custom.hideFrom",
+                "value": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": true
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 15,
+        "h": 13,
         "w": 12,
         "x": 0,
-        "y": 18
+        "y": 17
       },
       "id": 8,
       "options": {
@@ -837,7 +899,7 @@
           "showLegend": true
         },
         "tooltip": {
-          "mode": "single",
+          "mode": "multi",
           "sort": "none"
         }
       },
@@ -864,7 +926,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "continuous-RdYlGr",
+            "seriesBy": "last"
           },
           "custom": {
             "axisBorderShow": false,
@@ -873,10 +936,10 @@
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
-            "barWidthFactor": 0.6,
+            "barWidthFactor": 0.1,
             "drawStyle": "bars",
-            "fillOpacity": 80,
-            "gradientMode": "none",
+            "fillOpacity": 100,
+            "gradientMode": "scheme",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
@@ -915,44 +978,13 @@
           },
           "unit": "percent"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "gain"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "loss"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 6,
         "w": 12,
         "x": 12,
-        "y": 18
+        "y": 17
       },
       "id": 14,
       "options": {
@@ -975,7 +1007,7 @@
             "uid": "botc-postgres"
           },
           "format": "table",
-          "rawSql": "SELECT closed_at AS time, CASE WHEN pnl_percent >= 0 THEN pnl_percent::float8 END AS gain FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at",
+          "rawSql": "SELECT closed_at AS time, CASE WHEN side = 'buy' THEN pnl_percent::float8 END AS buy FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at",
           "refId": "A"
         },
         {
@@ -984,7 +1016,7 @@
             "uid": "botc-postgres"
           },
           "format": "table",
-          "rawSql": "SELECT closed_at AS time, CASE WHEN pnl_percent < 0 THEN pnl_percent::float8 END AS loss FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at",
+          "rawSql": "SELECT closed_at AS time, CASE WHEN side = 'sell' THEN pnl_percent::float8 END AS sell FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at",
           "refId": "B"
         }
       ],
@@ -1003,19 +1035,21 @@
             "cellOptions": {
               "type": "auto"
             },
+            "filterable": false,
             "inspect": false
           },
+          "fieldMinMax": false,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
               },
               {
-                "color": "red",
-                "value": 80
+                "color": "green",
+                "value": 0
               }
             ]
           }
@@ -1023,24 +1057,36 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byRegexp",
-              "options": ".*price.*"
+              "id": "byName",
+              "options": "Side"
+            },
+            "properties": [
+              {
+                "id": "custom.minWidth",
+                "value": 50
+              },
+              {
+                "id": "custom.filterable",
+                "value": true
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "number"
             },
             "properties": [
               {
                 "id": "unit",
                 "value": "locale"
-              },
-              {
-                "id": "decimals",
-                "value": 1
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "pnl_percent"
+              "options": "PnL"
             },
             "properties": [
               {
@@ -1048,38 +1094,26 @@
                 "value": "percent"
               },
               {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    {
-                      "color": "red",
-                      "value": null
-                    },
-                    {
-                      "color": "green",
-                      "value": 0
-                    }
-                  ]
-                }
-              },
-              {
                 "id": "custom.cellOptions",
                 "value": {
                   "type": "color-text"
                 }
+              },
+              {
+                "id": "decimals",
+                "value": 2
               }
             ]
           },
           {
             "matcher": {
               "id": "byName",
-              "options": "side"
+              "options": "Closed at"
             },
             "properties": [
               {
-                "id": "custom.minWidth",
-                "value": 50
+                "id": "custom.filterable",
+                "value": true
               }
             ]
           }
@@ -1089,7 +1123,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 26
+        "y": 23
       },
       "id": 13,
       "options": {
@@ -1111,9 +1145,28 @@
             "type": "postgres",
             "uid": "botc-postgres"
           },
+          "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT closed_at, side, entry_price::float8, closing_price::float8, pnl_percent::float8 FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at DESC",
-          "refId": "A"
+          "rawQuery": true,
+          "rawSql": "SELECT closed_at AS \"Closed at\", side AS \"Side\", entry_price::float8 AS \"Entry\", closing_price::float8 AS \"Closing\", pnl_percent::float8 AS \"PnL\" FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at DESC",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
         }
       ],
       "title": "Closed positions",
@@ -1125,7 +1178,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 30
       },
       "id": 103,
       "panels": [],
@@ -1140,10 +1193,12 @@
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "align": "auto",
+            "align": "center",
             "cellOptions": {
-              "type": "auto"
+              "type": "auto",
+              "wrapText": false
             },
+            "filterable": true,
             "inspect": false
           },
           "mappings": [],
@@ -1153,21 +1208,74 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Status"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "completed": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "COMPLETED"
+                      },
+                      "failed": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "FAILED"
+                      },
+                      "paused": {
+                        "color": "yellow",
+                        "index": 2,
+                        "text": "PAUSED"
+                      },
+                      "running": {
+                        "color": "blue",
+                        "index": 3,
+                        "text": "RUNNING"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Logs"
+            },
+            "properties": [
+              {
+                "id": "custom.inspect",
+                "value": true
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 7,
-        "w": 12,
+        "h": 10,
+        "w": 11,
         "x": 0,
-        "y": 34
+        "y": 31
       },
       "id": 11,
       "options": {
@@ -1189,9 +1297,28 @@
             "type": "postgres",
             "uid": "botc-postgres"
           },
+          "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT id, started_at, ended_at, status, EXTRACT(EPOCH FROM (ended_at - started_at)) AS duration_s, CASE WHEN log_messages::text ILIKE '%Stop%' THEN 'close' WHEN log_messages::text ILIKE '%New%' THEN 'open' WHEN log_messages::text ILIKE '%Update%' OR log_messages::text ILIKE '%Recalibrate%' OR log_messages::text ILIKE '%Re-anchor%' THEN 'update' ELSE '-' END AS activity FROM sessions ORDER BY started_at DESC LIMIT 50",
-          "refId": "A"
+          "rawQuery": true,
+          "rawSql": "SELECT status AS \"Status\", started_at AS \"Start\", ended_at AS \"End\", log_messages::text AS \"Logs\" FROM sessions WHERE $__timeFilter(started_at) ORDER BY started_at DESC LIMIT 50",
+          "refId": "A",
+          "sql": {
+            "columns": [
+              {
+                "parameters": [],
+                "type": "function"
+              }
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
+          }
         }
       ],
       "title": "Recent sessions",
@@ -1213,7 +1340,7 @@
             "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
-            "fillOpacity": 80,
+            "fillOpacity": 70,
             "gradientMode": "none",
             "hideFrom": {
               "legend": false,
@@ -1235,26 +1362,68 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "completed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "paused"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 13,
-        "w": 12,
-        "x": 12,
-        "y": 34
+        "h": 10,
+        "w": 13,
+        "x": 11,
+        "y": 31
       },
       "id": 10,
       "options": {
         "barRadius": 0,
-        "barWidth": 0.6,
+        "barWidth": 0.4,
         "fillOpacity": 80,
         "fullHighlight": false,
         "groupWidth": 0.7,
@@ -1266,12 +1435,12 @@
         },
         "orientation": "auto",
         "showValue": "auto",
-        "stacking": "none",
+        "stacking": "normal",
         "tooltip": {
           "mode": "single",
           "sort": "none"
         },
-        "xField": "status",
+        "xField": "time",
         "xTickLabelRotation": 0,
         "xTickLabelSpacing": 0
       },
@@ -1282,78 +1451,32 @@
             "type": "postgres",
             "uid": "botc-postgres"
           },
+          "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT status, COUNT(*) AS sessions FROM sessions WHERE $__timeFilter(started_at) GROUP BY status ORDER BY status",
-          "refId": "A"
-        }
-      ],
-      "title": "Sessions by status",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "postgres",
-        "uid": "botc-postgres"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "inspect": false
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('hour', started_at) AS time, COUNT(*) FILTER (WHERE status = 'completed') AS COMPLETED, COUNT(*) FILTER (WHERE status = 'failed') AS FAILED, COUNT(*) FILTER (WHERE status = 'paused') AS PAUSED FROM sessions WHERE $__timeFilter(started_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A",
+          "sql": {
+            "columns": [
               {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
+                "parameters": [],
+                "type": "function"
               }
-            ]
+            ],
+            "groupBy": [
+              {
+                "property": {
+                  "type": "string"
+                },
+                "type": "groupBy"
+              }
+            ],
+            "limit": 50
           }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 8,
-        "x": 4,
-        "y": 41
-      },
-      "id": 12,
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true
-      },
-      "pluginVersion": "11.4.0",
-      "targets": [
-        {
-          "datasource": {
-            "type": "postgres",
-            "uid": "botc-postgres"
-          },
-          "format": "table",
-          "rawSql": "SELECT unnest(string_to_array(log_messages, E'\\n')) AS log FROM sessions WHERE id = (SELECT MAX(id) FROM sessions) AND log_messages IS NOT NULL",
-          "refId": "A"
         }
       ],
-      "title": "Last session log",
-      "type": "table"
+      "title": "Sessions per hour by status",
+      "type": "barchart"
     }
   ],
   "preload": false,
@@ -1387,10 +1510,18 @@
     "from": "now-7d",
     "to": "now"
   },
-  "timepicker": {},
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
+  },
   "timezone": "browser",
   "title": "BoTC Overview",
   "uid": "botc-overview",
-  "version": 32,
+  "version": 46,
   "weekStart": ""
 }

@@ -32,10 +32,5 @@ def test_grafana_reader_can_select_each_table():
 def test_grafana_reader_cannot_insert():
     engine = _reader_engine()
     with engine.connect() as conn, pytest.raises(Exception):
-        conn.execute(
-            text(
-                "INSERT INTO bot_control (control_key, control_value) "
-                "VALUES ('test_insert', 'x')"
-            )
-        )
+        conn.execute(text("INSERT INTO bot_control (control_key, control_value) VALUES ('test_insert', 'x')"))
         conn.commit()
