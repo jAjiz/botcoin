@@ -825,7 +825,7 @@
               "viz": false
             },
             "insertNulls": false,
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepAfter",
             "lineStyle": {
               "fill": "solid"
             },
@@ -911,7 +911,7 @@
             "uid": "botc-postgres"
           },
           "format": "table",
-          "rawSql": "SELECT closed_at AS time, SUM(pnl_percent::float8) OVER (ORDER BY closed_at) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' ORDER BY closed_at",
+          "rawSql": "SELECT closed_at AS time, SUM(pnl_percent::float8) OVER (ORDER BY closed_at) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' UNION ALL SELECT now() AS time, SUM(pnl_percent::float8) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' HAVING COUNT(*) > 0 ORDER BY time",
           "refId": "A"
         }
       ],
@@ -1522,6 +1522,6 @@
   "timezone": "browser",
   "title": "BoTC Overview",
   "uid": "botc-overview",
-  "version": 46,
+  "version": 48,
   "weekStart": ""
 }
