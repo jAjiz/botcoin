@@ -4,7 +4,7 @@
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
-BoTCoin is a production-grade backend service built to demonstrate modern Python engineering practices. It runs an ATR-based trailing-stop strategy against Kraken's EUR pairs, persists all state in PostgreSQL, exposes a REST control surface via FastAPI, and ships a Grafana observability layer. The entire stack starts with a single `docker compose up`.
+BoTCoin is a production-grade backend service built using modern Python engineering practices. It runs an ATR-based trailing-stop strategy against Kraken's EUR pairs, persists all state in PostgreSQL, exposes a REST control surface via FastAPI, and ships a Grafana observability layer. The entire stack starts with a single `docker compose up`.
 
 ![BoTC Overview dashboard — market, performance, and session panels](docs/dashboard.png)
 
@@ -13,7 +13,7 @@ BoTCoin is a production-grade backend service built to demonstrate modern Python
 ## Architecture
 
 ```mermaid
-graph LR
+graph BT
     subgraph stack["Docker Compose stack"]
         direction TB
         botc["botc :8000\nFastAPI + APScheduler\nTrading engine + REST API"]
@@ -29,8 +29,8 @@ graph LR
     botc -->|"SQLAlchemy r/w"| postgres
     grafana -->|"grafana_reader r/o"| postgres
     telegram -->|"GET /market · POST /control"| botc
-    botc -->|"POST /notify"| telegram
     tg <-->|"PTB long-poll"| telegram
+    botc -->|"POST /notify"| telegram
 ```
 
 Two application containers share one network. `botc` is the sole writer to every table. `telegram` is a thin API client — it reads and controls the bot exclusively through `botc`'s REST endpoints. Grafana reads the same database through a least-privilege `grafana_reader` role created by an Alembic migration.
