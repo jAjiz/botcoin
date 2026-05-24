@@ -220,7 +220,7 @@
             "uid": "botc-postgres"
           },
           "format": "table",
-          "rawSql": "SELECT string_agg(key, ', ' ORDER BY key) AS pairs FROM sessions, LATERAL jsonb_object_keys(pair_data) AS key WHERE id = (SELECT MAX(id) FROM sessions)",
+          "rawSql": "SELECT string_agg(key, ', ' ORDER BY key) AS pairs FROM bot_control, LATERAL jsonb_object_keys(control_value::jsonb) AS key WHERE control_key = 'latest_pair_data'",
           "refId": "A"
         }
       ],
@@ -285,7 +285,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT (balance ->> 'XETH')::numeric::float8 AS \"ETH\", (balance ->> 'XXBT')::numeric::float8 AS \"BTC\", (balance ->> 'ZEUR')::numeric::float8 AS \"EUR\" FROM sessions WHERE id = (SELECT MAX(id) FROM sessions)",
+          "rawSql": "SELECT (control_value::jsonb ->> 'XETH')::numeric::float8 AS \"ETH\", (control_value::jsonb ->> 'XXBT')::numeric::float8 AS \"BTC\", (control_value::jsonb ->> 'ZEUR')::numeric::float8 AS \"EUR\" FROM bot_control WHERE control_key = 'latest_balance'",
           "refId": "A",
           "sql": {
             "columns": [
@@ -618,7 +618,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT (pair_data -> '$pair' ->> 'price')::float AS \"Last price\", (pair_data -> '$pair' ->> 'atr')::float AS \"Last ATR\", pair_data -> '$pair' ->> 'volatility_level' AS \"Volatility level\" FROM sessions WHERE id = (SELECT MAX(id) FROM sessions) AND pair_data ? '$pair'",
+          "rawSql": "SELECT (control_value::jsonb -> '$pair' ->> 'price')::float AS \"Last price\", (control_value::jsonb -> '$pair' ->> 'atr')::float AS \"Last ATR\", control_value::jsonb -> '$pair' ->> 'volatility_level' AS \"Volatility level\" FROM bot_control WHERE control_key = 'latest_pair_data' AND control_value::jsonb ? '$pair'",
           "refId": "A",
           "sql": {
             "columns": [

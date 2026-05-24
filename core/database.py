@@ -1,3 +1,4 @@
+import json
 import logging as stdlib_logging
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -24,7 +25,6 @@ from sqlalchemy import (
     text,
     update,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -271,8 +271,6 @@ class SessionRecord(Base):
     started_at = Column(DateTime(timezone=True), nullable=False, index=True)
     ended_at = Column(DateTime(timezone=True), nullable=True)
     status = Column(String(16), nullable=False)
-    balance = Column(JSONB, nullable=True)
-    pair_data = Column(JSONB, nullable=True)
     log_messages = Column(Text, nullable=True)
 
 
@@ -682,8 +680,16 @@ def finalize_session(
             .values(
                 ended_at=ended_at,
                 status=status,
-                balance=balance,
-                pair_data=pair_data,
                 log_messages=log_messages,
             )
         )
+    if balance is not None:
+        try:
+            set_control_value("latest_balance", json.dumps(balance), updated_by="scheduler")
+        except Exception as e:
+            logger.error(f"Error saving latest_balance to bot_control: {e}")
+    if pair_data:
+        try:
+            set_control_value("latest_pair_data", json.dumps(pair_data), updated_by="scheduler")
+        except Exception as e:
+            logger.error(f"Error saving latest_pair_data to bot_control: {e}")

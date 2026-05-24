@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -13,6 +14,7 @@ from core.database import (
     TrailingState,
     check_database_connection,
     delete_trailing_state,
+    finalize_session,
     get_bot_paused,
     get_control_value,
     get_session,
@@ -862,3 +864,101 @@ def test_set_bot_paused_raises_on_error(monkeypatch):
 
     with pytest.raises(Exception, match="DB error"):
         set_bot_paused(True)
+
+
+# ============================================================================
+# finalize_session Tests
+# ============================================================================
+
+
+def test_finalize_session_updates_sessions_row(monkeypatch):
+    """finalize_session issues an UPDATE against the sessions table."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    finalize_session(
+        session_id=42,
+        ended_at=datetime(2026, 5, 24, 10, 0, 0, tzinfo=UTC),
+        status="completed",
+        balance=None,
+        pair_data=None,
+        log_messages=None,
+    )
+
+    assert len(session.executed_sql) == 1
+    assert "sessions" in session.executed_sql[0].lower()
+
+
+def test_finalize_session_writes_snapshots_to_bot_control(monkeypatch):
+    """When balance and pair_data are present, finalize_session writes both to
+    bot_control via set_control_value."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    balance = {"ZEUR": "1500", "XXBT": "0.1"}
+    pair_data = {"XBTEUR": {"price": 90000.0, "atr": 500.0, "volatility_level": "HV"}}
+
+    finalize_session(
+        session_id=1,
+        ended_at=datetime(2026, 5, 24, 10, 0, 0, tzinfo=UTC),
+        status="completed",
+        balance=balance,
+        pair_data=pair_data,
+        log_messages=None,
+    )
+
+    keys = [r.control_key for r in session.merged_records]
+    assert "latest_balance" in keys
+    assert "latest_pair_data" in keys
+
+    bal_record = next(r for r in session.merged_records if r.control_key == "latest_balance")
+    pd_record = next(r for r in session.merged_records if r.control_key == "latest_pair_data")
+    assert json.loads(bal_record.control_value) == balance
+    assert json.loads(pd_record.control_value) == pair_data
+    assert bal_record.updated_by == "scheduler"
+    assert pd_record.updated_by == "scheduler"
+
+
+def test_finalize_session_skips_snapshots_when_none(monkeypatch):
+    """When balance is None and pair_data is empty, no bot_control rows are written."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    finalize_session(
+        session_id=1,
+        ended_at=datetime(2026, 5, 24, 10, 0, 0, tzinfo=UTC),
+        status="paused",
+        balance=None,
+        pair_data={},
+        log_messages=None,
+    )
+
+    assert session.merged_records == []
+
+
+def test_finalize_session_swallows_snapshot_write_error(monkeypatch, caplog):
+    """A bot_control write failure must not propagate out of finalize_session."""
+    call_count = 0
+
+    def _get_session_side_effects():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call: the sessions UPDATE — succeeds.
+            return FakeSessionContextManager(FakeSession())
+        # Subsequent calls (set_control_value): fail.
+        return FakeSessionContextManager(FakeSession(), enter_error=Exception("DB error"))
+
+    monkeypatch.setattr(database, "get_session", _get_session_side_effects)
+
+    # Must not raise.
+    finalize_session(
+        session_id=1,
+        ended_at=datetime(2026, 5, 24, 10, 0, 0, tzinfo=UTC),
+        status="completed",
+        balance={"ZEUR": "100"},
+        pair_data={"XBTEUR": {"price": 1.0}},
+        log_messages=None,
+    )
+
+    assert "Error saving latest_balance" in caplog.text
