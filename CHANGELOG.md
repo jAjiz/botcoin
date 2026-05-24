@@ -10,6 +10,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.9.0] – Phase 9: Project Documentation & Portfolio Framing
+
+### Added
+- `docs/configuration.md` — complete `.env` variable reference extracted from `README.md`
+- `docs/trading-strategy.md` — ATR classification, K_STOP calibration, position lifecycle, and invariants extracted from `README.md` and inline comments
+- `docs/operations.md` — local dev, production deploy, manual rollback, self-hosting, monitoring, and troubleshooting procedures
+- `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, starting from Phase 0
+- `plan/phase-9-project-documentation.md` — execution plan for this phase
+
+### Changed
+- `README.md` revamped as an engineering cover letter: architecture diagram (Mermaid), key decisions table, PostgreSQL ERD, data-flow diagram, and quick start; all deep configuration and strategy content moved to `docs/`
+- Key decisions table: phase numbers dropped in favour of technology names, `Plan` column renamed to `Reference`, all links routed through `ROADMAP.md` anchors instead of plan files directly
+- `ROADMAP.md`: added execution plan links for phases 8 and 9; removed non-existent plan link from phase 10; corrected all `github.com/jAjiz/BoTC` URLs to `github.com/jAjiz/BoTCoin`
+- `CLAUDE.md`: updated service count to four, added `SessionRecord` ORM model description, added design choices for phases 5–8
+- `.github/workflows/ci.yml`: corrected `raw.githubusercontent.com` URLs to `BoTCoin` repo name
+
+---
+
 ## [2.8.0] – Phase 8: Observability — Grafana Dashboard
 
 ### Added

@@ -6,7 +6,12 @@
 
 BoTCoin is a production-grade backend service built using modern Python engineering practices. It runs an ATR-based trailing-stop strategy against Kraken's EUR pairs, persists all state in PostgreSQL, exposes a REST control surface via FastAPI, and ships a Grafana observability layer. The entire stack starts with a single `docker compose up`.
 
-![BoTC Overview dashboard — market, performance, and session panels](docs/dashboard.png)
+<table>
+  <tr>
+    <td><img src="docs/grafana.png" alt="Grafana dashboard — market, ATR, position, and performance panels"></td>
+    <td><img src="docs/telegram.png" alt="Telegram bot — market and position commands"></td>
+  </tr>
+</table>
 
 ---
 
