@@ -739,7 +739,7 @@ Replace the entire current `README.md`. The new file is ~250 lines and covers si
 
 Before writing, verify:
 
-1. The CI badge URL in the existing README matches `https://github.com/jAjiz/BoTC/actions/workflows/ci.yml/badge.svg?branch=main` — copy it as-is.
+1. The CI badge URL in the existing README matches `https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml/badge.svg?branch=main` — copy it as-is.
 2. Confirm the `services/grafana/` paths by cross-checking the `volumes:` block in `docker-compose.yml`.
 3. Read `core/database.py` to confirm the five ORM model names and primary key fields before writing the ERD.
 
@@ -748,8 +748,8 @@ The full new `README.md`:
 ````markdown
 # BoTCoin — Autonomous Trading Bot Backend
 
-[![CI](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml)
-[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml)
+[![CI](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
 BoTCoin is a production-grade backend service built to demonstrate modern Python engineering practices. It runs an ATR-based trailing-stop strategy against Kraken's EUR pairs, persists all state in PostgreSQL, exposes a REST control surface via FastAPI, and ships a Grafana observability layer. The entire stack starts with a single `docker compose up`.

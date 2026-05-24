@@ -271,7 +271,7 @@ Detailed execution plan: [`plan/phase-6-code-quality.md`](plan/phase-6-code-qual
 
 ### Phase 7 – CI/CD Pipeline
 
-**Tracking:** [Issue #31](https://github.com/jAjiz/BoTC/issues/31)
+**Tracking:** [Issue #31](https://github.com/jAjiz/BoTCoin/issues/31)
 
 **Goal:** Replace the broken SSH-based deploy with a unified pipeline that gates quality on every PR, builds and publishes a container image on every push to `main`, and deploys that image to the VPS.
 

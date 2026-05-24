@@ -6,7 +6,7 @@
 - Prior phases delivered: Docker (Phase 1), APScheduler (Phase 2), pytest two-tier suite (Phase 3), PostgreSQL via SQLAlchemy + Alembic (Phase 4), FastAPI + Telegram split (Phase 5), `ruff` lint + format inside Docker (Phase 6).
 - **The existing deploy is broken.** `~/deploy_BoTC.sh` on the VPS was written for the pre-Phase-5 single-container architecture (no separate `telegram` service, no `postgres` service, no `uvicorn` entrypoint). It cannot deploy the current code as-is. The current `.github/workflows/deploy.yml` runs only on `push: main` and SSHes into the VPS to invoke that broken script. Phase 7 replaces both halves of this in one PR.
 - **Goal of this phase**: ship a single unified pipeline (`ci.yml`) that gates quality on every PR, builds and publishes a container image on every push to `main`, and deploys that image to the VPS — so subsequent phases can be developed by committing directly to `main` without needing PR ceremony, while CI enforces correctness and the deploy step only runs after every gate passes.
-- Repo identity (verified at planning time): `github.com/jAjiz/BoTC`. GHCR image will be `ghcr.io/jajiz/botc` (GHCR namespaces are lowercase).
+- Repo identity (verified at planning time): `github.com/jAjiz/BoTCoin`. GHCR image will be `ghcr.io/jajiz/botc` (GHCR namespaces are lowercase).
 - Relevant files to read before starting:
   - `ROADMAP.md` — Phase 7 scope (authoritative)
   - `.github/workflows/deploy.yml` — current pipeline, will be **deleted**
