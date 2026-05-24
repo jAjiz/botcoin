@@ -110,9 +110,9 @@ jobs:
           script: |
             set -euo pipefail
             mkdir -p "$DEPLOY_PATH"
-            curl -fsSL "https://raw.githubusercontent.com/jAjiz/BoTC/${COMMIT_SHA}/docker-compose.yml" \
+            curl -fsSL "https://raw.githubusercontent.com/jAjiz/BoTCoin/${COMMIT_SHA}/docker-compose.yml" \
               -o "$DEPLOY_PATH/docker-compose.yml"
-            curl -fsSL "https://raw.githubusercontent.com/jAjiz/BoTC/${COMMIT_SHA}/docker-compose.prod.yml" \
+            curl -fsSL "https://raw.githubusercontent.com/jAjiz/BoTCoin/${COMMIT_SHA}/docker-compose.prod.yml" \
               -o "$DEPLOY_PATH/docker-compose.prod.yml"
             # Grafana provisioning + dashboards are bind-mounted from the host
             # (see the grafana service in docker-compose.yml), so the deploy must
@@ -121,7 +121,7 @@ jobs:
             mkdir -p "$DEPLOY_PATH/services/grafana/provisioning/datasources" \
                      "$DEPLOY_PATH/services/grafana/provisioning/dashboards" \
                      "$DEPLOY_PATH/services/grafana/dashboards"
-            base="https://raw.githubusercontent.com/jAjiz/BoTC/${COMMIT_SHA}"
+            base="https://raw.githubusercontent.com/jAjiz/BoTCoin/${COMMIT_SHA}"
             curl -fsSL "$base/services/grafana/provisioning/datasources/postgres.yaml" \
               -o "$DEPLOY_PATH/services/grafana/provisioning/datasources/postgres.yaml"
             curl -fsSL "$base/services/grafana/provisioning/dashboards/botc.yaml" \
