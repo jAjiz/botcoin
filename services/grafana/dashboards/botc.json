@@ -1148,7 +1148,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT closed_at AS \"Closed at\", side AS \"Side\", entry_price::float8 AS \"Entry\", closing_price::float8 AS \"Closing\", pnl_percent::float8 AS \"PnL\" FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at DESC",
+          "rawSql": "SELECT closed_at AS \"Closed at\", side AS \"Side\", volume::float8 AS \"Volume\", volume::float8 * closing_price::float8 AS \"Value (€)\", entry_price::float8 AS \"Entry\", closing_price::float8 AS \"Closing\", pnl_percent::float8 AS \"PnL %\", created_at AS \"Created\", closing_order_id AS \"Order ID\" FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at DESC",
           "refId": "A",
           "sql": {
             "columns": [
