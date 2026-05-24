@@ -759,7 +759,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT side AS \"Side\", entry_price AS \"Entry\", activation_price AS \"Activation\", trailing_price AS \"Trailing\", stop_price AS \"Stop\" FROM trailing_state WHERE closing_order_id IS NULL AND pair = '$pair' ORDER BY pair",
+          "rawSql": "SELECT side AS \"Side\", volume::float8 AS \"Volume\", volume::float8 * (SELECT (control_value::jsonb -> '$pair' ->> 'price')::float8 FROM bot_control WHERE control_key = 'latest_pair_data') AS \"Value (€)\", entry_price::float8 AS \"Entry\", activation_price::float8 AS \"Activation\", trailing_price::float8 AS \"Trailing\", stop_price::float8 AS \"Stop\", CASE WHEN trailing_price IS NULL OR stop_price IS NULL THEN NULL WHEN side = 'sell' THEN (stop_price::float8 - entry_price::float8) / entry_price::float8 * 100 ELSE (entry_price::float8 - stop_price::float8) / entry_price::float8 * 100 END AS \"Est. PnL %\", created_at AS \"Created\", activated_at AS \"Activated\", updated_at AS \"Updated\", closing_order_id AS \"Closing Order\", closing_price::float8 AS \"Closing Price\", closing_requested_at AS \"Close Requested\" FROM trailing_state WHERE pair = '$pair' ORDER BY pair",
           "refId": "A",
           "sql": {
             "columns": [
