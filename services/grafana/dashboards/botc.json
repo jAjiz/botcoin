@@ -220,7 +220,7 @@
             "uid": "botc-postgres"
           },
           "format": "table",
-          "rawSql": "SELECT string_agg(key, ', ' ORDER BY key) AS pairs FROM sessions, LATERAL jsonb_object_keys(pair_data) AS key WHERE id = (SELECT MAX(id) FROM sessions)",
+          "rawSql": "SELECT string_agg(key, ', ' ORDER BY key) AS pairs FROM bot_control, LATERAL jsonb_object_keys(control_value::jsonb) AS key WHERE control_key = 'latest_pair_data'",
           "refId": "A"
         }
       ],
@@ -285,7 +285,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT (balance ->> 'XETH')::numeric::float8 AS \"ETH\", (balance ->> 'XXBT')::numeric::float8 AS \"BTC\", (balance ->> 'ZEUR')::numeric::float8 AS \"EUR\" FROM sessions WHERE id = (SELECT MAX(id) FROM sessions)",
+          "rawSql": "SELECT (control_value::jsonb ->> 'XETH')::numeric::float8 AS \"ETH\", (control_value::jsonb ->> 'XXBT')::numeric::float8 AS \"BTC\", (control_value::jsonb ->> 'ZEUR')::numeric::float8 AS \"EUR\" FROM bot_control WHERE control_key = 'latest_balance'",
           "refId": "A",
           "sql": {
             "columns": [
@@ -582,7 +582,7 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 10,
+        "w": 6,
         "x": 0,
         "y": 13
       },
@@ -603,7 +603,7 @@
         "showPercentChange": false,
         "text": {
           "titleSize": 15,
-          "valueSize": 30
+          "valueSize": 25
         },
         "textMode": "auto",
         "wideLayout": true
@@ -618,7 +618,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT (pair_data -> '$pair' ->> 'price')::float AS \"Last price\", (pair_data -> '$pair' ->> 'atr')::float AS \"Last ATR\", pair_data -> '$pair' ->> 'volatility_level' AS \"Volatility level\" FROM sessions WHERE id = (SELECT MAX(id) FROM sessions) AND pair_data ? '$pair'",
+          "rawSql": "SELECT (control_value::jsonb -> '$pair' ->> 'price')::float AS \"Last price\", (control_value::jsonb -> '$pair' ->> 'atr')::float AS \"Last ATR\", control_value::jsonb -> '$pair' ->> 'volatility_level' AS \"Volatility level\" FROM bot_control WHERE control_key = 'latest_pair_data' AND control_value::jsonb ? '$pair'",
           "refId": "A",
           "sql": {
             "columns": [
@@ -653,6 +653,7 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "noValue": "-",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -666,18 +667,6 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byType",
-              "options": "number"
-            },
-            "properties": [
-              {
-                "id": "noValue",
-                "value": "-"
-              }
-            ]
-          },
-          {
-            "matcher": {
               "id": "byName",
               "options": "Side"
             },
@@ -688,12 +677,10 @@
                   {
                     "options": {
                       "buy": {
-                        "color": "green",
                         "index": 1,
                         "text": "BUY"
                       },
                       "sell": {
-                        "color": "red",
                         "index": 0,
                         "text": "SELL"
                       }
@@ -718,13 +705,43 @@
                 "value": "locale"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Est. PnL %"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "thresholds"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              }
+            ]
           }
         ]
       },
       "gridPos": {
-        "h": 3,
-        "w": 14,
-        "x": 10,
+        "h": 7,
+        "w": 18,
+        "x": 6,
         "y": 13
       },
       "id": 5,
@@ -732,7 +749,7 @@
         "colorMode": "value",
         "graphMode": "none",
         "justifyMode": "center",
-        "orientation": "vertical",
+        "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
@@ -744,7 +761,7 @@
         "showPercentChange": false,
         "text": {
           "titleSize": 15,
-          "valueSize": 30
+          "valueSize": 25
         },
         "textMode": "auto",
         "wideLayout": true
@@ -759,7 +776,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT side AS \"Side\", entry_price AS \"Entry\", activation_price AS \"Activation\", trailing_price AS \"Trailing\", stop_price AS \"Stop\" FROM trailing_state WHERE closing_order_id IS NULL AND pair = '$pair' ORDER BY pair",
+          "rawSql": "SELECT side AS \"Side\", volume::float8 AS \"Volume\", volume::float8 * (SELECT (control_value::jsonb -> '$pair' ->> 'price')::float8 FROM bot_control WHERE control_key = 'latest_pair_data') AS \"Value (€)\", entry_price::float8 AS \"Entry\", activation_price::float8 AS \"Activation\", trailing_price::float8 AS \"Trailing\", stop_price::float8 AS \"Stop\", CASE WHEN trailing_price IS NULL OR stop_price IS NULL THEN NULL WHEN side = 'sell' THEN (stop_price::float8 - entry_price::float8) / entry_price::float8 * 100 ELSE (entry_price::float8 - stop_price::float8) / entry_price::float8 * 100 END AS \"Est. PnL %\", created_at AS \"Created\", activated_at AS \"Activated\", updated_at AS \"Updated\", closing_order_id AS \"Closing Order\", closing_price::float8 AS \"Closing Price\", closing_requested_at AS \"Close Requested\" FROM trailing_state WHERE pair = '$pair' ORDER BY pair",
           "refId": "A",
           "sql": {
             "columns": [
@@ -789,7 +806,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "id": 102,
       "panels": [],
@@ -888,7 +905,7 @@
         "h": 13,
         "w": 12,
         "x": 0,
-        "y": 17
+        "y": 21
       },
       "id": 8,
       "options": {
@@ -984,7 +1001,7 @@
         "h": 6,
         "w": 12,
         "x": 12,
-        "y": 17
+        "y": 21
       },
       "id": 14,
       "options": {
@@ -1030,16 +1047,21 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "fixedColor": "text",
+            "mode": "fixed"
+          },
           "custom": {
-            "align": "center",
+            "align": "auto",
             "cellOptions": {
-              "type": "auto"
+              "type": "color-text"
             },
             "filterable": false,
             "inspect": false
           },
           "fieldMinMax": false,
           "mappings": [],
+          "noValue": "-",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1068,40 +1090,24 @@
               {
                 "id": "custom.filterable",
                 "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byType",
-              "options": "number"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "locale"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "PnL"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
               },
               {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "color-text"
-                }
-              },
-              {
-                "id": "decimals",
-                "value": 2
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "buy": {
+                        "index": 0,
+                        "text": "BUY"
+                      },
+                      "sell": {
+                        "index": 1,
+                        "text": "SELL"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
               }
             ]
           },
@@ -1116,6 +1122,33 @@
                 "value": true
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byType",
+              "options": "number"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "locale"
+              },
+              {
+                "id": "custom.minWidth",
+                "value": 50
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PnL %"
+            },
+            "properties": [
+              {
+                "id": "color"
+              }
+            ]
           }
         ]
       },
@@ -1123,7 +1156,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 23
+        "y": 27
       },
       "id": 13,
       "options": {
@@ -1148,7 +1181,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT closed_at AS \"Closed at\", side AS \"Side\", entry_price::float8 AS \"Entry\", closing_price::float8 AS \"Closing\", pnl_percent::float8 AS \"PnL\" FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at DESC",
+          "rawSql": "SELECT closed_at AS \"Closed at\", side AS \"Side\", volume::float8 AS \"Volume\", entry_price::float8 AS \"Entry\", closing_price::float8 AS \"Closing\", volume::float8 * closing_price::float8 AS \"Value (€)\", pnl_percent::float8 AS \"PnL %\", closing_order_id AS \"Order ID\" FROM closed_positions WHERE pair = '$pair' AND $__timeFilter(closed_at) ORDER BY closed_at DESC",
           "refId": "A",
           "sql": {
             "columns": [
@@ -1178,7 +1211,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 34
       },
       "id": 103,
       "panels": [],
@@ -1275,7 +1308,7 @@
         "h": 10,
         "w": 11,
         "x": 0,
-        "y": 31
+        "y": 35
       },
       "id": 11,
       "options": {
@@ -1418,7 +1451,7 @@
         "h": 10,
         "w": 13,
         "x": 11,
-        "y": 31
+        "y": 35
       },
       "id": 10,
       "options": {
@@ -1442,7 +1475,7 @@
         },
         "xField": "time",
         "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
+        "xTickLabelSpacing": -300
       },
       "pluginVersion": "11.4.0",
       "targets": [
@@ -1522,6 +1555,6 @@
   "timezone": "browser",
   "title": "BoTC Overview",
   "uid": "botc-overview",
-  "version": 48,
+  "version": 49,
   "weekStart": ""
 }
