@@ -271,7 +271,7 @@ Detailed execution plan: [`plan/phase-6-code-quality.md`](plan/phase-6-code-qual
 
 ### Phase 7 – CI/CD Pipeline
 
-**Tracking:** [Issue #31](https://github.com/jAjiz/BoTC/issues/31)
+**Tracking:** [Issue #31](https://github.com/jAjiz/BoTCoin/issues/31)
 
 **Goal:** Replace the broken SSH-based deploy with a unified pipeline that gates quality on every PR, builds and publishes a container image on every push to `main`, and deploys that image to the VPS.
 
@@ -309,6 +309,8 @@ Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
 - [ ] Persist the dashboard JSON definition in the repository (`grafana/dashboards/`) so it is provisioned automatically on `docker compose up`
 - [ ] Document the Grafana setup in `README.md` (port, default credentials, how to access)
 
+Detailed execution plan: [`plan/phase-8-grafana.md`](plan/phase-8-grafana.md).
+
 **Success criteria:** `docker compose up` starts the bot, databases, and Grafana. The dashboard loads automatically with no manual configuration. Dashboard state persists across container restarts.
 
 ---
@@ -336,6 +338,8 @@ Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
 - [ ] Add a `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, tracking changes from the V2 milestone onwards (V1 history is not retroactively documented)
 - [ ] Frame the project consistently as a **backend engineering project that happens to use crypto market data** — never lead with trading-bot positioning
 
+Detailed execution plan: [`plan/phase-9-project-documentation.md`](plan/phase-9-project-documentation.md).
+
 **Success criteria:** A recruiter scanning the repo for under a minute can identify the project's scope, the engineering decisions made, and the maturity level (CI, observability, docs, planned extensions). A developer wanting to run, configure, or extend the project has a clear, single-source-of-truth document for each concern.
 
 ---
@@ -356,8 +360,6 @@ Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
 - [ ] Endpoints: `POST /optimizer/jobs` (202 + `job_id`, 409 if busy), `GET /optimizer/jobs/{id}`, `GET /optimizer/jobs`
 - [ ] Telegram notifications on optimizer start, completion, and failure
 - [ ] Pin `numba` and `optuna` exactly in `requirements.txt`
-
-Detailed execution plan: [`plan/phase-10-trading-tools-integration.md`](plan/phase-10-trading-tools-integration.md).
 
 **Success criteria:** `POST /backtest` returns a populated result in under a second on 60d of 15-min OHLC. `POST /optimizer/jobs` returns a `job_id` immediately; results persist to Postgres; a second submission while one is running returns `409`. A crash mid-run leaves the row marked `failed` after the next startup, never `running` indefinitely. The two scripts in `trading/` no longer have CLI entry points and never mutate global trading config.
 

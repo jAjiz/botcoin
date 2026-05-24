@@ -1,757 +1,186 @@
-# BoTCoin - Autonomous Digital Asset Manager
+# BoTCoin — Autonomous Trading Bot Backend
 
-[![CI](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jAjiz/BoTC/actions/workflows/ci.yml)
+[![CI](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
-BoTCoin is a 24/7 autonomous digital asset management system that analyzes market conditions in real-time and dynamically adapts trading behavior based on measured volatility. The system integrates with Kraken exchange and provides real-time monitoring and alerts through Telegram.
+BoTCoin is a production-grade backend service built using modern Python engineering practices. It runs an ATR-based trailing-stop strategy against Kraken's EUR pairs, persists all state in PostgreSQL, exposes a REST control surface via FastAPI, and ships a Grafana observability layer. The entire stack starts with a single `docker compose up`.
+
+![BoTC Overview dashboard — market, performance, and session panels](docs/dashboard.png)
 
 ---
 
-## 📑 Table of Contents
+## Architecture
 
-- [System Overview](#-system-overview)
-- [Architecture & Trading Engine](#-architecture--trading-engine)
-- [Data Analysis & Volatility Regimes](#-data-analysis--volatility-regimes)
-- [Persistence & Data Structure](#-persistence--data-structure)
-- [Exchange Integration](#-exchange-integration)
-- [Telegram Integration](#-telegram-integration)
-- [Simulation & Optimization](#-simulation--optimization)
-- [Configuration & Deployment](#-configuration--deployment)
-- [Quick Start](#-quick-start)
-- [Project Structure](#-project-structure)
-- [Testing](#-testing)
-- [Security Considerations](#-security-considerations)
-- [Performance Metrics](#-performance-metrics)
-- [Technical Highlights](#-technical-highlights)
-- [Contributing](#-contributing)
-- [License & Disclaimer](#-license--disclaimer)
+```mermaid
+graph BT
+    subgraph stack["Docker Compose stack"]
+        direction TB
+        botc["botc :8000\nFastAPI + APScheduler\nTrading engine + REST API"]
+        telegram["telegram :8001\nFastAPI + PTB polling\nTelegram interface"]
+        postgres[("postgres :5432\nPostgreSQL 16\nAll state + history")]
+        grafana["grafana :3000\nGrafana 11\nObservability dashboard"]
+    end
+
+    kraken["Kraken API"]
+    tg["Telegram"]
+
+    kraken -->|"OHLC · prices · orders"| botc
+    botc -->|"SQLAlchemy r/w"| postgres
+    grafana -->|"grafana_reader r/o"| postgres
+    telegram -->|"GET /market · POST /control"| botc
+    tg <-->|"PTB long-poll"| telegram
+    botc -->|"POST /notify"| telegram
+```
+
+Two application containers share one network. `botc` is the sole writer to every table. `telegram` is a thin API client — it reads and controls the bot exclusively through `botc`'s REST endpoints. Grafana reads the same database through a least-privilege `grafana_reader` role created by an Alembic migration.
 
 ---
 
-## 🎯 System Overview
-
-BoTCoin operates as an autonomous trading agent that:
-
-- **Analyzes Market State**: Continuously monitors market conditions using technical indicators (ATR - Average True Range)
-- **Adaptive Behavior**: Dynamically adjusts trading parameters based on current volatility levels
-- **Balance-Based Decision Logic**: Prioritizes operations based on portfolio composition (asset vs. cash predominance)
-- **Risk Management**: Implements trailing stop mechanisms with volatility-adjusted distances
-- **Real-Time Monitoring**: commands, alerts, and position tracking
-
-### ✨ Key Features
-
-- 📊 **Real-Time Market Analysis** using Pandas DataFrames and Numpy vectorized calculations
-- 🎚️ **5-Level Volatility Classification** (LL, LV, MV, HV, HH) based on ATR percentiles
-- 📱 **Telegram Bot Interface** for monitoring and control
-- 🔐 **Secure Configuration** via environment variables
-- 🚀 **Automated CI/CD** deployment through GitHub Actions
-- 💾 **Data Persistence** with PostgreSQL for all runtime state, history, and market data
-- 🔄 **24/7 Autonomous Operation** on Google Cloud Platform (Free Tier VPS)
-
-## 🏗️ Architecture & Trading Engine
-
-### Core Trading Logic
-
-The system implements a **balance-majority decision logic**:
-
-1. **Position Creation** (`create_position`):
-   - Analyzes portfolio balance between asset and cash
-   - If **asset predominates** → prioritizes **SELL** positions
-   - If **cash predominates** → prioritizes **BUY** positions
-   - Calculates activation price based on:
-     - Activation coefficient (`K_ACT`)
-     - Stop coefficient + margin (`K_STOP + MIN_MARGIN`)
-
-### Decision Logic Diagram
-
-```mermaid
-graph LR
-    A[Portfolio Analysis] --> B{Balance Comparison}
-    B -->|Asset Value > Cash| C[SELL Position Priority]
-    B -->|Cash > Asset Value| D[BUY Position Priority]
-    
-    C --> E[Calculate Sell Value<br/>current_value - hodl_value]
-    D --> F[Calculate Buy Value<br/>target_value - current_value<br/>limited by available_fiat]
-    
-    E --> G[Create SELL Position]
-    F --> H[Create BUY Position]
-    
-    G --> I[Activation: entry + activation_distance]
-    H --> J[Activation: entry - activation_distance]
-    
-    I --> K[Trailing Stop: activation - K_STOP * ATR]
-    J --> L[Trailing Stop: activation + K_STOP * ATR]
-```
-
-2. **Position Management** (`update_trailing_state`):
-   - **Pre-Activation Phase**: Monitors activation price and recalibrates if ATR changes significantly
-   - **Post-Activation Phase**: Implements trailing stop mechanism
-   - **Dynamic Recalibration**: Adjusts stop distances when ATR deviates beyond `ATR_DESV_LIMIT`
-
-3. **Position Closure** (`close_position`):
-   - Executes limit orders when stop price is hit (lower fees than market orders)
-   - Calculates and logs P&L (Profit/Loss percentage)
-   - Persists closed position data for historical analysis
-
-### Trading Flow
-
-```mermaid
-graph TD
-    A[Session Start] --> B[Fetch Balance & Prices]
-    B --> C[Calculate ATR & Volatility Level]
-    C --> D{Position Exists?}
-    
-    D -->|No| E[Calculate Position Side & Value]
-    E --> F{Value >= MIN_VALUE?}
-    F -->|Yes| G[Create Position with Activation Price]
-    F -->|No| H[Skip - Insufficient Value]
-    
-    D -->|Yes| I{Trailing Active?}
-    
-    I -->|No| J[Check Activation Conditions]
-    J -->|Price Reached| K[Activate Trailing Stop]
-    J -->|ATR Changed| L[Recalibrate Activation Price]
-    
-    I -->|Yes| M[Check Stop Conditions]
-    M -->|Stop Hit| N[Close Position - Place Limit Order]
-    M -->|Price Better| O[Update Trailing Price]
-    M -->|ATR Changed| P[Recalibrate Stop Price]
-    
-    G --> Q[Save State]
-    K --> Q
-    L --> Q
-    N --> Q
-    O --> Q
-    P --> Q
-    H --> Q
-    
-    Q --> R[Sleep SLEEPING_INTERVAL]
-    R --> A
-```
-
-## 📊 Data Analysis & Volatility Regimes
-
-### Market Data Processing
-
-The system uses Pandas DataFrames for efficient market data manipulation and Numpy for vectorized statistical calculations:
-
-- **OHLC Data Ingestion**: Fetches candlestick data from Kraken via `fetch_ohlc_data`
-- **ATR Calculation**: Rolling window calculation using True Range components (H-L, H-PC, L-PC)
-- **Historical Persistence**: Stores market data in the `ohlc_data` PostgreSQL table; CSV caches under `data/` are consumed by offline analysis tools only
-- **Incremental Updates**: Appends only new candles using upsert semantics (`ON CONFLICT DO NOTHING`)
-
-### Volatility Classification
-
-The system classifies market conditions into **5 volatility levels** based on ATR percentiles:
-
-| Level | Range | Description |
-|-------|-------|-------------|
-| **LL** | < P20 | Very Low Volatility |
-| **LV** | P20-P50 | Low Volatility |
-| **MV** | P50-P80 | Medium Volatility |
-| **HV** | P80-P95 | High Volatility |
-| **HH** | > P95 | Very High Volatility |
-
-The system determines the current volatility level for each pair by comparing the calculated ATR against these percentile thresholds.
-
-### Structural Noise Analysis
-
-The `analyze_structural_noise` function identifies market pivot points and calculates maximum drawdown/bounce (K values) for each volatility level:
-
-- **Pivot Detection**: Uses `scipy.signal.argrelextrema` to identify local minima and maxima
-- **Trend Segmentation**: Separates uptrends (min→max) and downtrends (max→min)
-- **K-Value Calculation**: For each volatility segment, computes `K = max_deviation / ATR`
-- **Statistical Distribution**: Provides percentile-based K_STOP recommendations (P50, P75, P90, P95, P100)
-
-### Dynamic K_STOP Calculation
-
-The system uses `calculate_trading_parameters` and `calculate_k_stops` from `parameters_manager.py` to dynamically compute stop distances:
-
-1. **Event Analysis**: `analyze_structural_noise` returns uptrend and downtrend events with K-values per volatility level
-2. **Percentile Selection**: For each volatility level (LL, LV, MV, HV, HH), `calculate_k_stops` selects the K-value at the configured percentile (from `.env` STOP_PCT variables)
-3. **Stop Assignment**: 
-   - SELL positions use K_STOP from uptrend events (drawdown resistance)
-   - BUY positions use K_STOP from downtrend events (bounce resistance)
-4. **Runtime Application**: `get_k_stop` retrieves the appropriate K_STOP value based on current volatility level and position side
-
-## 💾 Persistence & Data Structure
-
-Phase 4 introduces Alembic-backed PostgreSQL schema management. The initial migration bootstrap lives in `alembic.ini` and `scripts/migrations/`, and migrations run against `DATABASE_URL`.
-
-### Database Migrations
-
-Use Alembic for schema changes instead of ad hoc SQL:
+## Quick start
 
 ```bash
-alembic upgrade head
-```
-
-To generate a new revision after Phase 4 changes:
-
-```bash
-alembic revision -m "describe change"
-```
-
-### State Management
-
-State (active trailing state, closed positions, and bot control flags) is persisted in PostgreSQL via the centralized Data Access Layer implemented in `core/database.py`.
-
-- **Active positions:** stored in the `trailing_state` table and accessed via DAL functions (`load_trailing_state`, `save_trailing_state`).
-- **Closed positions:** stored in the `closed_positions` table and accessed via DAL functions (`save_closed_position`, `load_closed_positions`).
-
-Legacy JSON files under `data/` (e.g., `trailing_state.json`, `closed_positions.json`) are deprecated and no longer used by the runtime.
-
-### Data Sink Architecture
-
-CSV files (`data/*_ohlc_data_*.csv`) are retained as read-only inputs for the offline analysis tools:
-
-- **Backtest & Optimizer**: `trading/backtest.py` and `trading/optimize_params.py` consume CSV market data caches
-- **Performance Analysis**: Enable post-operation backtesting and parameter optimization
-
-All runtime persistence (OHLC ingestion, position state, closed positions, and bot control flags) is stored in PostgreSQL.
-
-## 📡 Observability — Grafana
-
-A pre-provisioned Grafana instance ships with the stack. It runs as a Docker Compose service on `127.0.0.1:3000` and reads from PostgreSQL through a least-privilege `grafana_reader` role (created by Alembic migration `20260512_01`).
-
-**What is on the default dashboard (`BoTC Overview`):**
-
-- Market: close price and ATR per pair, latest close
-- Performance: total closed positions, cumulative PnL %, win/loss ratio, per-close PnL, cumulative PnL over time, open positions table
-- System: seconds since last successful session (thresholded), paused/running state, OHLC ingestion rate
-- Sessions: sessions per hour by status, 24h failure rate, recent sessions table, last session log
-
-Every scheduler tick writes one row to the `sessions` table (also created by migration `20260512_01`) capturing start/end timestamps, completion status, the balance snapshot, per-pair market data (price/ATR/volatility level), and the log lines emitted during the session — these power the Sessions row of the dashboard.
-
-**Provisioning:**
-
-- `services/grafana/provisioning/datasources/postgres.yaml` — datasource (read-only, uid `botc-postgres`)
-- `services/grafana/provisioning/dashboards/botc.yaml` — dashboard provider config
-- `services/grafana/dashboards/botc.json` — the dashboard payload (committed to the repo)
-
-The dashboard is the source of truth in the repo. To edit it, open the UI, save as a new dashboard, then `Share → Export → Save to file` and replace `services/grafana/dashboards/botc.json`. UI updates to the provisioned dashboard are disabled (`allowUiUpdates: false`) so changes cannot drift silently.
-
-## 🔌 Exchange Integration
-
-### Kraken API
-
-**Current Scope**: EUR-based trading pairs only (supports multiple pairs simultaneously)
-
-**Key Functions** (`exchange/kraken.py`):
-- `get_balance()`: Retrieves account balances
-- `get_last_prices(pairs)`: Fetches current market prices for all configured pairs
-- `fetch_ohlc_data(pair, interval, since)`: Downloads historical candlestick data
-- `place_limit_order(pair, side, price, volume)`: Executes limit orders
-- `get_order_status(order_id)`: Checks order execution status
-
-**Modular Design**: The architecture supports future expansion to:
-- Other exchanges (Binance, Coinbase, etc.)
-- Additional fiat currencies (USD, GBP, etc.)
-
-## 📱 Telegram Integration
-
-### Command Interface
-
-The bot provides real-time interaction through Telegram commands:
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Display available commands and configured pairs |
-| `/status` | Show bot operational status (RUNNING/PAUSED) |
-| `/pause` | Pause trading operations (safe mode) |
-| `/resume` | Resume trading operations |
-| `/market [pair]` | Display current market data and balances |
-| `/positions [pair]` | Show open positions with P&L estimates |
-
-**Example**: Telegram interface in action
-
-<img src="https://github.com/user-attachments/assets/64f97b75-9b60-4d7a-a5e4-2bbadcc51913" alt="Telegram Bot Commands" width="300"/> <img src="https://github.com/user-attachments/assets/3c356282-d760-4dfa-b5c2-c8d6475b387c" alt="Telegram Market Status" width="300"/>
-
-### Automated Alerts
-
-The system sends real-time notifications for:
-- ✅ Bot startup and configuration
-- 🆕 New position creation
-- ⚡ Position activation (trailing start)
-- 💸 Position closure with P&L
-- ⚠️ System errors and warnings
-
-**Implementation**: Thread-safe communication between main trading loop and Telegram handler using `core.runtime` shared state.
-
-## 🧪 Simulation & Optimization
-
-### Backtest Module
-
-**Purpose**: Validate trading strategies against historical data
-
-**Key Features** (`trading/backtest.py`):
-- Simulates full trading cycles with configurable parameters
-- Accounts for exchange fees and slippage
-- Calculates performance metrics (total return, number of operations, win rate)
-- Supports date range filtering and operation limits
-
-**Usage**:
-```bash
-PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01 MAX_OPS=50
-```
-
-### Optimizer Module
-
-**Purpose**: Find optimal trading parameters through grid search
-
-**Key Features** (`trading/optimize_params.py`):
-- Exhaustive parameter combinations testing
-- Multiple optimization modes:
-  - **CONSERVATIVE**: Tests MIN_MARGIN configurations (entry price protection)
-  - **AGGRESSIVE**: Tests K_ACT configurations (ATR-based activation)
-  - **CURRENT**: Validates existing `.env` configuration
-- Train/test split for validation
-- Ranking method: ROBUST (median + IQR for outlier resistance)
-- Configurable search space for K_ACT, K_STOP percentiles, and MIN_MARGIN
-
-**Usage**:
-```bash
-PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26 TRAIN_SPLIT=0.7
-```
-
-### ⚠️ Transparency Note
-
-The **Backtest and Optimizer modules** have been developed with intensive AI assistance to accelerate prototyping and parameter optimization. While the core trading logic is manually designed and validated, these analytical components benefit from automated code generation for statistical calculations and performance evaluation.
-
-## ⚙️ Configuration & Deployment
-
-### Environment Variables
-
-Create a `.env` file with the following configuration:
-
-```bash
-# Kraken API Credentials
-KRAKEN_API_KEY=                    # Your Kraken API key
-KRAKEN_API_SECRET=                 # Your Kraken API secret
-
-# Telegram Bot Credentials (obtain from @BotFather)
-TELEGRAM_TOKEN=                    # Bot token from @BotFather
-TELEGRAM_USER_ID=                  # Your numeric Telegram user ID
-TELEGRAM_POLL_INTERVAL=10          # Polling interval in seconds (default: 0)
-
-# Bot Settings
-SLEEPING_INTERVAL=60               # Seconds between trading sessions (default: 60)
-PARAM_SESSIONS=720                 # Sessions before recalculating parameters (default: 720, ~12h)
-CANDLE_TIMEFRAME=15                # Candle size in minutes (default: 15)
-ATR_PERIOD=14                      # ATR calculation period in candles (default: 14)
-ATR_DESV_LIMIT=0.2                 # ATR deviation threshold for recalibration (default: 0.2, 20%)
-MIN_VALUE=10                       # Minimum operation value in EUR (default: 10)
-MINIMUM_CHANGE_PCT=0.02            # Minimum price change for pivot detection (default: 0.02, 2%)
-
-# Pairs
-PAIRS=XBTEUR,ETHEUR                # Comma-separated list of trading pairs
-
-# Asset Allocation (per pair)
-XBTEUR_TARGET_PCT=80               # Target portfolio percentage for XBTEUR
-XBTEUR_HODL_PCT=20                 # Minimum hold percentage (don't sell below this)
-
-ETHEUR_TARGET_PCT=20               # Target portfolio percentage for ETHEUR
-ETHEUR_HODL_PCT=0                  # Minimum hold percentage for ETHEUR
-
-# Trading Parameters (per pair)
-# XBTEUR uses MIN_MARGIN strategy (no K_ACT defined)
-XBTEUR_MIN_MARGIN=0.009            # Minimum profit margin for activation (0.9%)
-XBTEUR_STOP_PCT_LL=0.95            # Stop percentile for Very Low volatility (95th)
-XBTEUR_STOP_PCT_LV=0.90            # Stop percentile for Low volatility (90th)
-XBTEUR_STOP_PCT_MV=0.65            # Stop percentile for Medium volatility (65th)
-XBTEUR_STOP_PCT_HV=0.50            # Stop percentile for High volatility (50th)
-XBTEUR_STOP_PCT_HH=0.50            # Stop percentile for Very High volatility (50th)
-
-# ETHEUR uses K_ACT strategy (ATR-based activation)
-ETHEUR_K_ACT=1.5                   # Activation coefficient (multiplies ATR)
-ETHEUR_STOP_PCT_LL=0.90            # Stop percentile for Very Low volatility (90th)
-ETHEUR_STOP_PCT_LV=0.25            # Stop percentile for Low volatility (25th)
-ETHEUR_STOP_PCT_MV=0.99            # Stop percentile for Medium volatility (99th)
-ETHEUR_STOP_PCT_HV=0.99            # Stop percentile for High volatility (99th)
-ETHEUR_STOP_PCT_HH=0.90            # Stop percentile for Very High volatility (90th)
-```
-
-**Configuration Flexibility**:
-- **K_ACT and MIN_MARGIN** can be configured per side (SELL/BUY) or common for both:
-  - Common: `PAIR_K_ACT`, `PAIR_MIN_MARGIN`
-  - Per side: `PAIR_SELL_K_ACT`, `PAIR_BUY_K_ACT`, `PAIR_SELL_MIN_MARGIN`, `PAIR_BUY_MIN_MARGIN`
-- If **K_ACT** is defined, activation uses: `activation_distance = K_ACT * ATR`
-- If **K_ACT** is not defined, activation uses: `activation_distance = K_STOP * ATR + MIN_MARGIN * entry_price`
-
-## 🧪 Testing
-
-The project uses a two-tier pytest strategy with Docker-first execution and an enforced coverage gate.
-
-- **Unit tests** (`tests/unit`): pure logic tests for `core/`, `trading/`, and mocked exchange wrappers in `exchange/`.
-- **Integration tests** (`tests/integration`): optional live Kraken connectivity checks, skipped by default unless explicitly enabled.
-- **Coverage gate**: `pytest.ini` enforces `--cov-fail-under=80` across `core`, `trading`, and `exchange`.
-
-### Local setup (without Docker)
-
-```bash
-pip install -r requirements-dev.txt
-pytest tests
-```
-
-### Docker setup (recommended for parity)
-
-```bash
-docker compose -f docker-compose.test.yml build test
-docker compose -f docker-compose.test.yml run --rm test pytest tests
-```
-
-The dedicated `test` service in `docker-compose.test.yml` sets `PYTHONPATH=/app`, so the container resolves the repo's flat module layout the same way as the local environment.
-
-To run live Kraken integration tests, set:
-
-```bash
-RUN_LIVE_INTEGRATION=true
-KRAKEN_API_KEY=...
-KRAKEN_API_SECRET=...
-```
-
-Or override only for a single Docker run:
-
-```bash
-docker compose -f docker-compose.test.yml run --rm -e RUN_LIVE_INTEGRATION=true test pytest tests/integration
-```
-
-If live credentials are missing, integration tests are skipped automatically.
-
-### Code quality
-
-Run linting and formatting checks inside Docker:
-
-    docker compose -f docker-compose.test.yml run --rm test ruff check .
-    docker compose -f docker-compose.test.yml run --rm test ruff format --check .
-
-Apply automatic fixes:
-
-    docker compose -f docker-compose.test.yml run --rm test ruff check . --fix
-    docker compose -f docker-compose.test.yml run --rm test ruff format .
-
-### Infrastructure
-
-**Cloud Deployment**: Google Cloud Platform Free Tier VPS
-- **Availability**: 24/7 operation
-- **Reliability**: Automatic restart on failure
-- **Cost**: Zero infrastructure cost
-
-### Continuous integration and deployment
-
-A single workflow (`.github/workflows/ci.yml`) runs on every PR and every push to `main`:
-
-| Job | When | What |
-|---|---|---|
-| `Lint, unit and integration tests` | always | Builds the dev image once, then runs `ruff check`, `ruff format --check`, `pytest tests/unit` (with the 80% coverage gate), and `pytest tests/integration` against an ephemeral Postgres service. Kraken-gated tests are skipped in CI. |
-| `Build and push image` | `push: main` only | Builds the production image and publishes it to `ghcr.io/jajiz/botc:main` and `ghcr.io/jajiz/botc:sha-<short>` |
-| `Deploy to VPS` | `push: main` only | SSHes to the VPS, fetches the two compose files plus the Grafana provisioning/dashboard files by commit SHA (the Grafana service bind-mounts them from the host), and runs `docker compose pull && up -d` |
-
-The `needs:` chain in the workflow file enforces ordering: a failing test job blocks the image push and the deploy. Branch protection on `main` is optional — the pipeline gate is the workflow's job graph, not the branch rule.
-
-#### Rolling back to a previous image with `IMAGE_TAG`
-
-Every successful `push: main` build is tagged twice on GHCR:
-
-- `ghcr.io/jajiz/botc:main` — the moving tag, what `docker compose pull` resolves to by default.
-- `ghcr.io/jajiz/botc:sha-<short>` — an immutable tag pinned to the commit SHA. This is the rollback target.
-
-`docker-compose.prod.yml` reads the tag from the `IMAGE_TAG` environment variable and defaults to `main`. To roll back without reverting the commit on `main`:
-
-```bash
-# On the VPS, in the deploy directory containing the two compose files:
-cd "$DEPLOY_PATH"
-
-# 1. Identify the last known-good build. Either:
-#      - pick the SHA from a previous successful "Deploy to VPS" run on GitHub Actions, or
-#      - list locally available tags:
-docker image ls ghcr.io/jajiz/botc
-
-# 2. Pin IMAGE_TAG to that SHA and bring the stack up. Persist the value
-#    in the shell session so subsequent compose commands keep using it.
-export IMAGE_TAG=sha-abc1234
-docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
-
-# 3. Verify both services are healthy.
-docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
-curl -fsS http://127.0.0.1:8000/health
-
-# 4. To return to the latest main once the underlying issue is fixed:
-unset IMAGE_TAG
-docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
-```
-
-Notes:
-
-- The rollback is service-only. Database state is **not** rewound — if the bad release applied an Alembic migration, run the matching `alembic downgrade` before rolling back the image, otherwise the older image may not understand the new schema.
-- `IMAGE_TAG` is read at compose evaluation time, so set it in the same shell that runs `docker compose ... up`, or place it in a `.env` file next to the compose files for persistence across SSH sessions.
-- To make the rollback durable across reboots, keep `IMAGE_TAG=sha-<short>` in `.env` until you are ready to roll forward.
-
-### Configuration Validation & Logging
-
-The system performs comprehensive validation on startup and provides detailed logging throughout operation:
-
-**Startup Validation**:
-```
-[INFO] ============================================================
-[INFO] ✅ CONFIGURATION VALIDATED SUCCESSFULLY
-[INFO] ============================================================
-[INFO] Telegram polling interval: 10s
-[INFO] Session interval: 60s
-[INFO] Parameter calculation sessions: 720
-[INFO] Candle timeframe: 15min
-[INFO] Market data storage: 120 days
-[INFO] ATR period: 14 candles
-[INFO] Pairs to trade: XBTEUR, ETHEUR
-[INFO] ------------------------------------------------------------
-```
-
-**Session Logs**: Each trading session provides detailed information:
-```
-[INFO] ======== STARTING SESSION ========
-[INFO] --- Processing pair: [XBTEUR] ---
-[INFO] Calculating trading parameters...
-[INFO] ATR percentiles → P20:100.0€ | P50:174.2€ | P80:291.9€ | P95:462.5€
-[INFO] K_STOP_SELL → LL:2.90 | LV:3.30 | MV:4.30 | HV:1.60 | HH:1.40
-[INFO] K_STOP_BUY  → LL:4.20 | LV:3.10 | MV:4.60 | HV:2.00 | HH:1.30
-[INFO] Market: 66,381.2€ | ATR: 190.0€ (MV)
-[INFO] --- Processing pair: [ETHEUR] ---
-[INFO] Calculating trading parameters...
-[INFO] ATR percentiles → P20:4.8€ | P50:8.0€ | P80:13.5€ | P95:21.7€
-[INFO] K_STOP_SELL → LL:10.60 | LV:3.80 | MV:6.10 | HV:5.50 | HH:2.30
-[INFO] K_STOP_BUY  → LL:11.40 | LV:2.60 | MV:6.50 | HV:6.80 | HH:3.20
-[INFO] Market: 1,948.7€ | ATR: 10.2€ (MV)
-[INFO] Session complete. Sleeping for 60s.
-
-[INFO] ======== STARTING SESSION ========
-[INFO] --- Processing pair: [XBTEUR] ---
-[INFO] Market: 66,429.4€ | ATR: 191.1€ (MV)
-[INFO] --- Processing pair: [ETHEUR] ---
-[INFO] Market: 1,952.1€ | ATR: 10.4€ (MV)
-[INFO] Session complete. Sleeping for 60s.
-```
-
-All logs include timestamps and are organized by:
-- **Configuration validation**: System settings and pair configuration
-- **Parameter calculation**: ATR percentiles and K_STOP values per volatility level
-- **Market state**: Current price, ATR, and volatility classification
-- **Position events**: Creation, activation, recalibration, and closure
-
-## 🚀 Quick Start
-
-### Docker
-
-Two Compose files are provided:
-
-| File | Purpose |
-|---|---|
-| `docker-compose.yml` | **Development** – bind-mounts `./data` so you can inspect files directly on the host. Logs go to stdout (`docker compose logs`). |
-| `docker-compose.prod.yml` | **Production (VPS)** – layered override that switches `./data` to a named volume (fixes Linux ownership for the non-root container user), enforces `restart: always`, and adds runtime hardening. |
-
-#### Services
-
-`docker compose up` starts three containers:
-
-| Container | Port | Role |
-|---|---|---|
-| `botc` | `8000` | FastAPI trading service + APScheduler |
-| `botc-telegram` | `8001` | Telegram bot (polling + `/notify` webhook) |
-| `botc-postgres` | `5432` | PostgreSQL database |
-
-#### Development
-
-1. Copy the environment template:
-
-```bash
-cp .env.example .env
-```
-
-2. Build and start all services:
-
-```bash
+cp .env.example .env   # fill in required values — see docs/configuration.md
 docker compose up -d --build
 ```
 
-After the stack is running:
-
-- API:       <http://localhost:8000/docs>
-- Grafana:   <http://localhost:3000>  (anonymous Viewer access; `admin` login for edits)
-
-3. Explore the API (Swagger UI):
-
-```
-http://localhost:8000/docs
-```
-
-4. Watch logs:
+| Service | URL |
+|---|---|
+| Trading API (Swagger UI) | http://localhost:8000/docs |
+| Grafana dashboard | http://localhost:3000 |
 
 ```bash
-docker compose logs -f botc
-docker compose logs -f botc-telegram
+docker compose logs -f botc        # watch trading sessions
+docker compose down                # stop all services
 ```
-
-5. Stop services:
-
-```bash
-docker compose down
-```
-
-#### Production (Linux VPS)
-
-Layer the production override on top of the base file:
-
-```bash
-# First deploy
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-
-# Watch logs
-docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f botc
-
-# Stop
-docker compose -f docker-compose.yml -f docker-compose.prod.yml down
-```
-
-> **Note:** On production, `./data` is stored in a Docker named volume (`botc_data`). To find the exact runtime volume name run `docker volume ls | grep botc`, then inspect with `docker volume inspect <volume-name>` or copy files out with `docker cp`. Logs are read via `docker compose logs` and persist only for the lifetime of the container — for long-term retention, switch the logging driver to `journald` in `docker-compose.prod.yml`.
-
-### Analysis Tools
-
-Run analysis scripts using Docker:
-
-**Market Structure Analysis**:
-```bash
-docker compose run --rm botc python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
-```
-
-**Backtest Strategy**:
-```bash
-docker compose run --rm botc python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26 START=2025-01-01 END=2026-01-01
-```
-
-**Parameter Optimization**:
-```bash
-docker compose run --rm botc python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
-```
-
-Or run locally with Python (set `PYTHONPATH` so the flat module layout is resolvable):
-```bash
-PYTHONPATH=. python trading/market_analyzer.py PAIR=XBTEUR Volatility=ALL SHOW_EVENTS
-PYTHONPATH=. python trading/backtest.py PAIR=XBTEUR FEE_PCT=0.26
-PYTHONPATH=. python trading/optimize_params.py PAIR=XBTEUR MODE=CONSERVATIVE FEE_PCT=0.26
-```
-
-## 📈 Project Structure
-
-```
-BoTCoin/
-├── main.py                      # Uvicorn entry point (uvicorn main:app)
-├── docker-compose.yml           # Three-container stack (botc, botc-telegram, postgres)
-├── alembic.ini                  # Alembic migration configuration
-├── requirements.txt             # Python dependencies
-├── .env                         # Configuration (not in repo)
-│
-├── api/                         # FastAPI trading service
-│   ├── app.py                  # App factory + APScheduler lifespan
-│   ├── schemas.py              # Pydantic v2 response models
-│   └── routes/
-│       ├── market.py           # GET /market, /market/{pair}
-│       ├── balance.py          # GET /balance
-│       ├── positions.py        # GET /positions, /positions/{pair}
-│       ├── status.py           # GET /status
-│       └── control.py          # POST /control/pause|resume
-│
-├── core/
-│   ├── config.py               # Configuration loader
-│   ├── database.py             # Data Access Layer (PostgreSQL ORM + operations)
-│   ├── runtime.py              # Thread-safe shared state (runtime data)
-│   ├── scheduler.py            # Trading session orchestrator
-│   ├── logging.py              # Logging + Telegram notification dispatch
-│   ├── utils.py                # Common utilities
-│   └── validation.py           # Startup configuration validation
-│
-├── exchange/
-│   └── kraken.py               # Kraken API integration
-│
-├── scripts/
-│   └── migrations/             # Alembic migration versions
-│       └── versions/
-│           └── 20260414_01_phase4_initial_schema.py
-│
-├── services/
-│   └── telegram/               # Telegram bot service (uvicorn services.telegram.app:app)
-│       ├── app.py              # FastAPI app + PTB polling lifespan + /notify route
-│       ├── polling.py          # Command handlers (pause, resume, status, market, positions)
-│       └── client.py           # httpx.AsyncClient pointed at the botc API
-│
-├── trading/
-│   ├── inventory_manager.py   # Portfolio calculation logic
-│   ├── market_analyzer.py     # ATR and structural analysis
-│   ├── parameters_manager.py  # Dynamic parameter calculation
-│   ├── positions_manager.py   # Position lifecycle management
-│   ├── backtest.py            # Historical simulation
-│   └── optimize_params.py     # Parameter optimization
-│
-└── .github/
-    └── workflows/
-        └── ci.yml              # CI/CD automation
-```
-
-## 🔒 Security Considerations
-
-- **API Keys**: Never commit credentials; use environment variables exclusively
-- **Authentication**: Telegram bot validates user ID before executing commands
-- **Order Validation**: All operations require minimum value threshold
-- **Rate Limiting**: Respects exchange API limits with sleep intervals
-- **Error Handling**: Graceful degradation with notification on failures
-
-## 📊 Performance Metrics
-
-The system tracks and logs:
-- **Position Metrics**: Entry/exit prices, ATR at decision points, P&L percentage
-- **Market Metrics**: Volatility distribution, ATR percentiles, price movements
-- **Operational Metrics**: Session count, position refresh cycles, recalibration events
-
-## 🛠️ Technical Highlights
-
-### Core Technologies
-- **Python 3.x**: Main programming language
-- **FastAPI + Uvicorn**: REST API for trading operations and Telegram webhook
-- **APScheduler**: Non-blocking interval scheduler for the trading session
-- **python-telegram-bot**: Telegram command interface
-- **httpx**: Async HTTP client for inter-service communication
-- **Pandas & Numpy**: High-performance data analysis
-- **Scipy**: Advanced statistical calculations
-
-### Design Patterns
-- **Two-container API architecture**: `botc` (trading API on :8000) and `botc-telegram` (bot service on :8001) communicate over a shared Docker network
-- **Modular Architecture**: Separation of concerns (trading, exchange, services)
-- **Configuration as Code**: Environment-driven behavior
-- **State Persistence**: PostgreSQL for all runtime state (trailing stop, closed positions, bot control, OHLC)
-- **Thread-Safe State**: Locking mechanism for concurrent access between APScheduler and FastAPI request handlers
-
-### Key Algorithms
-- **ATR-Based Volatility**: Dynamic stop distances using True Range
-- **Pivot Detection**: Local extrema identification with scipy
-- **Trailing Stop**: Price-following mechanism with volatility adaptation
-- **Balance-Majority Logic**: Portfolio-driven decision making
-
-## 🤝 Contributing & Support
-
-Contributions, bug reports, and suggestions are welcome! This project is primarily for educational purposes.
-
-- **Author**: [jAjiz](https://github.com/jAjiz)
-- **Repository**: [BoTCoin](https://github.com/jAjiz/BoTCoin)
-- **Contact**: For questions or collaboration, please open a [GitHub Issues](https://github.com/jAjiz/BoTCoin/issues)
-
-## 📝 License & Disclaimer
-
-This project is for educational and portfolio demonstration purposes. 
-
-**⚠️ Trading Disclaimer**: Cryptocurrency trading involves substantial risk. This bot operates with real funds and can result in financial loss. Use at your own risk. Past performance does not guarantee future results.
-
-**⚠️ No Financial Advice**: This software is not financial advice. The author is not responsible for any financial losses incurred through the use of this software. Always do your own research and invest responsibly.
 
 ---
 
-**Built with data-driven decision making and continuous operation in mind.**
+## Key engineering decisions
+
+Each decision links to its phase in the roadmap — execution plans and design rationale are linked from there.
+
+| Technology | Decision | Reference |
+|---|---|---|
+| Docker | Single image, multi-service Compose; no host Python required | [Roadmap](ROADMAP.md#phase-1--infrastructure-first-docker-completed) |
+| APScheduler | `AsyncIOScheduler` in the FastAPI `lifespan`; `max_instances=1` prevents overlapping ticks | [Roadmap](ROADMAP.md#phase-2--managed-execution-apscheduler-completed) |
+| Testing | Two-tier pytest (unit + integration) runs entirely inside Docker for production parity | [Roadmap](ROADMAP.md#phase-3--testing-strategy-completed) |
+| PostgreSQL | Synchronous SQLAlchemy under async FastAPI; module-level DAL instead of a repository class | [Roadmap](ROADMAP.md#phase-4--professional-persistence-postgresql-completed) |
+| FastAPI | `botc` and `telegram` split into two services so Telegram's long-poll lifecycle cannot stall the trading loop | [Roadmap](ROADMAP.md#phase-5--rest-api-layer-fastapi-completed) |
+| ruff | Single tool for lint + format + import sorting; `pyproject.toml` as the single config source | [Roadmap](ROADMAP.md#phase-6--code-quality-linting--type-safety-completed) |
+| CI/CD | GHCR image-based deploy; VPS holds only `.env` + two compose files, no source clone | [Roadmap](ROADMAP.md#phase-7--cicd-pipeline) |
+| Grafana | Per-session `sessions` table + filesystem-provisioned dashboard; SQL-native, no Loki / Prometheus | [Roadmap](ROADMAP.md#phase-8--observability-grafana-dashboard) |
+
+Full design rationale is in [CLAUDE.md](CLAUDE.md) under **Design choices**.
+
+---
+
+## Data model
+
+Five PostgreSQL tables managed by a single Alembic migration chain (`scripts/migrations/versions/`):
+
+```mermaid
+erDiagram
+    ohlc_data {
+        text pair PK
+        int timeframe_minutes PK
+        bigint time PK
+        numeric open
+        numeric high
+        numeric low
+        numeric close
+        numeric atr
+    }
+
+    trailing_state {
+        text pair PK
+        text side
+        numeric entry_price
+        numeric activation_price
+        numeric trailing_price
+        numeric stop_price
+        text closing_order_id
+        timestamp updated_at
+    }
+
+    closed_positions {
+        bigint id PK
+        text pair
+        text side
+        numeric entry_price
+        numeric closing_price
+        numeric pnl_percent
+        timestamp closed_at
+    }
+
+    bot_control {
+        text control_key PK
+        text control_value
+        timestamp updated_at
+    }
+
+    sessions {
+        bigint id PK
+        timestamp started_at
+        timestamp ended_at
+        text status
+        jsonb balance
+        jsonb pair_data
+        text log_messages
+    }
+```
+
+**Data flow for a completed trade:**
+
+```
+Kraken API
+  → fetch_ohlc_data()  →  ohlc_data  (upsert, every session)
+  → get_balance() + get_last_prices()  →  core/runtime  (in-memory only)
+
+create_position()
+  →  trailing_state  (INSERT: side, entry, activation_price)
+
+tick_position() × N sessions
+  →  trailing_state  (UPDATE: trailing_price, stop_price)
+
+close_position()
+  →  trailing_state  (UPDATE: closing_order_id, approximate closing_price)
+
+is_closing_complete()  — Kraken QueryOrders confirms fill
+  →  closed_positions  (INSERT: real fill price, pnl_percent)
+  →  trailing_state  (DELETE)
+```
+
+---
+
+## Roadmap & future work
+
+See [ROADMAP.md](ROADMAP.md) for the full phased plan.
+
+The next planned phase:
+
+**Phase 10 – Trading Tools Integration**: fold `backtest.py` and `optimize_params.py` into the API as JSON endpoints (`POST /backtest`, async `POST /optimizer/jobs`) with Postgres-persisted job state, Numba JIT on the simulator core, and Optuna TPE replacing the exhaustive parameter grid. See [ROADMAP.md](ROADMAP.md#phase-10--trading-tools-integration-backtest--optimizer) for scope.
+
+---
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/configuration.md](docs/configuration.md) | Every `.env` variable, its default, and its effect |
+| [docs/trading-strategy.md](docs/trading-strategy.md) | ATR classification, K_STOP calibration, position lifecycle |
+| [docs/operations.md](docs/operations.md) | Local dev, production deploy, rollback, monitoring, troubleshooting |
+| [CHANGELOG.md](CHANGELOG.md) | V2 phase-by-phase change history |
+| [ROADMAP.md](ROADMAP.md) | Full improvement areas and phased plan |
+
+---
+
+## Contributing
+
+Issues and pull requests are welcome. See [CLAUDE.md](CLAUDE.md) for coding conventions, design decisions, and testing requirements.
+
+**Author**: [jAjiz](https://github.com/jAjiz)
+
+---
+
+*Cryptocurrency trading involves substantial financial risk. This software is not financial advice. Use at your own risk.*
