@@ -118,8 +118,12 @@ def trading_session() -> None:
                 tick_position(pair, trailing_state[pair], current_balance, last_prices, current_atr, trailing_state)
 
             current_state = trailing_state.get(pair)
-            if current_state and current_state != previous_state:
-                db.save_trailing_state(pair, current_state)
+            if current_state != previous_state:
+                if current_state is None:
+                    # Position was dropped in-memory (e.g. _drop_position); remove the DB row.
+                    db.delete_trailing_state(pair)
+                else:
+                    db.save_trailing_state(pair, current_state)
 
         _session_count += 1
         runtime.update_last_run_at(now_utc())
