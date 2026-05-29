@@ -21,7 +21,8 @@ This document outlines the improvement areas and phased plan for the next iterat
   - [Phase 8 – Observability: Grafana Dashboard](#phase-8--observability-grafana-dashboard)
   - [Phase 9 – Project Documentation & Portfolio Framing](#phase-9--project-documentation--portfolio-framing)
   - [Phase 10 – Trading Tools Integration: Backtest + Optimizer](#phase-10--trading-tools-integration-backtest--optimizer)
-  - [Phase 11 – Strategy Refinement: Trend/Chop Regime Filter](#phase-11--strategy-refinement-trendchop-regime-filter)
+  - [Phase 11 – Auto-Lookback Window for K_STOP Calibration](#phase-11--auto-lookback-window-for-k_stop-calibration)
+  - [Phase 12 – Strategy Refinement: Trend/Chop Regime Filter](#phase-12--strategy-refinement-trendchop-regime-filter)
 - [Out of Scope](#-out-of-scope)
 
 ---
@@ -80,9 +81,12 @@ With structured data in PostgreSQL, a Grafana service can expose market metrics,
 The README is the project's cover letter. It must lead with engineering decisions, an architecture diagram, CI badges, and Grafana screenshots so a reader can grasp the project's scope and maturity in under a minute. Deep configuration reference and trading-strategy theory move out of the README into dedicated documents under `docs/`, keeping the top-level reading experience focused on the engineering story. The PostgreSQL ERD and data-flow diagram (originally a standalone phase) are folded in as one section among many.
 
 ### 10. Trading Tools Integration: Backtest + Optimizer
-The V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) are CLI-only and mutate global trading config — a hazard the live bot is currently isolated from only because they are invoked out-of-process. Folding them into the API as JSON endpoints — sync `/backtest`, async `/optimizer/jobs` with Postgres persistence and a single-slot `multiprocessing` worker — turns one-off scripts into reusable services without risking the live bot's config state, while introducing Numba JIT and Optuna TPE search to keep both endpoints fast.
+The V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) are CLI-only and mutate global trading config — a hazard the live bot is currently isolated from only because they are invoked out-of-process. Folding them into the API as JSON endpoints — sync `/backtest`, async `/optimizer/jobs` with Postgres persistence and a single-slot `multiprocessing` worker — turns one-off scripts into reusable services without risking the live bot's config state. A pure config-as-argument engine (`trading/engine.py`) decouples simulation from globals, and Optuna TPE search replaces the exhaustive grid. Numba JIT is held as an optional, benchmark-gated speedup rather than a baseline dependency.
 
-### 11. Strategy Refinement: Trend/Chop Regime Filter
+### 11. Auto-Lookback Window for K_STOP Calibration
+The live bot calibrates K_STOP on *all* available OHLC history, which mixes obsolete volatility regimes into the percentile-based stop sizing. This phase makes the lookback **data-driven**: on each recalibration the bot sweeps a set of candidate windows, recomputes K_STOP for each, and picks the smallest window whose K_STOP values have stabilized (a plateau within a fixed relative tolerance against longer windows). This is a deliberate **change to live trading behavior** (stop distances shift), kept isolated in its own phase with before/after analysis, and it builds on the calibration cache introduced in Phase 10 so the live bot, backtest, and optimizer all agree on what "recent" means.
+
+### 12. Strategy Refinement: Trend/Chop Regime Filter
 The current ATR-based volatility classification measures move *magnitude* but not move *efficiency* — a low-vol trend and a low-vol chop receive identical K_STOP values and are treated identically. Trailing-stop strategies bleed in sideways markets through repeated false-reversal entries (each clipped by fees and slippage), so adding a regime filter that gates new entries during chop addresses the strategy's known weak case without altering the exit logic. The Choppiness Index reuses the existing ATR pipeline and fits the project's percentile-calibration style.
 
 ---
@@ -346,26 +350,47 @@ Detailed execution plan: [`plan/phase-9-project-documentation.md`](plan/phase-9-
 
 ### Phase 10 – Trading Tools Integration: Backtest + Optimizer
 
-**Goal:** Fold the V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) into the FastAPI service as JSON endpoints, eliminating their global-state mutation hazard and making them reusable from any client. Introduce Numba JIT for the simulator core, an auto-lookback window selector via K_STOP stability sweep, an Optuna TPE search to replace the exhaustive grid, and a `multiprocessing.spawn` worker with a single-slot lock and Postgres-persisted job state for the long-running optimizer.
+**Goal:** Fold the V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) into the FastAPI service as JSON endpoints, eliminating their global-state mutation hazard and making them reusable from any client. Introduce a pure config-as-argument engine, a calibration cache shared across consumers, an Optuna TPE search to replace the exhaustive grid, and a `multiprocessing.spawn` worker with a single-slot lock and Postgres-persisted job state for the long-running optimizer. This phase introduces **no change to live trading behavior** — calibration stays on full history; the auto-lookback window is deferred to Phase 11.
 
 **Scope:**
 
-- [ ] Add `trading/engine.py` — pure simulator with config-as-argument (`PairCalibration`, `EngineConfig`, `simulate_operations`); JIT-compile the inner loop with Numba
-- [ ] Refactor `parameters_manager.calculate_trading_parameters` to auto-select the lookback window via a K_STOP stability sweep across `[30d, 45d, 60d, 90d, 120d, 180d, 240d, 365d]`; cache events + window in `core/runtime`
+- [ ] Add `trading/engine.py` — pure simulator with config-as-argument (`PairCalibration`, `EngineConfig`, `simulate_operations`), reading no module-level globals
+- [ ] Add a calibration cache to `core/runtime` (structural events + ATR percentiles); `calculate_trading_parameters` dual-writes it without changing its calculation logic
 - [ ] Refactor `trading/market_analyzer.py` to library-only (drop CLI, drop `print_results`); delete the now-orphaned `print_*` helpers from `core/utils.py`
 - [ ] Replace `trading/backtest.py`'s CLI with `run_backtest(req) -> BacktestResult`; sync endpoint `POST /backtest`
-- [ ] Rename `trading/optimize_params.py` → `trading/optimizer.py`; replace exhaustive grid with Optuna TPE; expose `run_optimize(req) -> OptimizerResult`
+- [ ] Rename `trading/optimize_params.py` → `trading/optimizer.py`; replace exhaustive grid with Optuna TPE; expose `run_optimize(req, calibration) -> OptimizerResult`
 - [ ] New `optimizer_jobs` Postgres table + Alembic migration; orphan-cleanup hook on FastAPI lifespan startup
-- [ ] New `optimizer/` package: `JobStore` (in-memory single-slot lock + DB persistence), `worker.py` (multiprocessing.spawn entrypoint), supervisor task scheduled from FastAPI lifespan
+- [ ] New `optimizer/` package: `JobStore` (in-memory single-slot lock + DB persistence), `worker.py` (multiprocessing.spawn entrypoint fed the parent's calibration snapshot), supervisor task scheduled from FastAPI lifespan
 - [ ] Endpoints: `POST /optimizer/jobs` (202 + `job_id`, 409 if busy), `GET /optimizer/jobs/{id}`, `GET /optimizer/jobs`
 - [ ] Telegram notifications on optimizer start, completion, and failure
-- [ ] Pin `numba` and `optuna` exactly in `requirements.txt`
+- [ ] Pin `optuna` exactly in `requirements.txt`; Numba is an optional, benchmark-gated speedup (Appendix A of the phase plan), not a baseline dependency
 
-**Success criteria:** `POST /backtest` returns a populated result in under a second on 60d of 15-min OHLC. `POST /optimizer/jobs` returns a `job_id` immediately; results persist to Postgres; a second submission while one is running returns `409`. A crash mid-run leaves the row marked `failed` after the next startup, never `running` indefinitely. The two scripts in `trading/` no longer have CLI entry points and never mutate global trading config.
+Detailed execution plan: [`plan/phase-10-trading-tools-integration.md`](plan/phase-10-trading-tools-integration.md).
+
+**Success criteria:** `POST /backtest` returns a populated result in under a second on 60d of 15-min OHLC. `POST /optimizer/jobs` returns a `job_id` immediately; results persist to Postgres; a second submission while one is running returns `409`. A crash mid-run leaves the row marked `failed` after the next startup, never `running` indefinitely. The two scripts in `trading/` no longer have CLI entry points and never mutate global trading config. Live trading behavior is unchanged.
 
 ---
 
-### Phase 11 – Strategy Refinement: Trend/Chop Regime Filter
+### Phase 11 – Auto-Lookback Window for K_STOP Calibration
+
+**Goal:** Replace full-history K_STOP calibration with a data-driven lookback window selected per pair via a K_STOP stability sweep, so the percentile-based stop sizing reflects the current volatility regime rather than the entire price history. This is a deliberate change to live trading behavior, isolated here with explicit before/after validation, and built on Phase 10's calibration cache.
+
+**Scope:**
+
+- [ ] Add the candidate-window sweep + plateau selector (`_select_lookback_window`) to `parameters_manager`: recompute K_STOP across `[30d, 45d, 60d, 90d, 120d, 180d, 240d, 365d]`, pick the smallest window whose values agree within a fixed relative tolerance with the next longer windows; fall back to the longest feasible window with a warning
+- [ ] Refactor `calculate_k_stops` into a percentile-argument form (`calculate_k_stops_for_events`) so the sweep can use a fixed neutral percentile independent of the per-pair choice
+- [ ] Wire the selector into `calculate_trading_parameters`: select window → slice → run the existing percentile + `analyze_structural_noise` + `calculate_k_stops` pipeline on the slice
+- [ ] Extend the Phase 10 calibration cache entry with `window_days` + `window_sweep`; surface the chosen window in backtest/optimizer responses
+- [ ] Unit tests: smallest-stable-window, fallback-to-longest, insufficient-data, None-level handling, and a cache assertion that the chosen window is one of the candidates
+- [ ] Before/after analysis: document how each pair's K_STOP ladder and selected window shift versus full-history calibration, and validate via `POST /optimizer/jobs` (Phase 10) that the change is non-regressive on historical PnL
+
+**Dependencies:** Requires Phase 10's calibration cache and (for principled validation) the backtest/optimizer endpoints.
+
+**Success criteria:** On startup with ≥ 1 year of OHLC, each pair's selected `window_days` is one of the candidate values (a plateau was found) or a logged fallback. The selected window and sweep metadata are visible via the calibration cache and the API. The K_STOP shift versus full-history calibration is documented in `docs/trading-strategy.md` and shown to be non-regressive on backtested PnL.
+
+---
+
+### Phase 12 – Strategy Refinement: Trend/Chop Regime Filter
 
 **Goal:** Add a Choppiness Index–based regime classifier that gates new position entries during sideways markets while leaving the trailing-stop exit logic untouched. The filter reuses the existing OHLC + ATR pipeline, introduces no new external dependencies, and ships in two stages — observation first, enforcement second — so behavior changes are validated against live data before being enabled.
 
