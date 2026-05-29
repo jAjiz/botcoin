@@ -269,7 +269,7 @@ Detailed execution plan: [`plan/phase-6-code-quality.md`](plan/phase-6-code-qual
 
 ---
 
-### Phase 7 – CI/CD Pipeline
+### Phase 7 – CI/CD Pipeline (Completed)
 
 **Tracking:** [Issue #31](https://github.com/jAjiz/BoTCoin/issues/31)
 
@@ -277,13 +277,13 @@ Detailed execution plan: [`plan/phase-6-code-quality.md`](plan/phase-6-code-qual
 
 **Scope:**
 
-- [ ] Add `docker-compose.prod.yml` — a Compose override that replaces `build:` with `image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}` for the `botc` and `telegram` services
-- [ ] Add `.github/workflows/ci.yml` — a single unified workflow replacing `deploy.yml` with five jobs in `needs:` order:
+- [x] Add `docker-compose.prod.yml` — a Compose override that replaces `build:` with `image: ghcr.io/jajiz/botc:${IMAGE_TAG:-main}` for the `botc` and `telegram` services
+- [x] Add `.github/workflows/ci.yml` — a single unified workflow replacing `deploy.yml` with five jobs in `needs:` order:
   - `Lint (ruff)`, `Unit tests`, `Integration tests` — run on every PR and push
   - `Build and push image` — builds the production image and pushes `ghcr.io/jajiz/botc:main` + `:sha-<short>` to GHCR (push to `main` only)
   - `Deploy to VPS` — SSHes to the VPS, fast-forwards the deploy clone, runs `docker compose pull && up -d` (push to `main` only)
-- [ ] Delete `.github/workflows/deploy.yml` — fully superseded by `ci.yml`
-- [ ] Pin all GitHub Actions to specific commit SHAs; add CI status and Python version badges to `README.md`
+- [x] Delete `.github/workflows/deploy.yml` — fully superseded by `ci.yml`
+- [x] Pin all GitHub Actions to specific commit SHAs; add CI status and Python version badges to `README.md`
 
 Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
 
@@ -291,23 +291,23 @@ Detailed execution plan: [`plan/phase-7-cicd.md`](plan/phase-7-cicd.md).
 
 ---
 
-### Phase 8 – Observability: Grafana Dashboard
+### Phase 8 – Observability: Grafana Dashboard (Completed)
 
 **Goal:** Integrate Grafana as a persistent observability layer, connected directly to PostgreSQL, so that market, performance, and system metrics are always visible and the environment is fully reproducible. Lands before the documentation revamp so dashboard screenshots can be embedded directly in the new README.
 
 **Scope:**
 
-- [ ] Add a `grafana` service to `docker-compose.yml`:
+- [x] Add a `grafana` service to `docker-compose.yml`:
   - Use the official `grafana/grafana` image
   - Configure a named volume for dashboard and datasource persistence so state survives container restarts
   - Expose the Grafana UI on a local port (e.g., `3000`)
-- [ ] Provision a native PostgreSQL datasource automatically on startup (using Grafana's datasource provisioning directory)
-- [ ] Create a comprehensive dashboard covering:
+- [x] Provision a native PostgreSQL datasource automatically on startup (using Grafana's datasource provisioning directory)
+- [x] Create a comprehensive dashboard covering:
   - **Market metrics**: OHLC price history and ATR per pair
   - **Performance metrics**: closed position PnL over time, win/loss ratio, cumulative return
   - **System metrics**: scheduler run history (from application logs/postgres events), bot uptime, error rate
-- [ ] Persist the dashboard JSON definition in the repository (`grafana/dashboards/`) so it is provisioned automatically on `docker compose up`
-- [ ] Document the Grafana setup in `README.md` (port, default credentials, how to access)
+- [x] Persist the dashboard JSON definition in the repository (`grafana/dashboards/`) so it is provisioned automatically on `docker compose up`
+- [x] Document the Grafana setup in `README.md` (port, default credentials, how to access)
 
 Detailed execution plan: [`plan/phase-8-grafana.md`](plan/phase-8-grafana.md).
 
@@ -315,28 +315,28 @@ Detailed execution plan: [`plan/phase-8-grafana.md`](plan/phase-8-grafana.md).
 
 ---
 
-### Phase 9 – Project Documentation & Portfolio Framing
+### Phase 9 – Project Documentation & Portfolio Framing (Completed)
 
 **Goal:** Restructure the project's documentation so the README reads as the engineering cover letter — architecture, decisions, badges, and screenshots — while moving deep configuration and trading-strategy theory into dedicated documents under `docs/`. This is the last phase before the project is published as a portfolio piece.
 
 **Scope:**
 
 #### `README.md` revamp (top-level reading experience)
-- [ ] **Hero section**: tagline, one-paragraph problem statement, badges (CI status, coverage, Python version), one Grafana dashboard screenshot
-- [ ] **Architecture diagram** (Mermaid, rendered inline by GitHub) showing the `botc` + `telegram` + `postgres` + `grafana` services, their responsibilities, and the data flow between them
-- [ ] **Quick start** — `docker compose up` walkthrough, link to `.env.example`, link to Swagger UI
-- [ ] **Key engineering decisions** — short bullets, each linking to the relevant phase plan under `plan/` (the planning artifacts themselves become part of the portfolio signal)
-- [ ] **Data model section** — PostgreSQL ERD (`ohlc_data`, `closed_positions`, `trailing_state`, `bot_control`) and a data-flow diagram showing Kraken → Postgres → closed positions on trade close (folded in from the original Phase 8 scope)
-- [ ] **Roadmap & future work** — link to `ROADMAP.md`; explicitly point to `plan/phase-10-trading-tools-integration.md` as a designed-but-unimplemented extension
+- [x] **Hero section**: tagline, one-paragraph problem statement, badges (CI status, coverage, Python version), one Grafana dashboard screenshot
+- [x] **Architecture diagram** (Mermaid, rendered inline by GitHub) showing the `botc` + `telegram` + `postgres` + `grafana` services, their responsibilities, and the data flow between them
+- [x] **Quick start** — `docker compose up` walkthrough, link to `.env.example`, link to Swagger UI
+- [x] **Key engineering decisions** — short bullets, each linking to the relevant phase plan under `plan/` (the planning artifacts themselves become part of the portfolio signal)
+- [x] **Data model section** — PostgreSQL ERD (`ohlc_data`, `closed_positions`, `trailing_state`, `bot_control`) and a data-flow diagram showing Kraken → Postgres → closed positions on trade close (folded in from the original Phase 8 scope)
+- [x] **Roadmap & future work** — link to `ROADMAP.md`; explicitly point to `plan/phase-10-trading-tools-integration.md` as a designed-but-unimplemented extension
 
 #### `docs/` subfolder (deep references, not for first-time readers)
-- [ ] `docs/configuration.md` — every `.env` variable, default, and effect (extracted from current README)
-- [ ] `docs/trading-strategy.md` — ATR-based volatility regimes, K_STOP ladder, activation/trailing semantics (extracted from current README and inline code comments)
-- [ ] `docs/operations.md` — running locally, deploying to the VPS, manual rollback, troubleshooting
+- [x] `docs/configuration.md` — every `.env` variable, default, and effect (extracted from current README)
+- [x] `docs/trading-strategy.md` — ATR-based volatility regimes, K_STOP ladder, activation/trailing semantics (extracted from current README and inline code comments)
+- [x] `docs/operations.md` — running locally, deploying to the VPS, manual rollback, troubleshooting
 
 #### Project metadata
-- [ ] Add a `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, tracking changes from the V2 milestone onwards (V1 history is not retroactively documented)
-- [ ] Frame the project consistently as a **backend engineering project that happens to use crypto market data** — never lead with trading-bot positioning
+- [x] Add a `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format, tracking changes from the V2 milestone onwards (V1 history is not retroactively documented)
+- [x] Frame the project consistently as a **backend engineering project that happens to use crypto market data** — never lead with trading-bot positioning
 
 Detailed execution plan: [`plan/phase-9-project-documentation.md`](plan/phase-9-project-documentation.md).
 
