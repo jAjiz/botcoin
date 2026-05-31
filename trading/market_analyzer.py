@@ -1,4 +1,3 @@
-import sys
 from typing import Any
 
 import numpy as np
@@ -8,7 +7,6 @@ from scipy.signal import argrelextrema
 import core.database as db
 import core.logging as logging
 from core.config import ATR_PERIOD, CANDLE_TIMEFRAME, MARKET_ANALYZER
-from core.utils import print_pair_argument_error, print_structural_noise_results
 from exchange.kraken import fetch_ohlc_data
 
 DEFAULT_ORDER = MARKET_ANALYZER["DEFAULT_ORDER"]
@@ -87,7 +85,6 @@ def _wilder_atr_from_scratch(df: pd.DataFrame, period: int) -> list[float | None
     lows = df["low"].tolist()
     closes = df["close"].tolist()
 
-    # TR series; index 0 has no previous close, so its TR is undefined and unused.
     trs = [0.0]
     for i in range(1, n):
         trs.append(
@@ -98,7 +95,6 @@ def _wilder_atr_from_scratch(df: pd.DataFrame, period: int) -> list[float | None
             )
         )
 
-    # Seed Wilder ATR with the simple mean of the first `period` TRs (TR[1..period]).
     atr = sum(trs[1 : period + 1]) / period
     result[period] = atr
     for i in range(period + 1, n):
@@ -120,7 +116,6 @@ def detect_pivots(df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[in
 
     pivots.sort(key=lambda x: x[0])
 
-    # Remove false pivots
     i = 0
     while i < len(pivots) - 1:
         _, curr_type, curr_price, _ = pivots[i]
@@ -155,13 +150,11 @@ def calculate_noise_between_pivots(
         return {}
 
     if start_type == "min" and end_type == "max":
-        # Uptrend: calculate drawdown and find maximum K (drawdown / ATR)
         rolling_max = segment["high"].expanding().max()
         drawdowns = rolling_max - segment["low"]
         segment_copy = segment.copy()
         segment_copy["k_values"] = drawdowns / segment_copy["atr"].replace(0, np.nan)
     elif start_type == "max" and end_type == "min":
-        # Downtrend: calculate bounce and find maximum K (bounce / ATR)
         rolling_min = segment["low"].expanding().min()
         bounces = segment["high"] - rolling_min
         segment_copy = segment.copy()
@@ -169,7 +162,6 @@ def calculate_noise_between_pivots(
     else:
         return {}
 
-    # Now find max K for each volatility level
     volatility_levels = {}
     vol_ranges = {
         "LL": (0, atr_percentiles["p20"]),
@@ -211,13 +203,9 @@ def calculate_noise_between_pivots(
 def analyze_structural_noise(
     df: pd.DataFrame,
     order: int = DEFAULT_ORDER,
-    print_results: bool = False,
-    show_events: bool = False,
-    volatility_level: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     pivots = detect_pivots(df, order)
 
-    # Calculate ATR percentiles
     atr_percentiles = {
         "p20": np.percentile(df["atr"], 20),
         "p50": np.percentile(df["atr"], 50),
@@ -225,7 +213,6 @@ def analyze_structural_noise(
         "p95": np.percentile(df["atr"], 95),
     }
 
-    # Calculate noise (events) for each pivot pair
     uptrend_events = []
     downtrend_events = []
     for i in range(1, len(pivots)):
@@ -236,45 +223,4 @@ def analyze_structural_noise(
             else:
                 downtrend_events.append(event)
 
-    if print_results:
-        print_structural_noise_results(
-            uptrend_events,
-            downtrend_events,
-            MINIMUM_CHANGE_PCT,
-            atr_percentiles,
-            show_events,
-            volatility_level,
-        )
-
     return uptrend_events, downtrend_events
-
-
-def get_args() -> dict[str, str | int | bool | None]:
-    args = {"pair": None, "show_events": False, "order": DEFAULT_ORDER, "volatility_level": None}
-
-    for arg in sys.argv[1:]:
-        if arg.startswith("PAIR="):
-            args["pair"] = arg.split("=")[1].upper()
-        elif arg.startswith("ORDER="):
-            args["order"] = int(arg.split("=")[1])
-        elif arg == "SHOW_EVENTS":
-            args["show_events"] = True
-        elif arg.startswith("Volatility="):
-            args["volatility_level"] = arg.split("=")[1].upper()
-
-    if not args["pair"]:
-        print_pair_argument_error()
-        sys.exit(1)
-
-    return args
-
-
-if __name__ == "__main__":
-    args = get_args()
-    analyze_structural_noise(
-        db.load_ohlc_data(args["pair"], CANDLE_TIMEFRAME),
-        args["order"],
-        True,
-        args["show_events"],
-        args["volatility_level"],
-    )

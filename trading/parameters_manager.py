@@ -6,9 +6,14 @@ import pandas as pd
 
 import core.database as db
 import core.logging as logging
+import core.runtime as runtime
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.market_analyzer import analyze_structural_noise
+
+# Lookback windows (days) tried in ascending order during the stability sweep.
+# The shortest window with the best K_STOP coverage wins.
+_LOOKBACK_WINDOWS_DAYS = (30, 45, 60, 90, 120, 180, 240, 365)
 
 
 def calculate_k_stops(pair: str, events: list[dict[str, Any]]) -> dict[str, float | None]:
@@ -35,6 +40,56 @@ def calculate_k_stops(pair: str, events: list[dict[str, Any]]) -> dict[str, floa
     return {lvl: get_pct_k_value(lvl, STOP_PERCENTILES[pair][lvl]) for lvl in LEVELS}
 
 
+def _count_non_none(sell_k: dict, buy_k: dict) -> int:
+    """Count non-None K_STOP slots across both sides (max 10 = 5 levels x 2)."""
+    return sum(1 for v in list(sell_k.values()) + list(buy_k.values()) if v is not None)
+
+
+def _select_lookback_window(pair: str, df_all: pd.DataFrame) -> tuple[int, list[dict], list[dict]]:
+    """
+    Auto-select the shortest lookback window whose K_STOP coverage is maximal.
+
+    Iterates over _LOOKBACK_WINDOWS_DAYS from shortest to longest.  For each
+    window, slices df_all to the last N days and computes K_STOPs.  Returns
+    as soon as full coverage (10/10 non-None slots) is achieved.  If no window
+    achieves full coverage, returns the window with the highest coverage.
+    Falls back to the full dataset when no window has at least 10 rows.
+    """
+    if df_all.empty:
+        return 365, [], []
+
+    max_ts = int(df_all["time"].max())
+    best_days = None
+    best_score = -1
+    best_result: tuple[list, list] | None = None
+
+    for days in _LOOKBACK_WINDOWS_DAYS:
+        cutoff_ts = max_ts - days * 86400
+        df_window = df_all[df_all["time"] >= cutoff_ts]
+
+        if len(df_window) < 10:
+            continue
+
+        up_events, down_events = analyze_structural_noise(df_window)
+        sell_k = calculate_k_stops(pair, up_events)
+        buy_k = calculate_k_stops(pair, down_events)
+        score = _count_non_none(sell_k, buy_k)
+
+        if score > best_score:
+            best_score = score
+            best_days = days
+            best_result = (up_events, down_events)
+
+        if score == 10:
+            break
+
+    if best_result is None:
+        up_events, down_events = analyze_structural_noise(df_all)
+        return 365, up_events, down_events
+
+    return best_days, best_result[0], best_result[1]
+
+
 def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
     if infoLog:
         logging.info(f"Calculating trading parameters for {pair}...")
@@ -57,14 +112,17 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
             )
         )
 
-    uptrend_events, downtrend_events = analyze_structural_noise(df)
-    sell_k_stops = calculate_k_stops(pair, uptrend_events)
-    buy_k_stops = calculate_k_stops(pair, downtrend_events)
+    best_days, up_events, down_events = _select_lookback_window(pair, df)
+    sell_k_stops = calculate_k_stops(pair, up_events)
+    buy_k_stops = calculate_k_stops(pair, down_events)
 
     TRADING_PARAMS[pair]["sell"]["K_STOP"] = sell_k_stops
     TRADING_PARAMS[pair]["buy"]["K_STOP"] = buy_k_stops
 
+    runtime.update_calibration_cache(pair, best_days, up_events, down_events)
+
     if infoLog:
+        logging.info(f"Lookback window: {best_days}d")
 
         def fmt(k):
             return f"{k:.2f}" if k is not None else "N/A"
@@ -95,13 +153,11 @@ def get_k_stop(pair: str, side: str, atr_val: float) -> float | None:
     if k_stop is not None:
         return k_stop
 
-    # Try opposite side K_STOP as fallback
     op_side = "buy" if side == "sell" else "sell"
     k_stop = TRADING_PARAMS[pair][op_side]["K_STOP"].get(vol)
     if k_stop is not None:
         return k_stop
 
-    # Search neighboring levels
     idx = LEVELS.index(vol)
     for offset in range(1, len(LEVELS)):
         for neighbor in (idx - offset, idx + offset):

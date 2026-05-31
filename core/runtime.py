@@ -3,10 +3,11 @@ from datetime import datetime
 from typing import Any
 
 _lock = threading.Lock()
-_shared_data = {
+_shared_data: dict[str, Any] = {
     "last_balance": {},
-    "pairs_data": {},  # {pair: {"last_price": float, "atr": float}}
+    "pairs_data": {},  # {pair: {"last_price": float, "atr": float, "volatility_level": str}}
     "last_run_at": None,
+    "calibration_cache": {},  # {pair: {"lookback_days": int, "up_events": list, "down_events": list}}
 }
 
 
@@ -50,3 +51,19 @@ def update_last_run_at(last_run_at: datetime) -> None:
 def get_last_run_at() -> datetime | None:
     with _lock:
         return _shared_data["last_run_at"]
+
+
+def update_calibration_cache(pair: str, lookback_days: int, up_events: list, down_events: list) -> None:
+    """Cache the structural-noise events and chosen lookback window for a pair."""
+    with _lock:
+        _shared_data["calibration_cache"][pair] = {
+            "lookback_days": lookback_days,
+            "up_events": up_events,
+            "down_events": down_events,
+        }
+
+
+def get_calibration_cache(pair: str) -> dict[str, Any] | None:
+    """Return the cached calibration data for a pair, or None if not yet computed."""
+    with _lock:
+        return _shared_data["calibration_cache"].get(pair)

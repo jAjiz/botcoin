@@ -274,6 +274,45 @@ class SessionRecord(Base):
     log_messages = Column(Text, nullable=True)
 
 
+class OptimizerJob(Base):
+    """Optimizer job state — one row per submitted optimization run."""
+
+    __tablename__ = "optimizer_jobs"
+
+    id = Column(Text, primary_key=True, nullable=False)
+    pair = Column(Text, nullable=False)
+    mode = Column(Text, nullable=False)
+    status = Column(String(16), nullable=False)  # queued/running/completed/failed
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    ended_at = Column(DateTime(timezone=True), nullable=True)
+    request_json = Column(Text, nullable=False)
+    result_json = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'running', 'completed', 'failed')",
+            name="ck_optimizer_jobs_status_valid",
+        ),
+        Index("ix_optimizer_jobs_created_at_desc", desc(created_at)),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "pair": self.pair,
+            "mode": self.mode,
+            "status": self.status,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "request_json": self.request_json,
+            "result_json": self.result_json,
+            "error": self.error,
+        }
+
+
 # ============================================================================
 # Session Management
 # ============================================================================
@@ -693,3 +732,92 @@ def finalize_session(
             set_control_value("latest_pair_data", json.dumps(pair_data), updated_by="scheduler")
         except Exception as e:
             logger.error(f"Error saving latest_pair_data to bot_control: {e}")
+
+
+# ============================================================================
+# Optimizer Job Operations
+# ============================================================================
+
+
+def create_optimizer_job(job_id: str, pair: str, mode: str, request_json: str) -> None:
+    """Persist a new optimizer job in queued state."""
+    with get_session() as session:
+        session.add(
+            OptimizerJob(
+                id=job_id,
+                pair=pair,
+                mode=mode,
+                status="queued",
+                request_json=request_json,
+            )
+        )
+
+
+def get_optimizer_job(job_id: str) -> dict[str, Any] | None:
+    """Load a single optimizer job by id."""
+    try:
+        with get_session() as session:
+            record = session.query(OptimizerJob).filter(OptimizerJob.id == job_id).one_or_none()
+            return record.to_dict() if record else None
+    except Exception as e:
+        logger.error(f"Error loading optimizer job {job_id}: {e}")
+        return None
+
+
+def list_optimizer_jobs(limit: int = 50) -> list[dict[str, Any]]:
+    """List optimizer jobs newest-first."""
+    try:
+        with get_session() as session:
+            records = session.query(OptimizerJob).order_by(desc(OptimizerJob.created_at)).limit(limit).all()
+            return [r.to_dict() for r in records]
+    except Exception as e:
+        logger.error(f"Error listing optimizer jobs: {e}")
+        return []
+
+
+def update_optimizer_job(
+    job_id: str,
+    status: str,
+    started_at: datetime | None = None,
+    ended_at: datetime | None = None,
+    result_json: str | None = None,
+    error: str | None = None,
+) -> None:
+    """Update optimizer job status and optional fields."""
+    values: dict[str, Any] = {"status": status}
+    if started_at is not None:
+        values["started_at"] = started_at
+    if ended_at is not None:
+        values["ended_at"] = ended_at
+    if result_json is not None:
+        values["result_json"] = result_json
+    if error is not None:
+        values["error"] = error
+    try:
+        with get_session() as session:
+            session.execute(update(OptimizerJob).where(OptimizerJob.id == job_id).values(**values))
+    except Exception as e:
+        logger.error(f"Error updating optimizer job {job_id}: {e}")
+        raise
+
+
+def mark_orphaned_optimizer_jobs_failed() -> int:
+    """Mark any jobs stuck in running/queued state as failed.
+
+    Returns the number of rows updated.
+    """
+    try:
+        with get_session() as session:
+            result = session.execute(
+                update(OptimizerJob)
+                .where(OptimizerJob.status.in_(["running", "queued"]))
+                .values(
+                    status="failed",
+                    ended_at=datetime.now(UTC),
+                    error="Process killed (restart)",
+                )
+            )
+            return result.rowcount
+    except Exception as e:
+        logger.error(f"Error marking orphaned optimizer jobs as failed: {e}")
+        return 0
