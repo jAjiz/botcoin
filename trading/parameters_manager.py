@@ -8,6 +8,7 @@ import core.database as db
 import core.logging as logging
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
+from trading.engine import PairCalibration
 from trading.market_analyzer import analyze_structural_noise
 
 
@@ -73,6 +74,19 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
         logging.info(f"K_STOP_SELL → {sell_msg}")
         buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_BUY  → {buy_msg}")
+
+
+def build_calibration(pair: str) -> PairCalibration:
+    """Build a PairCalibration from current globals. Used by the API to seed
+    EngineConfig from live state without re-running analyze_structural_noise."""
+    return PairCalibration(
+        atr_p20=float(PAIRS[pair]["atr_20pct"]),
+        atr_p50=float(PAIRS[pair]["atr_50pct"]),
+        atr_p80=float(PAIRS[pair]["atr_80pct"]),
+        atr_p95=float(PAIRS[pair]["atr_95pct"]),
+        k_stop_buy=dict(TRADING_PARAMS[pair]["buy"].get("K_STOP") or {}),
+        k_stop_sell=dict(TRADING_PARAMS[pair]["sell"].get("K_STOP") or {}),
+    )
 
 
 def get_volatility_level(pair: str, atr_val: float) -> str:
