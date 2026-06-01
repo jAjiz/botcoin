@@ -2,11 +2,21 @@ import threading
 from datetime import datetime
 from typing import Any
 
+from core.utils import now_utc
+
 _lock = threading.Lock()
 _shared_data = {
     "last_balance": {},
     "pairs_data": {},  # {pair: {"last_price": float, "atr": float}}
     "last_run_at": None,
+    "pair_calibration": {},  # {pair: {
+    #   "up_events": list[dict],
+    #   "down_events": list[dict],
+    #   "atr_p20": float, "atr_p50": float, "atr_p80": float, "atr_p95": float,
+    #   "row_count": int,        # rows in the df used to compute these
+    #   "computed_at": datetime,
+    # }}
+    # Phase 11 extends this entry with "window_days" + "window_sweep".
 }
 
 
@@ -50,3 +60,32 @@ def update_last_run_at(last_run_at: datetime) -> None:
 def get_last_run_at() -> datetime | None:
     with _lock:
         return _shared_data["last_run_at"]
+
+
+def update_pair_calibration(
+    pair: str,
+    up_events: list[dict[str, Any]],
+    down_events: list[dict[str, Any]],
+    atr_p20: float,
+    atr_p50: float,
+    atr_p80: float,
+    atr_p95: float,
+    row_count: int,
+) -> None:
+    with _lock:
+        _shared_data["pair_calibration"][pair] = {
+            "up_events": up_events,
+            "down_events": down_events,
+            "atr_p20": atr_p20,
+            "atr_p50": atr_p50,
+            "atr_p80": atr_p80,
+            "atr_p95": atr_p95,
+            "row_count": row_count,
+            "computed_at": now_utc(),
+        }
+
+
+def get_pair_calibration(pair: str) -> dict[str, Any] | None:
+    with _lock:
+        entry = _shared_data["pair_calibration"].get(pair)
+        return None if entry is None else dict(entry)  # shallow copy, matches existing pattern

@@ -6,7 +6,6 @@ from trading.market_analyzer import (
     analyze_structural_noise,
     calculate_noise_between_pivots,
     detect_pivots,
-    get_args,
     get_current_atr,
 )
 
@@ -38,9 +37,7 @@ def test_calculate_noise_between_pivots_returns_event_for_uptrend(sample_datafra
 def test_analyze_structural_noise_returns_two_event_lists(sample_dataframe: pd.DataFrame) -> None:
     df = sample_dataframe
 
-    uptrend_events, downtrend_events = analyze_structural_noise(
-        df, order=1, print_results=True, show_events=True, volatility_level="ALL"
-    )
+    uptrend_events, downtrend_events = analyze_structural_noise(df, order=1)
 
     assert isinstance(uptrend_events, list)
     assert isinstance(downtrend_events, list)
@@ -226,25 +223,3 @@ def test_get_current_atr_returns_last_db_atr_when_fetch_returns_none(monkeypatch
     current_atr = get_current_atr("XBTEUR")
 
     assert current_atr == 1.9
-
-
-def test_get_args_parses_cli_values(monkeypatch) -> None:
-    monkeypatch.setattr(
-        market_analyzer.sys,
-        "argv",
-        ["market_analyzer.py", "PAIR=XBTEUR", "ORDER=10", "SHOW_EVENTS", "Volatility=hv"],
-    )
-
-    args = get_args()
-
-    assert args["pair"] == "XBTEUR"
-    assert args["order"] == 10
-    assert args["show_events"] is True
-    assert args["volatility_level"] == "HV"
-
-
-def test_get_args_exits_when_pair_is_missing(monkeypatch) -> None:
-    monkeypatch.setattr(market_analyzer.sys, "argv", ["market_analyzer.py", "ORDER=10"])
-
-    with pytest.raises(SystemExit):
-        get_args()

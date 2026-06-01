@@ -1,4 +1,3 @@
-import sys
 from typing import Any
 
 import numpy as np
@@ -8,7 +7,6 @@ from scipy.signal import argrelextrema
 import core.database as db
 import core.logging as logging
 from core.config import ATR_PERIOD, CANDLE_TIMEFRAME, MARKET_ANALYZER
-from core.utils import print_pair_argument_error, print_structural_noise_results
 from exchange.kraken import fetch_ohlc_data
 
 DEFAULT_ORDER = MARKET_ANALYZER["DEFAULT_ORDER"]
@@ -211,9 +209,6 @@ def calculate_noise_between_pivots(
 def analyze_structural_noise(
     df: pd.DataFrame,
     order: int = DEFAULT_ORDER,
-    print_results: bool = False,
-    show_events: bool = False,
-    volatility_level: str | None = None,
 ) -> tuple[list[dict], list[dict]]:
     pivots = detect_pivots(df, order)
 
@@ -236,45 +231,4 @@ def analyze_structural_noise(
             else:
                 downtrend_events.append(event)
 
-    if print_results:
-        print_structural_noise_results(
-            uptrend_events,
-            downtrend_events,
-            MINIMUM_CHANGE_PCT,
-            atr_percentiles,
-            show_events,
-            volatility_level,
-        )
-
     return uptrend_events, downtrend_events
-
-
-def get_args() -> dict[str, str | int | bool | None]:
-    args = {"pair": None, "show_events": False, "order": DEFAULT_ORDER, "volatility_level": None}
-
-    for arg in sys.argv[1:]:
-        if arg.startswith("PAIR="):
-            args["pair"] = arg.split("=")[1].upper()
-        elif arg.startswith("ORDER="):
-            args["order"] = int(arg.split("=")[1])
-        elif arg == "SHOW_EVENTS":
-            args["show_events"] = True
-        elif arg.startswith("Volatility="):
-            args["volatility_level"] = arg.split("=")[1].upper()
-
-    if not args["pair"]:
-        print_pair_argument_error()
-        sys.exit(1)
-
-    return args
-
-
-if __name__ == "__main__":
-    args = get_args()
-    analyze_structural_noise(
-        db.load_ohlc_data(args["pair"], CANDLE_TIMEFRAME),
-        args["order"],
-        True,
-        args["show_events"],
-        args["volatility_level"],
-    )

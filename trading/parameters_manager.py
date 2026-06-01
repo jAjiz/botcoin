@@ -6,6 +6,7 @@ import pandas as pd
 
 import core.database as db
 import core.logging as logging
+import core.runtime as runtime
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.engine import PairCalibration
@@ -74,6 +75,20 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
         logging.info(f"K_STOP_SELL → {sell_msg}")
         buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_BUY  → {buy_msg}")
+
+    # Dual-write: in addition to the globals above (the live-bot read path,
+    # unchanged), publish the calibration to the in-process cache so backtest can
+    # reuse the events + ATR percentiles without re-running analyze_structural_noise.
+    runtime.update_pair_calibration(
+        pair,
+        up_events=uptrend_events,
+        down_events=downtrend_events,
+        atr_p20=float(PAIRS[pair]["atr_20pct"]),
+        atr_p50=float(PAIRS[pair]["atr_50pct"]),
+        atr_p80=float(PAIRS[pair]["atr_80pct"]),
+        atr_p95=float(PAIRS[pair]["atr_95pct"]),
+        row_count=len(df),
+    )
 
 
 def build_calibration(pair: str) -> PairCalibration:
