@@ -70,7 +70,7 @@ def test_first_operation_is_buy_at_first_valid_row() -> None:
 
 def test_sell_exit_price_and_pnl_no_fee() -> None:
     # Row1 lifts trailing to high=110, stop = 110 - 1.0*2.0 = 108; low=105 <= 108 -> sell @108.
-    df = _df([(100.0, 100.0, 100.0), (110.0, 105.0, 108.0), (112.0, 109.0, 110.0)])
+    df = _df([(100.0, 100.0, 100.0), (110.0, 105.0, 108.0)])
     ops = engine.simulate_operations(df, _cfg(), fee_rate=0.0)
 
     assert len(ops) == 2
@@ -144,3 +144,44 @@ def test_lookup_k_stop_returns_none_when_all_missing() -> None:
         percentiles=(1.0, 2.0, 3.0, 4.0), k_sell=dict.fromkeys(_LEVELS, None), k_buy=dict.fromkeys(_LEVELS, None)
     )
     assert engine.lookup_k_stop(cfg, "sell", 2.5) is None
+
+
+# --- reanchor_activation_price -----------------------------------------------
+
+
+def test_reanchor_pulls_activation_toward_price() -> None:
+    # k_act=1.0, ATR=2.0 → activation distance = 2.0.
+    # Buy at 100; sell-side activation target = 102. Price drifts down to 97;
+    # gap = 102 - 97 = 5 > 2 → re-anchor to 99.
+    # Row 2 (high=100) then crosses 99 and activates — it would NOT cross 102
+    # without re-anchoring, so this frame has no second operation without the fix.
+    rows = [
+        (100.0, 100.0, 100.0),  # buy at 100
+        (97.0, 97.0, 97.0),  # drift down; re-anchor activation to 99
+        (100.0, 99.5, 99.8),  # high=100 >= 99 → activates; stop = 100 - 2 = 98; low 99.5 > 98
+        (101.0, 95.0, 98.0),  # trailing=101, stop=99; low=95 → sell at 99
+    ]
+    cfg = _cfg(k_act=1.0, min_margin=0.0)
+    ops = engine.simulate_operations(_df(rows), cfg)
+
+    assert len(ops) == 2
+    assert ops[1].side == "sell"
+    assert ops[1].price == pytest.approx(99.0)
+
+
+def test_reanchor_noop_when_within_distance() -> None:
+    # k_act=1.0, ATR=2.0 → activation distance = 2.0.
+    # Price stays within 2 of activation target throughout; re-anchor never fires.
+    # Activation occurs at the original target (102).
+    rows = [
+        (100.0, 100.0, 100.0),  # buy at 100; activation target = 102
+        (101.0, 100.5, 100.8),  # close=100.8; gap = 102 - 100.8 = 1.2 < 2 → no re-anchor; high=101 < 102
+        (103.0, 101.5, 102.5),  # high=103 >= 102 → activates; stop = 103 - 2 = 101; low=101.5 > 101
+        (104.0, 99.0, 101.5),  # trailing=104, stop=102; low=99 → sell at 102
+    ]
+    cfg = _cfg(k_act=1.0, min_margin=0.0)
+    ops = engine.simulate_operations(_df(rows), cfg)
+
+    assert len(ops) == 2
+    assert ops[1].side == "sell"
+    assert ops[1].price == pytest.approx(102.0)

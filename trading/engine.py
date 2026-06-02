@@ -103,19 +103,20 @@ def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float) -> float | None:
     return None
 
 
-def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float) -> float:
+def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float) -> float:
     policy = cfg.sell if side == "sell" else cfg.buy
     k_act = policy.k_act
     if k_act is not None:
-        activation_distance = float(k_act) * atr_val
-    else:
-        k_stop = lookup_k_stop(cfg, side, atr_val) or 0.0
-        min_margin = policy.min_margin
-        activation_distance = float(k_stop) * atr_val + (min_margin * entry_price)
+        return float(k_act) * atr_val
+    k_stop = lookup_k_stop(cfg, side, atr_val) or 0.0
+    return float(k_stop) * atr_val + (policy.min_margin * reference_price)
 
+
+def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float) -> float:
+    distance = activation_distance(cfg, side, entry_price, atr_val)
     if side == "sell":
-        return entry_price + activation_distance
-    return entry_price - activation_distance
+        return entry_price + distance
+    return entry_price - distance
 
 
 def stop_price(cfg: EngineConfig, side: str, trailing_price: float, atr_val: float) -> float:
@@ -196,6 +197,12 @@ def simulate_operations(
         low = float(row["low"])
         dtime = str(row["dtime"])
         vol = _vol_level_from_atr(atr, atr_20, atr_50, atr_80, atr_95)
+        if "close" in row:
+            price = float(row["close"])
+        elif "open" in row:
+            price = float(row["open"])
+        else:
+            price = (high + low) / 2.0
 
         atr_limit_max = atr * (1 + cfg.atr_desv_limit)
         atr_limit_min = atr * (1 - cfg.atr_desv_limit)
@@ -209,6 +216,14 @@ def simulate_operations(
             if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
                 activation_px = activation_price(cfg, side, entry_price, atr)
                 activation_atr = atr
+
+            # Re-anchor activation toward current price if it has drifted too far
+            # (mirrors positions_manager.reanchor_activation_price; uses the stored
+            # activation_atr, not the current bar ATR).
+            exp_dist = activation_distance(cfg, side, price, activation_atr)
+            gap = (activation_px - price) if side == "sell" else (price - activation_px)
+            if gap > exp_dist:
+                activation_px = activation_price(cfg, side, price, activation_atr)
 
             # Activation check
             if side == "sell" and high >= activation_px:
