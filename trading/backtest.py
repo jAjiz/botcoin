@@ -1,372 +1,137 @@
-import sys
+"""Backtest library entry point.
+
+Pure ``run_backtest(req) -> BacktestResult``: no CLI, no prints, no global
+mutation. Configuration for the simulation is built into an ``EngineConfig`` and
+handed to ``trading.engine.simulate_operations``.
+"""
+
 from dataclasses import dataclass
 
 import numpy as np
 
 import core.database as db
-from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, PAIRS, TRADING_PARAMS
-from trading.parameters_manager import calculate_trading_parameters, get_k_stop
-
-
-def _parse_args() -> dict:
-    args = {
-        "pair": None,
-        "fee_pct": 0.0,  # percentage (e.g., 0.26 == 0.26%)
-        "start": None,
-        "end": None,
-        "max_ops": None,
-    }
-
-    for arg in sys.argv[1:]:
-        if arg.startswith("PAIR="):
-            args["pair"] = arg.split("=", 1)[1].upper()
-        elif arg.startswith("FEE_PCT="):
-            args["fee_pct"] = float(arg.split("=", 1)[1])
-        elif arg.startswith("START="):
-            args["start"] = arg.split("=", 1)[1]
-        elif arg.startswith("END="):
-            args["end"] = arg.split("=", 1)[1]
-        elif arg.startswith("MAX_OPS="):
-            args["max_ops"] = int(arg.split("=", 1)[1])
-
-    if not args["pair"]:
-        print("Error: PAIR parameter is required.")
-        print(
-            "Usage: python .\\trading\\backtest.py PAIR=XBTEUR "
-            "[FEE_PCT=0.00] [START=YYYY-MM-DD] [END=YYYY-MM-DD] "
-            "[MAX_OPS=50]"
-        )
-        sys.exit(1)
-
-    return args
-
-
-def _atr_thresholds(pair: str) -> tuple[float, float, float, float]:
-    return (
-        float(PAIRS[pair]["atr_20pct"]),
-        float(PAIRS[pair]["atr_50pct"]),
-        float(PAIRS[pair]["atr_80pct"]),
-        float(PAIRS[pair]["atr_95pct"]),
-    )
-
-
-def _vol_level_from_atr(atr_val: float, atr_20: float, atr_50: float, atr_80: float, atr_95: float) -> str:
-    if atr_val < atr_20:
-        return "LL"
-    if atr_val < atr_50:
-        return "LV"
-    if atr_val < atr_80:
-        return "MV"
-    if atr_val < atr_95:
-        return "HV"
-    return "HH"
-
-
-def _activation_price(pair: str, side: str, entry_price: float, atr_val: float) -> float:
-    k_act = TRADING_PARAMS[pair][side].get("K_ACT")
-    if k_act is not None:
-        activation_distance = float(k_act) * atr_val
-    else:
-        k_stop = get_k_stop(pair, side, atr_val) or 0.0
-        min_margin = float(TRADING_PARAMS[pair][side].get("MIN_MARGIN", 0) or 0)
-        activation_distance = float(k_stop) * atr_val + (min_margin * entry_price)
-
-    if side == "sell":
-        return entry_price + activation_distance
-    return entry_price - activation_distance
-
-
-def _stop_price(pair: str, side: str, trailing_price: float, atr_val: float) -> float:
-    k_stop = get_k_stop(pair, side, atr_val) or 0.0
-    stop_distance = float(k_stop) * atr_val
-    if side == "sell":
-        return trailing_price - stop_distance
-    return trailing_price + stop_distance
-
-
-def _pnl_abs(prev_side: str, prev_price: float, curr_price: float) -> float:
-    # P&L is computed vs previous executed operation price
-    if prev_side == "buy":
-        return curr_price - prev_price
-    return prev_price - curr_price
+import core.runtime as runtime
+from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, TRADING_PARAMS
+from trading.engine import EngineConfig, Operation, PairCalibration, SidePolicy, simulate_operations
+from trading.market_analyzer import analyze_structural_noise
+from trading.parameters_manager import calculate_k_stops
 
 
 @dataclass(frozen=True)
-class Operation:
-    idx: int
-    time: str
-    side: str  # "buy" | "sell"
-    price: float
-    vol: str
-    k_stop: float
-    fee_abs: float
-    pnl_abs: float | None
-    pnl_pct: float | None
-    cum_pnl: float | None
+class BacktestRequest:
+    pair: str
+    fee_pct: float = 0.0
+    start: str | None = None
+    end: str | None = None
+    max_ops: int | None = None
+    use_live_config: bool = False  # if True, read events + ATR percentiles from the calibration cache; skip recompute
 
 
-def simulate_operations(df, pair: str, fee_rate: float = 0.0, max_ops: int | None = None) -> list[Operation]:
-    atr_20, atr_50, atr_80, atr_95 = _atr_thresholds(pair)
-
-    ops: list[Operation] = []
-    # Track cumulative return in percent (compounded). Start at 0%.
-    cum_pnl = 0.0
-
-    # Start always with a BUY operation at first valid close
-    first_row = None
-    for _, row in df.iterrows():
-        atr = float(row["atr"])
-        if atr > 0 and not np.isnan(atr):
-            first_row = row
-            break
-    if first_row is None:
-        return ops
-
-    first_atr = float(first_row["atr"])
-    if "close" in first_row:
-        first_price = float(first_row["close"])
-    elif "open" in first_row:
-        first_price = float(first_row["open"])
-    else:
-        first_price = (float(first_row["high"]) + float(first_row["low"])) / 2.0
-    first_time = str(first_row["dtime"])
-    first_vol = _vol_level_from_atr(first_atr, atr_20, atr_50, atr_80, atr_95)
-    first_k = get_k_stop(pair, "buy", first_atr) or 0.0
-    first_fee = float(first_price) * float(fee_rate)
-    # Convert the entry fee to percent of entry price and apply to cumulative %
-    # Equivalent to an immediate negative return of fee_rate * 100.
-    cum_pnl -= float(fee_rate) * 100.0
-    ops.append(
-        Operation(
-            idx=1,
-            time=first_time,
-            side="buy",
-            price=first_price,
-            vol=first_vol,
-            k_stop=float(first_k),
-            fee_abs=float(first_fee),
-            pnl_abs=None,
-            pnl_pct=None,
-            cum_pnl=float(cum_pnl),
-        )
-    )
-
-    side = "sell"
-    entry_price = first_price
-    active = False
-    activation_price = None
-    activation_atr = None
-    trailing_price = None
-    stop_price = None
-    stop_atr = None
-
-    for _, row in df.iterrows():
-        atr = float(row["atr"])
-        if atr <= 0 or np.isnan(atr):
-            continue
-
-        high = float(row["high"])
-        low = float(row["low"])
-        dtime = str(row["dtime"])
-        vol = _vol_level_from_atr(atr, atr_20, atr_50, atr_80, atr_95)
-
-        atr_limit_max = atr * (1 + ATR_DESV_LIMIT)
-        atr_limit_min = atr * (1 - ATR_DESV_LIMIT)
-
-        if activation_price is None:
-            activation_price = _activation_price(pair, side, entry_price, atr)
-            activation_atr = atr
-
-        if not active:
-            # Recalibrate activation
-            if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
-                activation_price = _activation_price(pair, side, entry_price, atr)
-                activation_atr = atr
-
-            # Activation check
-            if side == "sell" and high >= activation_price:
-                active = True
-                trailing_price = high
-                stop_price = _stop_price(pair, side, trailing_price, atr)
-                stop_atr = atr
-            elif side == "buy" and low <= activation_price:
-                active = True
-                trailing_price = low
-                stop_price = _stop_price(pair, side, trailing_price, atr)
-                stop_atr = atr
-            else:
-                continue
-
-        # Recalibrate stop
-        if stop_price is not None and trailing_price is not None and stop_atr is not None:
-            if stop_atr < atr_limit_min or stop_atr > atr_limit_max:
-                stop_price = _stop_price(pair, side, trailing_price, atr)
-                stop_atr = atr
-
-        # Stop hit check & trailing update
-        if side == "sell":
-            if high > trailing_price:
-                trailing_price = high
-                stop_price = _stop_price(pair, side, trailing_price, atr)
-                stop_atr = atr
-            if low <= stop_price:
-                exec_price = stop_price
-                prev = ops[-1]
-                fee = float(exec_price) * float(fee_rate)
-                pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
-                pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                # Compound cumulative percent: (1+cum%)*(1+op%)-1
-                if pnl_pct is not None:
-                    cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
-                    cum_pnl = (cum_factor - 1.0) * 100.0
-                k_used = get_k_stop(pair, "sell", atr) or 0.0
-                ops.append(
-                    Operation(
-                        idx=len(ops) + 1,
-                        time=dtime,
-                        side="sell",
-                        price=float(exec_price),
-                        vol=vol,
-                        k_stop=float(k_used),
-                        fee_abs=float(fee),
-                        pnl_abs=float(pnl),
-                        pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
-                        cum_pnl=float(cum_pnl),
-                    )
-                )
-
-                if max_ops is not None and len(ops) >= max_ops:
-                    break
-
-                side = "buy"
-                entry_price = float(exec_price)
-                active = False
-                activation_price = None
-                activation_atr = None
-                trailing_price = None
-                stop_price = None
-                stop_atr = None
-        else:
-            if low < trailing_price:
-                trailing_price = low
-                stop_price = _stop_price(pair, side, trailing_price, atr)
-                stop_atr = atr
-            if high >= stop_price:
-                exec_price = stop_price
-                prev = ops[-1]
-                fee = float(exec_price) * float(fee_rate)
-                pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
-                pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                # Compound cumulative percent: (1+cum%)*(1+op%)-1
-                if pnl_pct is not None:
-                    cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
-                    cum_pnl = (cum_factor - 1.0) * 100.0
-                k_used = get_k_stop(pair, "buy", atr) or 0.0
-                ops.append(
-                    Operation(
-                        idx=len(ops) + 1,
-                        time=dtime,
-                        side="buy",
-                        price=float(exec_price),
-                        vol=vol,
-                        k_stop=float(k_used),
-                        fee_abs=float(fee),
-                        pnl_abs=float(pnl),
-                        pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
-                        cum_pnl=float(cum_pnl),
-                    )
-                )
-
-                if max_ops is not None and len(ops) >= max_ops:
-                    break
-
-                side = "sell"
-                entry_price = float(exec_price)
-                active = False
-                activation_price = None
-                activation_atr = None
-                trailing_price = None
-                stop_price = None
-                stop_atr = None
-
-    return ops
+@dataclass(frozen=True)
+class BacktestResult:
+    pair: str
+    fee_pct: float
+    summary: dict  # {ops_count, pnl_samples, win_rate_pct, total_pnl_eur, total_fees_eur,
+    #  best_op_pnl_eur, worst_op_pnl_eur, avg_op_pnl_eur, median_op_pnl_eur,
+    #  row_count, source: "cache" | "recompute" | "slice"}
+    operations: list[Operation]
 
 
-def _print_summary(ops: list[Operation]) -> None:
-    if not ops:
-        print("No operations found.")
-        return
+def _coerce_float(v) -> float | None:
+    try:
+        return float(v) if v is not None and str(v).strip() != "" else None
+    except (TypeError, ValueError):
+        return None
 
+
+def _atr_percentiles(frame) -> tuple[float, float, float, float]:
+    atr = frame["atr"].to_numpy(dtype=float)
+    return tuple(float(np.percentile(atr, p)) for p in (20, 50, 80, 95))
+
+
+def _build_summary(ops: list[Operation], row_count: int, source: str) -> dict:
     pnl_values = [op.pnl_abs for op in ops if op.pnl_abs is not None]
-    if not pnl_values:
-        print("Only the initial operation was created (no exits/re-entries).")
-        return
-
     total_fees = float(sum(op.fee_abs for op in ops if op.fee_abs is not None))
 
-    pnl = np.array(pnl_values, dtype=float)
-    win_rate = float(np.mean(pnl > 0) * 100.0)
-
-    print("\n=== BACKTEST SUMMARY (PER OPERATION) ===")
-    print(f"Operations: {len(ops)} | P&L samples: {len(pnl)}")
-    print(
-        f"Win rate: {win_rate:.1f}% | Total P&L (net): {pnl.sum():.2f}€ | Avg: {pnl.mean():.2f}€ | Median: {np.median(pnl):.2f}€"
-    )
-    print(f"Best op P&L: {pnl.max():.2f}€ | Worst op P&L: {pnl.min():.2f}€")
-    print(f"Total fees: {total_fees:.2f}€")
-
-
-def _print_operations(ops: list[Operation], limit: int | None = 100) -> None:
-    if not ops:
-        return
-
-    show_limit = limit
-    if show_limit is not None and show_limit > 0:
-        title = f"\n=== OPERATIONS (first {min(show_limit, len(ops))}) ==="
+    if pnl_values:
+        pnl = np.array(pnl_values, dtype=float)
+        win_rate = float(np.mean(pnl > 0) * 100.0)
+        total_pnl = float(pnl.sum())
+        best = float(pnl.max())
+        worst = float(pnl.min())
+        avg = float(pnl.mean())
+        median = float(np.median(pnl))
     else:
-        title = "\n=== OPERATIONS (all) ==="
-    print(title)
-    header = f"{'#':>3} | {'Time':<20} | {'Side':>4} | {'Price':>10} | {'Vol':>3} | {'K_STOP':>6} | {'Fee€':>9} | {'P&L€':>10} | {'P&L%':>8} | {'Cum%':>10}"
-    print(header)
-    print("-" * len(header))
+        win_rate = total_pnl = best = worst = avg = median = 0.0
 
-    for op in ops[:show_limit]:
-        fee_abs = "" if op.fee_abs is None else f"{op.fee_abs:>9.2f}"
-        pnl_abs = "" if op.pnl_abs is None else f"{op.pnl_abs:>10.2f}"
-        pnl_pct = "" if op.pnl_pct is None else f"{op.pnl_pct:>7.2f}%"
-        cum = "" if op.cum_pnl is None else f"{op.cum_pnl:>9.2f}%"
-        print(
-            f"{op.idx:>3} | {op.time:<20} | {op.side:>4} | {op.price:>10.1f} | {op.vol:>3} | {op.k_stop:>6.2f} | {fee_abs:>9} | {pnl_abs:>10} | {pnl_pct:>8} | {cum:>10}"
-        )
-
-
-def main() -> None:
-    args = _parse_args()
-    pair = args["pair"]
-    fee_rate = float(args.get("fee_pct") or 0.0) / 100.0
-
-    # Ensure we have thresholds + K_STOP in memory
-    calculate_trading_parameters(pair, infoLog=False)
-
-    df = db.load_ohlc_data(pair, CANDLE_TIMEFRAME).dropna(subset=["atr"])
-
-    # Optional date slicing (expects dtime comparable as string YYYY-MM-DD...)
-    if args["start"]:
-        df = df[df["dtime"] >= args["start"]]
-    if args["end"]:
-        df = df[df["dtime"] <= args["end"]]
-    df = df.reset_index(drop=True)
-
-    ops = simulate_operations(df, pair, fee_rate=fee_rate, max_ops=args["max_ops"])
-
-    print(f"\nPAIR={pair}")
-    print(f"Fee per op: {fee_rate * 100.0:.4f}% ({fee_rate:.6f} fraction)")
-    print(f"K_STOP_SELL: {TRADING_PARAMS[pair]['sell']['K_STOP']}")
-    print(f"K_STOP_BUY : {TRADING_PARAMS[pair]['buy']['K_STOP']}")
-
-    _print_summary(ops)
-    _print_operations(ops, limit=args["max_ops"])
+    return {
+        "ops_count": len(ops),
+        "pnl_samples": len(pnl_values),
+        "win_rate_pct": win_rate,
+        "total_pnl_eur": total_pnl,
+        "total_fees_eur": total_fees,
+        "best_op_pnl_eur": best,
+        "worst_op_pnl_eur": worst,
+        "avg_op_pnl_eur": avg,
+        "median_op_pnl_eur": median,
+        "row_count": row_count,
+        "source": source,
+    }
 
 
-if __name__ == "__main__":
-    main()
+def run_backtest(req: BacktestRequest) -> BacktestResult:
+    df_full = db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME).dropna(subset=["atr"]).reset_index(drop=True)
+
+    if req.start or req.end:
+        # Date-sliced request: recompute events + ATR percentiles from the slice.
+        source = "slice"
+        df = df_full
+        if req.start:
+            df = df[df["dtime"] >= req.start]
+        if req.end:
+            df = df[df["dtime"] <= req.end]
+        df = df.reset_index(drop=True)
+        up_events, down_events = analyze_structural_noise(df)
+        atr_p20, atr_p50, atr_p80, atr_p95 = _atr_percentiles(df)
+    else:
+        cached = runtime.get_pair_calibration(req.pair) if req.use_live_config else None
+        if cached is not None:
+            # Reuse the live bot's calibration (full history) — no recompute.
+            source = "cache"
+            df = df_full
+            up_events = cached["up_events"]
+            down_events = cached["down_events"]
+            atr_p20 = cached["atr_p20"]
+            atr_p50 = cached["atr_p50"]
+            atr_p80 = cached["atr_p80"]
+            atr_p95 = cached["atr_p95"]
+        else:
+            # Recompute from full history (cold cache or use_live_config=False).
+            source = "recompute"
+            df = df_full
+            up_events, down_events = analyze_structural_noise(df_full)
+            atr_p20, atr_p50, atr_p80, atr_p95 = _atr_percentiles(df_full)
+
+    calibration = PairCalibration(
+        atr_p20=atr_p20,
+        atr_p50=atr_p50,
+        atr_p80=atr_p80,
+        atr_p95=atr_p95,
+        k_stop_buy=calculate_k_stops(req.pair, down_events),
+        k_stop_sell=calculate_k_stops(req.pair, up_events),
+    )
+
+    side_buy = SidePolicy(
+        k_act=_coerce_float(TRADING_PARAMS[req.pair]["buy"].get("K_ACT")),
+        min_margin=float(TRADING_PARAMS[req.pair]["buy"].get("MIN_MARGIN") or 0.0),
+    )
+    side_sell = SidePolicy(
+        k_act=_coerce_float(TRADING_PARAMS[req.pair]["sell"].get("K_ACT")),
+        min_margin=float(TRADING_PARAMS[req.pair]["sell"].get("MIN_MARGIN") or 0.0),
+    )
+    cfg = EngineConfig(req.pair, calibration, buy=side_buy, sell=side_sell, atr_desv_limit=ATR_DESV_LIMIT)
+
+    operations = simulate_operations(df, cfg, fee_rate=req.fee_pct / 100.0, max_ops=req.max_ops)
+    summary = _build_summary(operations, row_count=len(df), source=source)
+
+    return BacktestResult(pair=req.pair, fee_pct=req.fee_pct, summary=summary, operations=operations)
