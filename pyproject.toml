@@ -21,7 +21,6 @@ ignore = [
 # Analysis scripts use sys.argv parsing and verbose prints; relax the rules
 # instead of forcing them into a different shape.
 "trading/backtest.py" = ["B", "SIM"]
-"trading/optimize_params.py" = ["B", "SIM"]
 "core/utils.py" = ["B"]  # the print_* helpers intentionally use bare prints.
 "tests/**" = ["B", "SIM"]  # fixtures and parametrize expressions trip rules.
 "api/routes/control.py" = ["B008"]  # Body(default=None) is the correct FastAPI pattern.
@@ -44,7 +43,7 @@ markers = [
 source = ["api", "core", "exchange", "services", "trading"]
 omit = [
     "trading/backtest.py",
-    "trading/optimize_params.py",
+    "trading/optimizer.py",
     "scripts/migrations/versions",
     "core/scheduler.py",
 ]
