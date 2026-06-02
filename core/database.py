@@ -1,5 +1,6 @@
 import json
 import logging as stdlib_logging
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -25,6 +26,8 @@ from sqlalchemy import (
     text,
     update,
 )
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -259,6 +262,46 @@ class BotControl(Base):
             "control_value": self.control_value,
             "updated_at": self.updated_at,
             "updated_by": self.updated_by,
+        }
+
+
+class OptimizerJob(Base):
+    """Optimizer job state and results."""
+
+    __tablename__ = "optimizer_jobs"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    pair = Column(Text, nullable=False)
+    mode = Column(Text, nullable=False)
+    split_method = Column(Text, nullable=False)
+    status = Column(Text, nullable=False)
+    request = Column(JSONB, nullable=False)
+    result = Column(JSONB, nullable=True)
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('running','completed','failed')", name="ck_opt_jobs_status_valid"),
+        CheckConstraint("mode IN ('CONSERVATIVE','AGGRESSIVE','CURRENT')", name="ck_opt_jobs_mode_valid"),
+        Index("ix_opt_jobs_created_at_desc", desc(created_at)),
+        Index("ix_opt_jobs_status_running", status, postgresql_where=text("status = 'running'")),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": str(self.id),
+            "pair": self.pair,
+            "mode": self.mode,
+            "split_method": self.split_method,
+            "status": self.status,
+            "request": self.request,
+            "result": self.result,
+            "error": self.error,
+            "created_at": self.created_at,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
         }
 
 
@@ -693,3 +736,92 @@ def finalize_session(
             set_control_value("latest_pair_data", json.dumps(pair_data), updated_by="scheduler")
         except Exception as e:
             logger.error(f"Error saving latest_pair_data to bot_control: {e}")
+
+
+# ============================================================================
+# Optimizer Job Operations
+# ============================================================================
+
+
+def create_optimizer_job(pair: str, mode: str, split_method: str, request: dict[str, Any]) -> str:
+    """Insert a new job row with status='running' and started_at=now(). Returns job_id."""
+    try:
+        with get_session() as session:
+            row = OptimizerJob(
+                pair=pair,
+                mode=mode,
+                split_method=split_method,
+                status="running",
+                request=request,
+                started_at=datetime.now(UTC),
+            )
+            session.add(row)
+            session.flush()
+            return str(row.id)
+    except Exception as e:
+        logger.error(f"Error creating optimizer job for {pair}: {e}")
+        raise
+
+
+def complete_optimizer_job(job_id: str, result: dict[str, Any]) -> None:
+    try:
+        with get_session() as session:
+            session.execute(
+                update(OptimizerJob)
+                .where(OptimizerJob.id == job_id)
+                .values(status="completed", result=result, finished_at=datetime.now(UTC))
+            )
+    except Exception as e:
+        logger.error(f"Error completing optimizer job {job_id}: {e}")
+        raise
+
+
+def fail_optimizer_job(job_id: str, error: str) -> None:
+    try:
+        with get_session() as session:
+            session.execute(
+                update(OptimizerJob)
+                .where(OptimizerJob.id == job_id)
+                .values(status="failed", error=error, finished_at=datetime.now(UTC))
+            )
+    except Exception as e:
+        logger.error(f"Error failing optimizer job {job_id}: {e}")
+        raise
+
+
+def get_optimizer_job(job_id: str) -> dict[str, Any] | None:
+    try:
+        with get_session() as session:
+            record = session.query(OptimizerJob).filter(OptimizerJob.id == job_id).one_or_none()
+            if record is None:
+                return None
+            return record.to_dict()
+    except Exception as e:
+        logger.error(f"Error loading optimizer job {job_id}: {e}")
+        return None
+
+
+def list_optimizer_jobs(limit: int = 20) -> list[dict[str, Any]]:
+    try:
+        with get_session() as session:
+            records = session.query(OptimizerJob).order_by(desc(OptimizerJob.created_at)).limit(limit).all()
+            return [r.to_dict() for r in records]
+    except Exception as e:
+        logger.error(f"Error listing optimizer jobs: {e}")
+        return []
+
+
+def cleanup_orphaned_optimizer_jobs() -> int:
+    """Mark every status='running' row as failed with error='interrupted by restart',
+    finished_at=now(). Return the row count."""
+    try:
+        with get_session() as session:
+            result = session.execute(
+                update(OptimizerJob)
+                .where(OptimizerJob.status == "running")
+                .values(status="failed", error="interrupted by restart", finished_at=datetime.now(UTC))
+            )
+            return result.rowcount
+    except Exception as e:
+        logger.error(f"Error cleaning up orphaned optimizer jobs: {e}")
+        return 0
