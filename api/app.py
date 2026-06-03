@@ -17,7 +17,7 @@ from api.routes import optimizer as optimizer_route
 from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, SLEEPING_INTERVAL
 from core.scheduler import trading_session
 from core.validation import validate_config
-from optimizer.jobs import JOB_STORE
+from trading.optimizer.jobs import JOB_STORE
 
 # Dedicated logger kept outside the "botc" tree so API records are not folded
 # into per-session telemetry by the scheduler's log collector.

@@ -9,8 +9,8 @@ from api.schemas import (
     OptimizerRequest,
 )
 from core.config import PAIRS
-from optimizer.jobs import JOB_STORE, OptimizerBusyError
-from trading.optimizer import OptimizerRequest as DTORequest
+from trading.optimizer.jobs import JOB_STORE, OptimizerBusyError
+from trading.optimizer.search import OptimizerRequest as DTORequest
 
 router = APIRouter(prefix="/optimizer", tags=["optimizer"])
 

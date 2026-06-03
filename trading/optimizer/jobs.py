@@ -7,7 +7,7 @@ from multiprocessing import get_context
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-from optimizer.worker import _worker_func
+from trading.optimizer.worker import _worker_func
 
 _EXECUTOR = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
 

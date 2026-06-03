@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 
 import core.config as config
-import trading.optimizer as optimizer
-from trading.optimizer import OptimizerRequest, run_optimize
+import trading.optimizer.search as optimizer
+from trading.optimizer.search import OptimizerRequest, run_optimize
 
 _PAIR = "XBTEUR"
 _LEVELS = ("LL", "LV", "MV", "HV", "HH")

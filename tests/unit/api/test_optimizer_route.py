@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 import core.database as db
 from api.routes import optimizer as optimizer_route
-from optimizer.jobs import OptimizerBusyError
+from trading.optimizer.jobs import OptimizerBusyError
 
 _PAIR = "XBTEUR"
 _PAIRS = {_PAIR: {}}

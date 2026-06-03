@@ -1,4 +1,4 @@
-"""Unit tests for optimizer.jobs.JobStore."""
+"""Unit tests for trading.optimizer.jobs.JobStore."""
 
 import asyncio
 import concurrent.futures
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import core.database as db
-from optimizer.jobs import JobStore, OptimizerBusyError, _ActiveJob
+from trading.optimizer.jobs import JobStore, OptimizerBusyError, _ActiveJob
 
 
 @dataclass
@@ -56,7 +56,7 @@ def test_try_start_inserts_row_and_returns_id(monkeypatch) -> None:
     mock_future = MagicMock()
     mock_future.done.return_value = False
 
-    with patch("optimizer.jobs._EXECUTOR") as mock_executor:
+    with patch("trading.optimizer.jobs._EXECUTOR") as mock_executor:
         mock_executor.submit.return_value = mock_future
         job_id = store.try_start(_FakeReq())
 

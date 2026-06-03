@@ -43,7 +43,7 @@ markers = [
 source = ["api", "core", "exchange", "services", "trading"]
 omit = [
     "trading/backtest.py",
-    "trading/optimizer.py",
+    "trading/optimizer/search.py",
     "scripts/migrations/versions",
     "core/scheduler.py",
 ]
