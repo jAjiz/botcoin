@@ -148,7 +148,9 @@ def test_supervise_error(monkeypatch) -> None:
     store = JobStore()
     failed = {}
 
-    monkeypatch.setattr(db, "fail_optimizer_job", lambda job_id, error: failed.update({"job_id": job_id, "error": error}))
+    monkeypatch.setattr(
+        db, "fail_optimizer_job", lambda job_id, error: failed.update({"job_id": job_id, "error": error})
+    )
 
     store._active = _ActiveJob(
         job_id="job-err",

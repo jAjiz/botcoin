@@ -11,10 +11,13 @@ from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 
 import core.database as db
+from api.routes import backtest as backtest_route
 from api.routes import balance, control, market, positions, status
+from api.routes import optimizer as optimizer_route
 from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, SLEEPING_INTERVAL
 from core.scheduler import trading_session
 from core.validation import validate_config
+from optimizer.jobs import JOB_STORE
 
 # Dedicated logger kept outside the "botc" tree so API records are not folded
 # into per-session telemetry by the scheduler's log collector.
@@ -53,10 +56,14 @@ async def lifespan(app: FastAPI):
         trigger=IntervalTrigger(seconds=SLEEPING_INTERVAL),
         next_run_time=datetime.now(),
     )
+    cleaned = db.cleanup_orphaned_optimizer_jobs()
+    if cleaned:
+        logger.warning(f"Cleaned up {cleaned} orphaned optimizer jobs from previous run.")
     scheduler.start()
     try:
         yield
     finally:
+        JOB_STORE.shutdown()
         scheduler.shutdown(wait=True)
         logger.info("Scheduler stopped.")
 
@@ -77,5 +84,5 @@ def health():
     return {"ok": True}
 
 
-for _r in (balance, control, market, positions, status):
+for _r in (balance, control, market, positions, status, backtest_route, optimizer_route):
     app.include_router(_r.router, dependencies=_auth)
