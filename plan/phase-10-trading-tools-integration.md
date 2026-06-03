@@ -46,7 +46,7 @@ HTTP layer (single FastAPI process)
        ┌─────────────────┐  spawn (req + calibration snapshot)  ┌───────────────────────┐
        │ optimizer.jobs  │────────────────────────────────────► │ optimizer.worker      │
        │   JobStore      │                                      │ run_optimize(req,cal) │
-       │   supervisor    │◄───── mp.Queue (("ok", result) | ("error", tb))
+       │   supervisor    │◄───── ProcessPoolExecutor future (result dict | exception)
        └────────┬────────┘                                      └───────────────────────┘
                 │
                 │ complete/fail + Telegram notify
@@ -738,48 +738,38 @@ New top-level package `optimizer/` (sibling of `trading/`, `core/`, `api/`, `ser
 Subprocess entry point — must be self-contained because `spawn` re-imports the module fresh in the child:
 
 ```python
-import multiprocessing as mp
-import traceback
 from dataclasses import asdict
 
 from trading.optimizer import OptimizerRequest, run_optimize
 
-def _entrypoint(req_dict: dict, calibration: dict | None, result_queue: mp.Queue) -> None:
-    try:
-        req = OptimizerRequest(**req_dict)
-        result = run_optimize(req, calibration)
-        result_queue.put(("ok", asdict(result)))
-    except Exception:
-        result_queue.put(("error", traceback.format_exc()))
+def _worker_func(req_dict: dict, calibration: dict | None) -> dict:
+    req = OptimizerRequest(**req_dict)
+    result = run_optimize(req, calibration)
+    return asdict(result)
 ```
 
-`calibration` is the snapshot the parent passed in (see §5.0). It must be picklable — the cache entry is plain dicts/lists/floats and a `datetime`, all of which pickle cleanly across the `spawn` boundary. (Drop the `computed_at` datetime before sending if you prefer to keep the payload to pure JSON-native types; `run_optimize` doesn't read it.)
+`_worker_func` returns the result dict directly; exceptions propagate through the `ProcessPoolExecutor` future automatically — no queue, no traceback formatting needed. `calibration` is the snapshot the parent passed in (see §5.0). It must be picklable — the cache entry is plain dicts/lists/floats and a `datetime`, all of which pickle cleanly across the `spawn` boundary. (Drop the `computed_at` datetime before sending if you prefer to keep the payload to pure JSON-native types; `run_optimize` doesn't read it.)
 
 ### 7.2 `optimizer/jobs.py` — `JobStore`
 
 ```python
 import asyncio
-import multiprocessing as mp
 import threading
-from dataclasses import dataclass, field
+from concurrent.futures import Future, ProcessPoolExecutor
+from dataclasses import dataclass
+from multiprocessing import get_context
 
-from optimizer.worker import _entrypoint
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
+from optimizer.worker import _worker_func
 
-_CTX = mp.get_context("spawn")  # Windows-safe and consistent across platforms
-
-# How long the supervisor waits to drain a final message after the worker
-# process has exited, before declaring the job failed. Guards against the
-# mp.Queue feeder-thread race where the result is buffered but not yet readable.
-_QUEUE_DRAIN_TIMEOUT = 2.0
+_EXECUTOR = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
 
 @dataclass
 class _ActiveJob:
     job_id: str
-    process: mp.Process
-    queue: mp.Queue
+    future: Future
     pair: str
 
 class OptimizerBusyError(Exception):
@@ -789,10 +779,9 @@ class JobStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._active: _ActiveJob | None = None
-        self._supervisor_task: asyncio.Task | None = None
 
     def try_start(self, req) -> str:
-        """Atomically: confirm slot is free, INSERT optimizer_jobs row, spawn worker.
+        """Atomically: confirm slot is free, INSERT optimizer_jobs row, submit worker.
         Returns job_id. Raises OptimizerBusyError if another job is running.
 
         Snapshots the live calibration here (in the parent) and passes it to the
@@ -800,7 +789,7 @@ class JobStore:
         cannot read the cache itself (see §5.0). Sliced requests get None and the
         worker recomputes from the slice."""
         with self._lock:
-            if self._active is not None and self._active.process.is_alive():
+            if self._active is not None and not self._active.future.done():
                 raise OptimizerBusyError(f"Optimizer job {self._active.job_id} is already running")
             calibration = None
             if not req.start and not req.end:
@@ -809,42 +798,21 @@ class JobStore:
                 pair=req.pair, mode=req.mode, split_method=req.split_method,
                 request=req.__dict__,
             )
-            queue = _CTX.Queue()
-            process = _CTX.Process(
-                target=_entrypoint, args=(req.__dict__, calibration, queue), daemon=True
-            )
-            process.start()
-            self._active = _ActiveJob(job_id=job_id, process=process, queue=queue, pair=req.pair)
+            future = _EXECUTOR.submit(_worker_func, req.__dict__, calibration)
+            self._active = _ActiveJob(job_id=job_id, future=future, pair=req.pair)
             return job_id
 
     async def supervise(self) -> None:
-        """Single long-lived asyncio task. Polls the active job's queue + process state
-        every second. On completion, persists result/error and clears the slot."""
-        while True:
-            await asyncio.sleep(1.0)
-            active = self._snapshot_active()
-            if active is None:
-                continue
-            try:
-                msg = active.queue.get_nowait()
-            except Exception:
-                msg = None
-            if msg is not None:
-                kind, payload = msg
-                self._finalize(active, kind, payload)
-                continue
-            if not active.process.is_alive():
-                # Process exited without us seeing a message yet. A successful worker
-                # puts its result and then exits; the mp.Queue feeder thread can still
-                # be flushing to the pipe when is_alive() flips to False, so get_nowait()
-                # above may have raised Empty on a job that actually succeeded. Do one
-                # final blocking drain before declaring failure.
-                try:
-                    kind, payload = active.queue.get(timeout=_QUEUE_DRAIN_TIMEOUT)
-                except Exception:
-                    self._finalize(active, "error", f"worker exited with code {active.process.exitcode}")
-                else:
-                    self._finalize(active, kind, payload)
+        """Awaits the active job's future and persists the result. Called once
+        per job via asyncio.create_task() immediately after try_start()."""
+        active = self._snapshot_active()
+        if active is None:
+            return
+        try:
+            result = await asyncio.wrap_future(active.future)
+            self._finalize(active, "ok", result)
+        except Exception as exc:
+            self._finalize(active, "error", str(exc))
 
     def _snapshot_active(self) -> _ActiveJob | None:
         with self._lock:
@@ -866,29 +834,25 @@ class JobStore:
                     to_telegram=True,
                 )
         finally:
-            try:
-                active.process.join(timeout=5)
-            except Exception:
-                pass
             with self._lock:
                 self._active = None
 
     def shutdown(self) -> None:
-        """Called from FastAPI lifespan finally block. Terminate any active child."""
-        active = self._snapshot_active()
+        """Called from FastAPI lifespan finally block. Cancel pending work and
+        mark any running job as failed in the DB; process cleanup is left to Docker."""
+        with self._lock:
+            active = self._active
         if active is None:
             return
-        try:
-            active.process.terminate()
-            active.process.join(timeout=5)
-        except Exception:
-            pass
+        _EXECUTOR.shutdown(wait=False, cancel_futures=True)
         db.fail_optimizer_job(active.job_id, "interrupted by shutdown")
         with self._lock:
             self._active = None
 
 JOB_STORE = JobStore()
 ```
+
+**Design rationale:** `ProcessPoolExecutor` with `mp_context=get_context("spawn")` replaces the `mp.Process` + `mp.Queue` pair. The worker returns its result directly; the future carries success or exception with no queue-drain race condition. `supervise()` is a one-shot coroutine (no loop) launched via `asyncio.create_task()` in the route handler immediately after `try_start()` — its lifetime matches the job, not the app. `shutdown()` calls `_EXECUTOR.shutdown(cancel_futures=True)` for pending work; running workers are left to Docker's container-level cleanup (all processes in the namespace are killed when the container stops).
 
 ### 7.3 Telegram start-notification
 
@@ -905,13 +869,14 @@ logging.info(
 
 `tests/unit/optimizer/test_jobs.py`:
 
-- `test_try_start_inserts_row_and_returns_id` — monkeypatch `db.create_optimizer_job` and `_CTX.Process` to a dummy that records args; assert call shape.
-- `test_try_start_busy_raises` — populate `JobStore._active` with a fake live process; assert second `try_start` raises `OptimizerBusyError`.
-- `test_finalize_completes_job` — drive `_finalize` with `("ok", payload)`; assert `complete_optimizer_job` is called and the slot is cleared.
+- `test_try_start_inserts_row_and_returns_id` — monkeypatch `db.create_optimizer_job` and patch `optimizer.jobs._EXECUTOR` to record the `submit` call; assert call shape and returned job_id.
+- `test_try_start_busy_raises` — populate `JobStore._active` with a `MagicMock` future whose `.done()` returns `False`; assert second `try_start` raises `OptimizerBusyError`.
+- `test_finalize_completes_job` — drive `_finalize` directly with `("ok", payload)`; assert `complete_optimizer_job` is called and the slot is cleared.
 - `test_finalize_failed_job` — drive with `("error", "boom")`; assert `fail_optimizer_job` is called.
-- `test_supervise_drains_after_exit` — fake `_ActiveJob` whose `process.is_alive()` is `False` and whose `queue.get_nowait()` raises but `queue.get(timeout=…)` returns `("ok", payload)`; run one `supervise` tick and assert the job completes (not fails). Guards the drain-race fix.
+- `test_supervise_ok` — set `_active` to an `_ActiveJob` with an already-resolved `concurrent.futures.Future`; `asyncio.run(store.supervise())`; assert `complete_optimizer_job` was called and slot is cleared.
+- `test_supervise_error` — same with a future whose exception is set; assert `fail_optimizer_job` was called.
 
-Two implementation notes for the reviewer, not bugs: (1) the `daemon=True` child cannot itself spawn subprocesses — fine for plain Optuna/pure-Python, but a future `@njit(parallel=True)` or multiprocessing-backed sampler would raise; (2) the final `queue.get(timeout=_QUEUE_DRAIN_TIMEOUT)` and `process.join(timeout=5)` briefly block the event loop, which is acceptable because they run at most once per job at completion and the process has already exited.
+Helpers: `_resolved_future(result)` and `_failed_future(exc)` build pre-settled `concurrent.futures.Future` objects, making test intent explicit without mocking queues.
 
 **Commit:** `feat(optimizer): JobStore with multiprocessing.spawn worker, supervisor, and Telegram hooks`.
 
@@ -1018,13 +983,14 @@ from trading.optimizer import OptimizerRequest as DTORequest
 router = APIRouter(prefix="/optimizer", tags=["optimizer"])
 
 @router.post("/jobs", response_model=OptimizerJobAcceptedResponse, status_code=202)
-def submit(req: OptimizerRequest) -> OptimizerJobAcceptedResponse:
+async def submit(req: OptimizerRequest) -> OptimizerJobAcceptedResponse:
     if req.pair not in PAIRS:
         raise HTTPException(status_code=400, detail=f"Unknown pair: {req.pair}")
     try:
         job_id = JOB_STORE.try_start(DTORequest(**req.model_dump()))
     except OptimizerBusyError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    asyncio.create_task(JOB_STORE.supervise())
     return OptimizerJobAcceptedResponse(job_id=job_id)
 
 @router.get("/jobs/{job_id}", response_model=OptimizerJobStatusResponse)
@@ -1051,18 +1017,18 @@ Two edits to `api/app.py`:
        logging.warning(f"Cleaned up {cleaned} orphaned optimizer jobs from previous run.")
    ```
 
-2. Schedule the `JobStore` supervisor and register shutdown:
+2. Register the `JobStore` shutdown in the lifespan finally block:
 
    ```python
    from optimizer.jobs import JOB_STORE
-   supervisor = asyncio.create_task(JOB_STORE.supervise())
    try:
        yield
    finally:
-       supervisor.cancel()
        JOB_STORE.shutdown()
        scheduler.shutdown(wait=True)
    ```
+
+   `supervise()` is no longer a long-lived task started at boot. It is spawned per-job via `asyncio.create_task()` in the route handler immediately after `try_start()`, so no task handle is needed here.
 
 3. Register the routers in the `for _r in (...)` loop:
 
@@ -1188,7 +1154,7 @@ Run all of these before opening the PR:
 - [ ] FastAPI lifespan calls `cleanup_orphaned_optimizer_jobs()` before scheduler start and `JOB_STORE.shutdown()` on exit.
 - [ ] `POST /optimizer/jobs` returns `202` with a `job_id` and `409` when busy. `GET /optimizer/jobs/{id}` returns 404 for unknown IDs and the right status otherwise.
 - [ ] `POST /backtest` returns a populated `BacktestResponse` in under 1 s on 60 days of 15-min OHLC for a typical pair.
-- [ ] The supervisor does a final blocking `queue.get(timeout=…)` after the worker exits before marking a job failed (drain-race guard), covered by `test_supervise_drains_after_exit`.
+- [ ] The optimizer route handler calls `asyncio.create_task(JOB_STORE.supervise())` immediately after `try_start()`. `supervise()` is a one-shot coroutine — no polling loop, no long-lived task at boot.
 - [ ] Telegram receives a "Started" message at submit and a "Completed" or "Failed" message when the worker finishes.
 - [ ] Crash test: kill `botc` mid-optimization; after restart, the affected row is `failed` with the documented `error` text. No row is left as `running` after startup.
 - [ ] `grep -rn "TRADING_PARAMS\[" trading/backtest.py trading/optimizer.py` returns nothing — neither file mutates global trading config.
