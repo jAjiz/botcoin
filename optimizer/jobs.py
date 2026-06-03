@@ -1,22 +1,21 @@
 import asyncio
-import contextlib
-import multiprocessing as mp
 import threading
+from concurrent.futures import Future, ProcessPoolExecutor
 from dataclasses import dataclass
+from multiprocessing import get_context
 
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-from optimizer.worker import _entrypoint
+from optimizer.worker import _worker_func
 
-_CTX = mp.get_context("spawn")
+_EXECUTOR = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
 
 
 @dataclass
 class _ActiveJob:
     job_id: str
-    process: mp.Process
-    queue: mp.Queue
+    future: Future
     pair: str
 
 
@@ -28,10 +27,9 @@ class JobStore:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._active: _ActiveJob | None = None
-        self._supervisor_task: asyncio.Task | None = None
 
     def try_start(self, req) -> str:
-        """Atomically: confirm slot is free, INSERT optimizer_jobs row, spawn worker.
+        """Atomically: confirm slot is free, INSERT optimizer_jobs row, submit worker.
         Returns job_id. Raises OptimizerBusyError if another job is running.
 
         Snapshots the live calibration here (in the parent) and passes it to the
@@ -39,7 +37,7 @@ class JobStore:
         cannot read the cache itself. Sliced requests get None and the worker
         recomputes from the slice."""
         with self._lock:
-            if self._active is not None and self._active.process.is_alive():
+            if self._active is not None and not self._active.future.done():
                 raise OptimizerBusyError(f"Optimizer job {self._active.job_id} is already running")
             calibration = None
             if not req.start and not req.end:
@@ -54,26 +52,21 @@ class JobStore:
                 f"🔧 [Optimizer] Started for {req.pair} (mode={req.mode}, split={req.split_method}, job={job_id})",
                 to_telegram=True,
             )
-            queue = _CTX.Queue()
-            process = _CTX.Process(target=_entrypoint, args=(req.__dict__, calibration, queue), daemon=True)
-            process.start()
-            self._active = _ActiveJob(job_id=job_id, process=process, queue=queue, pair=req.pair)
+            future = _EXECUTOR.submit(_worker_func, req.__dict__, calibration)
+            self._active = _ActiveJob(job_id=job_id, future=future, pair=req.pair)
             return job_id
 
     async def supervise(self) -> None:
-        """Single long-lived asyncio task. Blocks in a thread pool on the active
-        job's result queue. On completion, persists result/error and clears the slot."""
-        while True:
-            active = self._snapshot_active()
-            if active is None:
-                await asyncio.sleep(1.0)
-                continue
-            try:
-                kind, payload = await asyncio.to_thread(active.queue.get)
-            except Exception as exc:
-                self._finalize(active, "error", f"queue read failed: {exc}")
-                continue
-            self._finalize(active, kind, payload)
+        """Awaits the active job's future and persists the result. Called once
+        per job via asyncio.create_task() immediately after try_start()."""
+        active = self._snapshot_active()
+        if active is None:
+            return
+        try:
+            result = await asyncio.wrap_future(active.future)
+            self._finalize(active, "ok", result)
+        except Exception as exc:
+            self._finalize(active, "error", str(exc))
 
     def _snapshot_active(self) -> _ActiveJob | None:
         with self._lock:
@@ -95,21 +88,16 @@ class JobStore:
                     to_telegram=True,
                 )
         finally:
-            with contextlib.suppress(Exception):
-                active.process.join(timeout=5)
             with self._lock:
                 self._active = None
 
     def shutdown(self) -> None:
-        """Called from FastAPI lifespan finally block. Terminate any active child."""
+        """Called from FastAPI lifespan finally block. Cancel pending work and
+        mark any running job as failed in the DB; process cleanup is left to Docker."""
         active = self._snapshot_active()
         if active is None:
             return
-        try:
-            active.process.terminate()
-            active.process.join(timeout=5)
-        except Exception:
-            pass
+        _EXECUTOR.shutdown(wait=False, cancel_futures=True)
         db.fail_optimizer_job(active.job_id, "interrupted by shutdown")
         with self._lock:
             self._active = None
