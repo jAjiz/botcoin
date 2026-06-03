@@ -11,11 +11,6 @@ from optimizer.worker import _entrypoint
 
 _CTX = mp.get_context("spawn")
 
-# How long the supervisor waits to drain a final message after the worker
-# process has exited, before declaring the job failed. Guards against the
-# mp.Queue feeder-thread race where the result is buffered but not yet readable.
-_QUEUE_DRAIN_TIMEOUT = 2.0
-
 
 @dataclass
 class _ActiveJob:
@@ -66,33 +61,19 @@ class JobStore:
             return job_id
 
     async def supervise(self) -> None:
-        """Single long-lived asyncio task. Polls the active job's queue + process state
-        every second. On completion, persists result/error and clears the slot."""
+        """Single long-lived asyncio task. Blocks in a thread pool on the active
+        job's result queue. On completion, persists result/error and clears the slot."""
         while True:
-            await asyncio.sleep(1.0)
             active = self._snapshot_active()
             if active is None:
+                await asyncio.sleep(1.0)
                 continue
             try:
-                msg = active.queue.get_nowait()
-            except Exception:
-                msg = None
-            if msg is not None:
-                kind, payload = msg
-                self._finalize(active, kind, payload)
+                kind, payload = await asyncio.to_thread(active.queue.get)
+            except Exception as exc:
+                self._finalize(active, "error", f"queue read failed: {exc}")
                 continue
-            if not active.process.is_alive():
-                # Process exited without us seeing a message yet. A successful worker
-                # puts its result and then exits; the mp.Queue feeder thread can still
-                # be flushing to the pipe when is_alive() flips to False, so get_nowait()
-                # above may have raised Empty on a job that actually succeeded. Do one
-                # final blocking drain before declaring failure.
-                try:
-                    kind, payload = active.queue.get(timeout=_QUEUE_DRAIN_TIMEOUT)
-                except Exception:
-                    self._finalize(active, "error", f"worker exited with code {active.process.exitcode}")
-                else:
-                    self._finalize(active, kind, payload)
+            self._finalize(active, kind, payload)
 
     def _snapshot_active(self) -> _ActiveJob | None:
         with self._lock:
