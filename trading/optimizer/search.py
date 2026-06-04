@@ -27,7 +27,7 @@ from trading.market_analyzer import analyze_structural_noise
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-MODES = ("CONSERVATIVE", "AGGRESSIVE", "CURRENT")
+MODES = ("OPTIMIZE", "CURRENT")
 SPLIT_METHODS = ("RESET", "CONTINUE", "BOTH")
 
 
@@ -187,11 +187,11 @@ def _build_study(seed: int) -> optuna.Study:
     return optuna.create_study(direction="maximize", sampler=TPESampler(seed=seed))
 
 
-def _suggest_candidate(trial: optuna.Trial, mode: str) -> Candidate:
+def _suggest_candidate(trial: optuna.Trial) -> Candidate:
     stop_pcts = {lvl: trial.suggest_float(f"stop_pct_{lvl}", 0.20, 0.95, step=0.05) for lvl in LEVELS}
-    if mode == "AGGRESSIVE":
+    if trial.suggest_categorical("activation_type", ["k_act", "min_margin"]) == "k_act":
         return Candidate(
-            k_act=trial.suggest_float("k_act", 0.0, 3.0, step=0.5),
+            k_act=trial.suggest_float("k_act", 0.0, 4.0, step=0.5),
             min_margin=None,
             stop_pcts=stop_pcts,
         )
@@ -202,11 +202,11 @@ def _suggest_candidate(trial: optuna.Trial, mode: str) -> Candidate:
     )
 
 
-def _candidate_from_params(params: dict, mode: str) -> Candidate:
+def _candidate_from_params(params: dict) -> Candidate:
     stop_pcts = {lvl: params[f"stop_pct_{lvl}"] for lvl in LEVELS}
-    if mode == "AGGRESSIVE":
+    if params.get("activation_type") == "k_act":
         return Candidate(k_act=params["k_act"], min_margin=None, stop_pcts=stop_pcts)
-    return Candidate(k_act=None, min_margin=params["min_margin"], stop_pcts=stop_pcts)
+    return Candidate(k_act=None, min_margin=params.get("min_margin", 0.0), stop_pcts=stop_pcts)
 
 
 # --- request / result ------------------------------------------------------
@@ -215,7 +215,7 @@ def _candidate_from_params(params: dict, mode: str) -> Candidate:
 @dataclass(frozen=True)
 class OptimizerRequest:
     pair: str
-    mode: str  # "CONSERVATIVE" | "AGGRESSIVE" | "CURRENT"
+    mode: str = "OPTIMIZE"  # "OPTIMIZE" | "CURRENT"
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
@@ -370,7 +370,7 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
         )
 
     def objective(trial: optuna.Trial) -> float:
-        cand = _suggest_candidate(trial, req.mode)
+        cand = _suggest_candidate(trial)
         ev = _evaluate(cand, **eval_kwargs)
         if test_df.empty:
             if ev.train_samples < req.min_ops:
@@ -404,7 +404,7 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
     top = unique_completed[:5]
 
     def _trial_dict(t: optuna.trial.FrozenTrial) -> dict:
-        cand = _candidate_from_params(t.params, req.mode)
+        cand = _candidate_from_params(t.params)
         return {
             **_candidate_to_dict(cand),
             "in_sample_pnl_pct": t.user_attrs.get("in_sample_pnl"),
@@ -413,7 +413,7 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
             "robust_pnl_pct": t.value,
         }
 
-    best_cand = _candidate_from_params(top[0].params, req.mode)
+    best_cand = _candidate_from_params(top[0].params)
 
     return OptimizerResult(
         pair=req.pair,

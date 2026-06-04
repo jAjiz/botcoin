@@ -84,7 +84,7 @@ class BacktestResponse(BaseModel):
 
 class OptimizerRequest(BaseModel):
     pair: str
-    mode: Literal["CONSERVATIVE", "AGGRESSIVE", "CURRENT"]
+    mode: Literal["OPTIMIZE", "CURRENT"] = "OPTIMIZE"
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None

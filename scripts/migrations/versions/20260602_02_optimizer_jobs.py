@@ -46,7 +46,7 @@ def upgrade() -> None:
             "status IN ('running','completed','failed')", name="ck_opt_jobs_status_valid"
         ),
         sa.CheckConstraint(
-            "mode IN ('CONSERVATIVE','AGGRESSIVE','CURRENT')", name="ck_opt_jobs_mode_valid"
+            "mode IN ('OPTIMIZE','CURRENT')", name="ck_opt_jobs_mode_valid"
         ),
     )
     op.create_index(
