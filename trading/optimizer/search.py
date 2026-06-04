@@ -187,14 +187,17 @@ def _build_study(seed: int) -> optuna.Study:
     return optuna.create_study(direction="maximize", sampler=TPESampler(seed=seed))
 
 
-def _suggest_candidate(trial: optuna.Trial) -> Candidate:
+def _suggest_kact(trial: optuna.Trial) -> Candidate:
     stop_pcts = {lvl: trial.suggest_float(f"stop_pct_{lvl}", 0.20, 0.95, step=0.05) for lvl in LEVELS}
-    if trial.suggest_categorical("activation_type", ["k_act", "min_margin"]) == "k_act":
-        return Candidate(
-            k_act=trial.suggest_float("k_act", 0.0, 4.0, step=0.5),
-            min_margin=None,
-            stop_pcts=stop_pcts,
-        )
+    return Candidate(
+        k_act=trial.suggest_float("k_act", 0.0, 4.0, step=0.5),
+        min_margin=None,
+        stop_pcts=stop_pcts,
+    )
+
+
+def _suggest_minmargin(trial: optuna.Trial) -> Candidate:
+    stop_pcts = {lvl: trial.suggest_float(f"stop_pct_{lvl}", 0.20, 0.95, step=0.05) for lvl in LEVELS}
     return Candidate(
         k_act=None,
         min_margin=trial.suggest_float("min_margin", 0.0, 0.01, step=0.001),
@@ -204,7 +207,7 @@ def _suggest_candidate(trial: optuna.Trial) -> Candidate:
 
 def _candidate_from_params(params: dict) -> Candidate:
     stop_pcts = {lvl: params[f"stop_pct_{lvl}"] for lvl in LEVELS}
-    if params.get("activation_type") == "k_act":
+    if "k_act" in params:
         return Candidate(k_act=params["k_act"], min_margin=None, stop_pcts=stop_pcts)
     return Candidate(k_act=None, min_margin=params.get("min_margin", 0.0), stop_pcts=stop_pcts)
 
@@ -369,34 +372,52 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
             n_trials_pruned=0,
         )
 
-    def objective(trial: optuna.Trial) -> float:
-        cand = _suggest_candidate(trial)
-        ev = _evaluate(cand, **eval_kwargs)
-        if test_df.empty:
-            if ev.train_samples < req.min_ops:
+    def _make_objective(suggest_fn):
+        def objective(trial: optuna.Trial) -> float:
+            cand = suggest_fn(trial)
+            ev = _evaluate(cand, **eval_kwargs)
+            if test_df.empty:
+                if ev.train_samples < req.min_ops:
+                    raise optuna.TrialPruned()
+            elif ev.train_samples < req.min_ops or ev.test_samples < req.min_test_ops:
                 raise optuna.TrialPruned()
-        elif ev.train_samples < req.min_ops or ev.test_samples < req.min_test_ops:
-            raise optuna.TrialPruned()
-        trial.set_user_attr("in_sample_pnl", ev.in_sample.total_pnl)
-        trial.set_user_attr("train_pnl", ev.train.total_pnl)
-        trial.set_user_attr("test_pnl", ev.test.total_pnl)
-        return ev.robust_pnl
+            trial.set_user_attr("in_sample_pnl", ev.in_sample.total_pnl)
+            trial.set_user_attr("train_pnl", ev.train.total_pnl)
+            trial.set_user_attr("test_pnl", ev.test.total_pnl)
+            return ev.robust_pnl
+        return objective
 
-    study = _build_study(req.seed)
-    study.optimize(objective, n_trials=req.n_trials)
+    n_kact = req.n_trials // 2
+    n_minmargin = req.n_trials - n_kact
 
-    completed = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-    n_pruned = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.PRUNED)
-    if not completed:
+    study_kact = _build_study(req.seed)
+    study_kact.optimize(_make_objective(_suggest_kact), n_trials=n_kact)
+
+    study_minmargin = _build_study(req.seed + 1)
+    study_minmargin.optimize(_make_objective(_suggest_minmargin), n_trials=n_minmargin)
+
+    all_completed = [
+        t
+        for study in (study_kact, study_minmargin)
+        for t in study.trials
+        if t.state == optuna.trial.TrialState.COMPLETE
+    ]
+    n_pruned = sum(
+        1
+        for study in (study_kact, study_minmargin)
+        for t in study.trials
+        if t.state == optuna.trial.TrialState.PRUNED
+    )
+    if not all_completed:
         raise ValueError("No candidate met the min_ops / min_test_ops constraints")
 
-    completed.sort(key=lambda t: t.value, reverse=True)
+    all_completed.sort(key=lambda t: t.value, reverse=True)
 
-    # Deduplicate: Optuna can revisit the same discrete parameter combination
-    # across trials. Keep only the first (highest-value) occurrence of each.
+    # Deduplicate across both studies. Keys are disjoint (k_act vs min_margin
+    # params) so same stop_pcts with different activation types won't collide.
     seen_params: set[tuple] = set()
     unique_completed = []
-    for t in completed:
+    for t in all_completed:
         key = tuple(sorted(t.params.items()))
         if key not in seen_params:
             seen_params.add(key)
@@ -421,6 +442,6 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
         split_method=req.split_method,
         top_candidates=[_trial_dict(t) for t in top],
         suggested_env_lines=_format_env_lines(req.pair, best_cand),
-        n_trials_run=len(study.trials),
+        n_trials_run=len(study_kact.trials) + len(study_minmargin.trials),
         n_trials_pruned=n_pruned,
     )
