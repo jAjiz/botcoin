@@ -15,9 +15,7 @@ runtime cache is empty. ``None`` means "recompute from the working dataframe".
 """
 
 import math
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from multiprocessing import get_context
 
 import numpy as np
 import optuna
@@ -393,11 +391,8 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
         min_test_ops=req.min_test_ops,
     )
 
-    with ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn")) as pool:
-        fut_kact = pool.submit(_run_study, "kact", req.seed, n_kact, eval_args)
-        fut_minmargin = pool.submit(_run_study, "minmargin", req.seed + 1, n_minmargin, eval_args)
-        kact_completed, kact_pruned, kact_total = fut_kact.result()
-        minmargin_completed, minmargin_pruned, minmargin_total = fut_minmargin.result()
+    kact_completed, kact_pruned, kact_total = _run_study("kact", req.seed, n_kact, eval_args)
+    minmargin_completed, minmargin_pruned, minmargin_total = _run_study("minmargin", req.seed + 1, n_minmargin, eval_args)
 
     all_completed = kact_completed + minmargin_completed
     n_pruned = kact_pruned + minmargin_pruned
