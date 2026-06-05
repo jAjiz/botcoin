@@ -413,7 +413,15 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
     if not all_completed:
         raise ValueError("No candidate met the min_ops / min_test_ops constraints")
 
-    all_completed.sort(key=lambda t: t[1], reverse=True)
+    all_completed.sort(
+        key=lambda t: (
+            t[1],
+            t[2].get("in_sample_pnl", -1e18),
+            t[2].get("test_pnl", -1e18),
+            t[2].get("train_pnl", -1e18),
+        ),
+        reverse=True,
+    )
 
     # Deduplicate across both studies. Keys are disjoint (k_act vs min_margin
     # params) so same stop_pcts with different activation types won't collide.
