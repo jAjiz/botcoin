@@ -208,3 +208,6 @@ __marimo__/
 
 # Claude
 .claude/
+
+# Local REST Client file with a real API token (copy from api/requests.http.example)
+api/requests.http
