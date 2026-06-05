@@ -137,8 +137,17 @@ def _candidate_from_env(pair: str) -> Candidate:
     return Candidate(k_act=k_act, min_margin=min_margin, stop_pcts=stop_pcts)
 
 
+def _round2(v: float | None) -> float | None:
+    """Round an output value to 2 decimals; pass None through unchanged."""
+    return None if v is None else round(float(v), 2)
+
+
 def _candidate_to_dict(cand: Candidate) -> dict:
-    return {"k_act": cand.k_act, "min_margin": cand.min_margin, "stop_pcts": dict(cand.stop_pcts)}
+    return {
+        "k_act": cand.k_act,
+        "min_margin": cand.min_margin,
+        "stop_pcts": {lvl: _round2(p) for lvl, p in cand.stop_pcts.items()},
+    }
 
 
 def _build_engine_config(
@@ -201,11 +210,11 @@ def _candidate_from_params(params: dict) -> Candidate:
 @dataclass(frozen=True)
 class OptimizerRequest:
     pair: str
-    mode: str = "OPTIMIZE"  # "OPTIMIZE" | "CURRENT" | "AUTO"
+    mode: str  # "OPTIMIZE" | "CURRENT" | "AUTO"
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
-    train_split: float = 1.0
+    train_split: float = 0.8
     min_ops: int = 0
     min_test_ops: int = 0
     n_trials: int = 1_000
@@ -271,7 +280,7 @@ def _evaluate(
 
 def _scores_dict(ev: _Eval) -> dict:
     def _clean(v: float) -> float | None:
-        return None if v <= -1e17 else v
+        return None if v <= -1e17 else _round2(v)
 
     return {
         "in_sample_pnl_pct": _clean(ev.in_sample.total_pnl),
@@ -446,10 +455,10 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
         cand = _candidate_from_params(params)
         return {
             **_candidate_to_dict(cand),
-            "in_sample_pnl_pct": user_attrs.get("in_sample_pnl"),
-            "train_pnl_pct": user_attrs.get("train_pnl"),
-            "test_pnl_pct": user_attrs.get("test_pnl"),
-            "robust_pnl_pct": value,
+            "in_sample_pnl_pct": _round2(user_attrs.get("in_sample_pnl")),
+            "train_pnl_pct": _round2(user_attrs.get("train_pnl")),
+            "test_pnl_pct": _round2(user_attrs.get("test_pnl")),
+            "robust_pnl_pct": _round2(value),
         }
 
     best_cand = _candidate_from_params(top[0][0])

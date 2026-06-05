@@ -14,8 +14,7 @@ from trading.optimizer.jobs import JobStore, OptimizerBusyError, _ActiveJob
 @dataclass
 class _FakeReq:
     pair: str = "XBTEUR"
-    mode: str = "AGGRESSIVE"
-    split_method: str = "RESET"
+    mode: str = "OPTIMIZE"
     start: str | None = None
     end: str | None = None
 
@@ -24,7 +23,6 @@ class _FakeReq:
         return {
             "pair": self.pair,
             "mode": self.mode,
-            "split_method": self.split_method,
             "start": self.start,
             "end": self.end,
         }
@@ -62,7 +60,7 @@ def test_try_start_inserts_row_and_returns_id(monkeypatch) -> None:
 
     assert job_id == "test-job-uuid"
     assert created_ids[0]["pair"] == "XBTEUR"
-    assert created_ids[0]["mode"] == "AGGRESSIVE"
+    assert created_ids[0]["mode"] == "OPTIMIZE"
     mock_executor.submit.assert_called_once()
 
 

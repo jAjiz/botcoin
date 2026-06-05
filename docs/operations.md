@@ -205,7 +205,7 @@ a single continuous run (no mid-history reset).
 | Field | Default | Applies to | Meaning |
 |---|---|---|---|
 | `pair` | — | all | Required; must be a configured pair (else `400`) |
-| `mode` | `OPTIMIZE` | all | `OPTIMIZE` \| `CURRENT` \| `AUTO` (else `422`) |
+| `mode` | — | all | Required; `OPTIMIZE` \| `CURRENT` \| `AUTO` (else `422`) |
 | `fee_pct` | `0.0` | all | Per-side fee percentage |
 | `start` / `end` | `null` | all | Optional date slice |
 | `train_split` | `0.8` | all | Train fraction for the train/test split (0.5–1.0) |

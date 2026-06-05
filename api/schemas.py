@@ -84,11 +84,11 @@ class BacktestResponse(BaseModel):
 
 class OptimizerRequest(BaseModel):
     pair: str
-    mode: Literal["OPTIMIZE", "CURRENT", "AUTO"] = "OPTIMIZE"
+    mode: Literal["OPTIMIZE", "CURRENT", "AUTO"]
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
-    train_split: float = Field(default=1.0, ge=0.5, le=1.0)
+    train_split: float = Field(default=0.8, ge=0.5, le=1.0)
     min_ops: int = 0
     min_test_ops: int = 0
     n_trials: int = Field(default=1_000, ge=1, le=10_000)

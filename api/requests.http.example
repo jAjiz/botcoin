@@ -303,7 +303,8 @@ X-Api-Token: {{token}}
 Content-Type: application/json
 
 {
-  "pair": "DOGEEUR"
+  "pair": "DOGEEUR",
+  "mode": "OPTIMIZE"
 }
 
 ###
