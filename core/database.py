@@ -284,7 +284,7 @@ class OptimizerJob(Base):
 
     __table_args__ = (
         CheckConstraint("status IN ('running','completed','failed')", name="ck_opt_jobs_status_valid"),
-        CheckConstraint("mode IN ('CONSERVATIVE','AGGRESSIVE','CURRENT')", name="ck_opt_jobs_mode_valid"),
+        CheckConstraint("mode IN ('OPTIMIZE','CURRENT','AUTO')", name="ck_opt_jobs_mode_valid"),
         Index("ix_opt_jobs_created_at_desc", desc(created_at)),
         Index("ix_opt_jobs_status_running", status, postgresql_where=text("status = 'running'")),
     )

@@ -11,13 +11,13 @@ def _db_enabled() -> bool:
 
 _SKIP = pytest.mark.skipif(not _db_enabled(), reason="Set RUN_DB_INTEGRATION=true to run")
 
-_REQ = {"pair": "XBTEUR", "mode": "AGGRESSIVE", "n_trials": 10}
+_REQ = {"pair": "XBTEUR", "mode": "OPTIMIZE", "n_trials": 10}
 
 
 @pytest.mark.integration
 @_SKIP
 def test_create_then_complete() -> None:
-    job_id = db.create_optimizer_job("XBTEUR", "AGGRESSIVE", "RESET", _REQ)
+    job_id = db.create_optimizer_job("XBTEUR", "OPTIMIZE", "CONTINUE", _REQ)
     assert job_id
 
     row = db.get_optimizer_job(job_id)
@@ -36,7 +36,7 @@ def test_create_then_complete() -> None:
 @pytest.mark.integration
 @_SKIP
 def test_create_then_fail() -> None:
-    job_id = db.create_optimizer_job("XBTEUR", "CURRENT", "RESET", _REQ)
+    job_id = db.create_optimizer_job("XBTEUR", "CURRENT", "CONTINUE", _REQ)
 
     db.fail_optimizer_job(job_id, "something went wrong")
 
@@ -49,8 +49,8 @@ def test_create_then_fail() -> None:
 @pytest.mark.integration
 @_SKIP
 def test_cleanup_orphaned() -> None:
-    id1 = db.create_optimizer_job("XBTEUR", "AGGRESSIVE", "RESET", _REQ)
-    id2 = db.create_optimizer_job("XBTEUR", "CURRENT", "RESET", _REQ)
+    id1 = db.create_optimizer_job("XBTEUR", "OPTIMIZE", "CONTINUE", _REQ)
+    id2 = db.create_optimizer_job("XBTEUR", "CURRENT", "CONTINUE", _REQ)
 
     cleaned = db.cleanup_orphaned_optimizer_jobs()
     assert cleaned >= 2
