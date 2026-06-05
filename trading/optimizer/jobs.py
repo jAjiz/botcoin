@@ -76,14 +76,17 @@ class JobStore:
         try:
             if kind == "ok":
                 db.complete_optimizer_job(active.job_id, payload)
-                best = (payload.get("top_candidates") or [{}])[0]
-                robust = best.get("robust_pnl_pct")
-                pnl_str = f"{robust:.2f}%" if robust is not None else "n/a"
-                logging.info(
-                    f"✅ [Optimizer] Completed for {active.pair} (job={active.job_id}). "
-                    f"Best: pnl={pnl_str}",
-                    to_telegram=True,
-                )
+                if payload.get("mode") == "AUTO":
+                    self._notify_auto(active, payload)
+                else:
+                    best = (payload.get("top_candidates") or [{}])[0]
+                    robust = best.get("robust_pnl_pct")
+                    pnl_str = f"{robust:.2f}%" if robust is not None else "n/a"
+                    logging.info(
+                        f"✅ [Optimizer] Completed for {active.pair} (job={active.job_id}). "
+                        f"Best: pnl={pnl_str}",
+                        to_telegram=True,
+                    )
             else:
                 db.fail_optimizer_job(active.job_id, str(payload))
                 logging.error(
@@ -93,6 +96,38 @@ class JobStore:
         finally:
             with self._lock:
                 self._active = None
+
+    def _notify_auto(self, active: _ActiveJob, payload: dict) -> None:
+        best = (payload.get("top_candidates") or [{}])[0]
+        robust = best.get("robust_pnl_pct")
+        robust_str = f"{robust:.2f}%" if robust is not None else "n/a"
+        n_conv = payload.get("n_trials_at_convergence")
+        n_agreed = payload.get("n_seeds_agreed", 0)
+        n_seeds = len(payload.get("seeds_used") or [])
+        env_lines = "\n".join(payload.get("suggested_env_lines") or [])
+
+        if payload.get("converged"):
+            current_robust = payload.get("current_robust_pnl")
+            current_str = f"{current_robust:.2f}%" if current_robust is not None else "n/a"
+            if payload.get("is_improvement"):
+                msg = (
+                    f"🚀 [AutoOptimize] {active.pair} converged "
+                    f"({n_agreed}/{n_seeds} seeds, {n_conv} trials) — improvement found\n"
+                    f"Current robust: {current_str} → New: {robust_str}\n"
+                    f"{env_lines}"
+                )
+            else:
+                msg = (
+                    f"ℹ️ [AutoOptimize] {active.pair} converged "
+                    f"({n_agreed}/{n_seeds} seeds, {n_conv} trials) — current is better\n"
+                    f"{current_str} (current) vs {robust_str} (found) — no change needed"
+                )
+        else:
+            msg = (
+                f"⚠️ [AutoOptimize] {active.pair} — no convergence reached\n"
+                f"Best found: {robust_str}"
+            )
+        logging.info(msg, to_telegram=True)
 
     def shutdown(self) -> None:
         """Called from FastAPI lifespan finally block. Cancel pending work and

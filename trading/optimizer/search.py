@@ -15,7 +15,8 @@ runtime cache is empty. ``None`` means "recompute from the working dataframe".
 """
 
 import math
-from dataclasses import dataclass
+import random
+from dataclasses import dataclass, field
 
 import numpy as np
 import optuna
@@ -29,7 +30,7 @@ from trading.market_analyzer import analyze_structural_noise
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-MODES = ("OPTIMIZE", "CURRENT")
+MODES = ("OPTIMIZE", "CURRENT", "AUTO")
 
 
 # --- pure helpers ----------------------------------------------------------
@@ -199,15 +200,20 @@ def _candidate_from_params(params: dict) -> Candidate:
 @dataclass(frozen=True)
 class OptimizerRequest:
     pair: str
-    mode: str = "OPTIMIZE"  # "OPTIMIZE" | "CURRENT"
+    mode: str = "OPTIMIZE"  # "OPTIMIZE" | "CURRENT" | "AUTO"
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
     train_split: float = 1.0
     min_ops: int = 0
     min_test_ops: int = 0
-    n_trials: int = 300
+    n_trials: int = 1_000
     seed: int = 42
+    # AUTO mode params
+    n_seeds: int = 4
+    min_agree: int = 3
+    trial_step: int = 500
+    max_trials: int = 9_000
 
 
 @dataclass(frozen=True)
@@ -218,6 +224,13 @@ class OptimizerResult:
     suggested_env_lines: list[str]  # formatted .env lines for top_candidates[0]
     n_trials_run: int
     n_trials_pruned: int
+    # AUTO mode extra fields (None/False/[] for OPTIMIZE and CURRENT results)
+    converged: bool = False
+    is_improvement: bool | None = None
+    current_robust_pnl: float | None = None
+    seeds_used: list = field(default_factory=list)
+    n_trials_at_convergence: int | None = None
+    n_seeds_agreed: int = 0
 
 
 @dataclass(frozen=True)
@@ -432,4 +445,104 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
         suggested_env_lines=_format_env_lines(req.pair, best_cand),
         n_trials_run=kact_total + minmargin_total,
         n_trials_pruned=n_pruned,
+    )
+
+
+# --- AUTO mode convergence loop --------------------------------------------
+
+
+def _check_convergence(
+    results: list[OptimizerResult], min_agree: int
+) -> tuple[OptimizerResult, int] | None:
+    """Group results by rounded top robust_pnl_pct. Return (best, n_agreed) if
+    any group reaches min_agree members, otherwise None."""
+    groups: dict[float, list[OptimizerResult]] = {}
+    for r in results:
+        if not r.top_candidates:
+            continue
+        key = round(r.top_candidates[0].get("robust_pnl_pct") or -1e18, 2)
+        groups.setdefault(key, []).append(r)
+
+    # pick the group with the highest key that meets the threshold
+    qualifying = [(k, g) for k, g in groups.items() if len(g) >= min_agree]
+    if not qualifying:
+        return None
+    best_key, best_group = max(qualifying, key=lambda kg: kg[0])
+    return best_group[0], len(best_group)
+
+
+def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerResult:
+    seeds = random.sample(range(1, 9999), req.n_seeds)
+    n_trials = req.n_trials
+    last_results: list[OptimizerResult] = []
+
+    while n_trials <= req.max_trials:
+        last_results = []
+        for seed in seeds:
+            sub_req = OptimizerRequest(
+                pair=req.pair,
+                mode="OPTIMIZE",
+                fee_pct=req.fee_pct,
+                start=req.start,
+                end=req.end,
+                train_split=req.train_split,
+                min_ops=req.min_ops,
+                min_test_ops=req.min_test_ops,
+                n_trials=n_trials,
+                seed=seed,
+            )
+            try:
+                last_results.append(run_optimize(sub_req, calibration))
+            except ValueError:
+                pass  # min_ops constraints not met; treat as non-converging
+
+        converged = _check_convergence(last_results, req.min_agree)
+        if converged is not None:
+            best, n_agreed = converged
+            current_req = OptimizerRequest(
+                pair=req.pair,
+                mode="CURRENT",
+                fee_pct=req.fee_pct,
+                start=req.start,
+                end=req.end,
+                train_split=req.train_split,
+            )
+            current = run_optimize(current_req, calibration)
+            current_robust = (
+                current.top_candidates[0].get("robust_pnl_pct") or -1e18
+            ) if current.top_candidates else -1e18
+            best_robust = (
+                best.top_candidates[0].get("robust_pnl_pct") or -1e18
+            ) if best.top_candidates else -1e18
+            return OptimizerResult(
+                pair=req.pair,
+                mode="AUTO",
+                top_candidates=best.top_candidates,
+                suggested_env_lines=best.suggested_env_lines,
+                n_trials_run=best.n_trials_run,
+                n_trials_pruned=best.n_trials_pruned,
+                converged=True,
+                is_improvement=best_robust > current_robust,
+                current_robust_pnl=current_robust if current_robust > -1e17 else None,
+                seeds_used=seeds,
+                n_trials_at_convergence=n_trials,
+                n_seeds_agreed=n_agreed,
+            )
+
+        n_trials += req.trial_step
+
+    # No convergence — return the best candidate from the last batch
+    valid = [r for r in last_results if r.top_candidates]
+    if not valid:
+        raise ValueError("AUTO mode: no valid candidates found within the trial budget")
+    best_fallback = max(valid, key=lambda r: r.top_candidates[0].get("robust_pnl_pct") or -1e18)
+    return OptimizerResult(
+        pair=req.pair,
+        mode="AUTO",
+        top_candidates=best_fallback.top_candidates,
+        suggested_env_lines=best_fallback.suggested_env_lines,
+        n_trials_run=best_fallback.n_trials_run,
+        n_trials_pruned=best_fallback.n_trials_pruned,
+        converged=False,
+        seeds_used=seeds,
     )

@@ -123,8 +123,8 @@ Content-Type: application/json
   "mode": "OPTIMIZE",
   "fee_pct": 0.4,
   "train_split": 0.8,
-  "n_trials": 3000,
-  "seed": 7
+  "n_trials": 9000,
+  "seed": 42
 }
 
 ###
@@ -157,7 +157,7 @@ X-Api-Token: {{token}}
 ###
 
 ### [OPT-5] List with explicit limit
-GET {{host}}/optimizer/jobs?limit=5
+GET {{host}}/optimizer/jobs?limit=2
 X-Api-Token: {{token}}
 
 ###
@@ -207,6 +207,34 @@ Content-Type: application/json
   "mode": "OPTIMIZE",
   "n_trials": 10
 }
+
+###
+
+### [OPT-10-AUTO] AUTO mode — 4 seeds, convergence at 500 trials (quick smoke)
+# @name submitAutoJob
+POST {{host}}/optimizer/jobs
+X-Api-Token: {{token}}
+Content-Type: application/json
+
+{
+  "pair": "XBTEUR",
+  "mode": "AUTO",
+  "fee_pct": 0.4,
+  "train_split": 0.8,
+  "n_trials": 500,
+  "trial_step": 500,
+  "max_trials": 1000,
+  "n_seeds": 4,
+  "min_agree": 3
+}
+
+###
+
+@auto_job_id = {{submitAutoJob.response.body.job_id}}
+
+### [OPT-10-AUTO-POLL] Poll AUTO job status
+GET {{host}}/optimizer/jobs/{{auto_job_id}}
+X-Api-Token: {{token}}
 
 ###
 

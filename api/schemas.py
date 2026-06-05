@@ -84,15 +84,20 @@ class BacktestResponse(BaseModel):
 
 class OptimizerRequest(BaseModel):
     pair: str
-    mode: Literal["OPTIMIZE", "CURRENT"] = "OPTIMIZE"
+    mode: Literal["OPTIMIZE", "CURRENT", "AUTO"] = "OPTIMIZE"
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
     train_split: float = Field(default=1.0, ge=0.5, le=1.0)
     min_ops: int = 0
     min_test_ops: int = 0
-    n_trials: int = Field(default=300, ge=1, le=10_000)
+    n_trials: int = Field(default=1_000, ge=1, le=10_000)
     seed: int = 42
+    # AUTO mode params (ignored for OPTIMIZE/CURRENT)
+    n_seeds: int = Field(default=4, ge=2, le=8)
+    min_agree: int = Field(default=3, ge=2, le=8)
+    trial_step: int = Field(default=500, ge=100, le=2_000)
+    max_trials: int = Field(default=9_000, ge=500, le=20_000)
 
 
 class OptimizerJobAcceptedResponse(BaseModel):
