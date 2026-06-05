@@ -18,11 +18,15 @@ _TS = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 _JOB_ROW = {
     "id": _JOB_ID,
     "pair": _PAIR,
-    "mode": "AGGRESSIVE",
-    "split_method": "RESET",
+    "mode": "OPTIMIZE",
+    "split_method": "CONTINUE",
     "status": "completed",
-    "request": {"pair": _PAIR, "mode": "AGGRESSIVE"},
-    "result": {"scores": {"robust_pnl_pct": 1.5}},
+    "request": {"pair": _PAIR, "mode": "OPTIMIZE"},
+    "result": {
+        "top_candidates": [
+            {"k_act": 0.0, "min_margin": None, "stop_pcts": {}, "robust_pnl_pct": 1.5},
+        ]
+    },
     "error": None,
     "created_at": _TS,
     "started_at": _TS,
@@ -39,15 +43,21 @@ def _make_client(monkeypatch) -> TestClient:
 
 def test_submit_unknown_pair_returns_400(monkeypatch) -> None:
     client = _make_client(monkeypatch)
-    resp = client.post("/optimizer/jobs", json={"pair": "UNKNOWN", "mode": "AGGRESSIVE"})
+    resp = client.post("/optimizer/jobs", json={"pair": "UNKNOWN", "mode": "OPTIMIZE"})
     assert resp.status_code == 400
     assert "Unknown pair" in resp.json()["detail"]
+
+
+def test_submit_invalid_mode_returns_422(monkeypatch) -> None:
+    client = _make_client(monkeypatch)
+    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "AGGRESSIVE"})
+    assert resp.status_code == 422
 
 
 def test_submit_returns_202_with_job_id(monkeypatch) -> None:
     monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
     client = _make_client(monkeypatch)
-    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "AGGRESSIVE"})
+    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "OPTIMIZE"})
     assert resp.status_code == 202
     body = resp.json()
     assert body["job_id"] == _JOB_ID
@@ -60,7 +70,7 @@ def test_submit_busy_returns_409(monkeypatch) -> None:
 
     monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", _busy)
     client = _make_client(monkeypatch)
-    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "AGGRESSIVE"})
+    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "OPTIMIZE"})
     assert resp.status_code == 409
 
 

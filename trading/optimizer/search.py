@@ -14,6 +14,7 @@ not read from ``core.runtime`` — the worker runs in a spawned child process wh
 runtime cache is empty. ``None`` means "recompute from the working dataframe".
 """
 
+import contextlib
 import math
 import random
 from dataclasses import dataclass, field
@@ -298,10 +299,20 @@ def _run_study(
     min_ops: int = eval_args["min_ops"]
     min_test_ops: int = eval_args["min_test_ops"]
     test_df = eval_args["test_df"]
-    eval_kwargs = {k: eval_args[k] for k in (
-        "pair", "df", "train_df", "test_df",
-        "split_boundary_time", "fee_rate", "atr_thresholds", "up_k", "down_k",
-    )}
+    eval_kwargs = {
+        k: eval_args[k]
+        for k in (
+            "pair",
+            "df",
+            "train_df",
+            "test_df",
+            "split_boundary_time",
+            "fee_rate",
+            "atr_thresholds",
+            "up_k",
+            "down_k",
+        )
+    }
 
     study = _build_study(seed)
 
@@ -320,11 +331,7 @@ def _run_study(
 
     study.optimize(objective, n_trials=n_trials)
 
-    completed = [
-        (t.params, t.value, t.user_attrs)
-        for t in study.trials
-        if t.state == optuna.trial.TrialState.COMPLETE
-    ]
+    completed = [(t.params, t.value, t.user_attrs) for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
     n_pruned = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.PRUNED)
     return completed, n_pruned, len(study.trials)
 
@@ -336,10 +343,7 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
     fee_rate = float(req.fee_pct) / 100.0
 
     df_full = (
-        db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME)
-        .dropna(subset=["atr"])
-        .sort_values("time")
-        .reset_index(drop=True)
+        db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME).dropna(subset=["atr"]).sort_values("time").reset_index(drop=True)
     )
     df = df_full
     if req.start:
@@ -405,7 +409,9 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
     )
 
     kact_completed, kact_pruned, kact_total = _run_study("kact", req.seed, n_kact, eval_args)
-    minmargin_completed, minmargin_pruned, minmargin_total = _run_study("minmargin", req.seed + 1, n_minmargin, eval_args)
+    minmargin_completed, minmargin_pruned, minmargin_total = _run_study(
+        "minmargin", req.seed + 1, n_minmargin, eval_args
+    )
 
     all_completed = kact_completed + minmargin_completed
     n_pruned = kact_pruned + minmargin_pruned
@@ -413,6 +419,8 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
     if not all_completed:
         raise ValueError("No candidate met the min_ops / min_test_ops constraints")
 
+    # Rank by robust_pnl (the objective value); break ties by in-sample, then
+    # test, then train PnL so the ordering is deterministic, not insertion-order.
     all_completed.sort(
         key=lambda t: (
             t[1],
@@ -459,9 +467,7 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
 # --- AUTO mode convergence loop --------------------------------------------
 
 
-def _check_convergence(
-    results: list[OptimizerResult], min_agree: int
-) -> tuple[OptimizerResult, int] | None:
+def _check_convergence(results: list[OptimizerResult], min_agree: int) -> tuple[OptimizerResult, int] | None:
     """Group results by rounded top robust_pnl_pct. Return (best, n_agreed) if
     any group reaches min_agree members, otherwise None."""
     groups: dict[float, list[OptimizerResult]] = {}
@@ -475,7 +481,7 @@ def _check_convergence(
     qualifying = [(k, g) for k, g in groups.items() if len(g) >= min_agree]
     if not qualifying:
         return None
-    best_key, best_group = max(qualifying, key=lambda kg: kg[0])
+    _best_key, best_group = max(qualifying, key=lambda kg: kg[0])
     return best_group[0], len(best_group)
 
 
@@ -499,10 +505,9 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
                 n_trials=n_trials,
                 seed=seed,
             )
-            try:
+            # min_ops constraints not met → treat that seed as non-converging.
+            with contextlib.suppress(ValueError):
                 last_results.append(run_optimize(sub_req, calibration))
-            except ValueError:
-                pass  # min_ops constraints not met; treat as non-converging
 
         converged = _check_convergence(last_results, req.min_agree)
         if converged is not None:
@@ -517,11 +522,9 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
             )
             current = run_optimize(current_req, calibration)
             current_robust = (
-                current.top_candidates[0].get("robust_pnl_pct") or -1e18
-            ) if current.top_candidates else -1e18
-            best_robust = (
-                best.top_candidates[0].get("robust_pnl_pct") or -1e18
-            ) if best.top_candidates else -1e18
+                (current.top_candidates[0].get("robust_pnl_pct") or -1e18) if current.top_candidates else -1e18
+            )
+            best_robust = (best.top_candidates[0].get("robust_pnl_pct") or -1e18) if best.top_candidates else -1e18
             return OptimizerResult(
                 pair=req.pair,
                 mode="AUTO",

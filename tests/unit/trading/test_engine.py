@@ -64,7 +64,9 @@ def test_first_operation_is_buy_at_first_valid_row() -> None:
     assert ops[0].price == 100.0
     assert ops[0].vol == "LV"
     assert ops[0].k_stop == 1.0
-    assert ops[0].pnl_abs is None
+    # The entry leg records its own fee as a negative PnL; with no fee it is zero.
+    assert ops[0].pnl_abs == pytest.approx(0.0)
+    assert ops[0].pnl_pct == pytest.approx(0.0)
     assert ops[0].cum_pnl == 0.0  # no fee
 
 
@@ -87,6 +89,7 @@ def test_fee_reduces_pnl_and_is_recorded() -> None:
     ops = engine.simulate_operations(df, _cfg(), fee_rate=0.01)
 
     assert ops[0].fee_abs == pytest.approx(1.0)  # 100 * 0.01
+    assert ops[0].pnl_abs == pytest.approx(-1.0)  # entry leg records its fee as negative PnL
     sell = ops[1]
     assert sell.fee_abs == pytest.approx(1.08)  # 108 * 0.01
     assert sell.pnl_abs == pytest.approx(8.0 - 1.08)  # gross 8 minus fee

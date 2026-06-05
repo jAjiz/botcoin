@@ -83,8 +83,7 @@ class JobStore:
                     robust = best.get("robust_pnl_pct")
                     pnl_str = f"{robust:.2f}%" if robust is not None else "n/a"
                     logging.info(
-                        f"✅ [Optimizer] Completed for {active.pair} (job={active.job_id}). "
-                        f"Best: pnl={pnl_str}",
+                        f"✅ [Optimizer] Completed for {active.pair} (job={active.job_id}). Best: pnl={pnl_str}",
                         to_telegram=True,
                     )
             else:
@@ -118,15 +117,12 @@ class JobStore:
                 )
             else:
                 msg = (
-                    f"ℹ️ [AutoOptimize] {active.pair} converged "
+                    f"ℹ️ [AutoOptimize] {active.pair} converged "  # noqa: RUF001 (intentional info emoji)
                     f"({n_agreed}/{n_seeds} seeds, {n_conv} trials) — current is better\n"
                     f"{current_str} (current) vs {robust_str} (found) — no change needed"
                 )
         else:
-            msg = (
-                f"⚠️ [AutoOptimize] {active.pair} — no convergence reached\n"
-                f"Best found: {robust_str}"
-            )
+            msg = f"⚠️ [AutoOptimize] {active.pair} — no convergence reached\nBest found: {robust_str}"
         logging.info(msg, to_telegram=True)
 
     def shutdown(self) -> None:

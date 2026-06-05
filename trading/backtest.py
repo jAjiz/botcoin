@@ -86,10 +86,7 @@ def _build_summary(ops: list[Operation], row_count: int, source: str) -> dict:
 
 def run_backtest(req: BacktestRequest) -> BacktestResult:
     df_full = (
-        db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME)
-        .dropna(subset=["atr"])
-        .sort_values("time")
-        .reset_index(drop=True)
+        db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME).dropna(subset=["atr"]).sort_values("time").reset_index(drop=True)
     )
 
     if req.start or req.end:

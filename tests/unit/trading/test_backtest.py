@@ -10,6 +10,7 @@ _SUMMARY_KEYS = {
     "pnl_samples",
     "win_rate_pct",
     "total_pnl_eur",
+    "total_pnl_pct",
     "total_fees_eur",
     "best_op_pnl_eur",
     "worst_op_pnl_eur",
