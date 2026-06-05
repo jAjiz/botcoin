@@ -4,6 +4,22 @@ import core.database as db
 import core.runtime as runtime
 import core.scheduler as scheduler
 
+# TODO: the per-pair processing loop (scheduler.py lines ~83-126) is still
+# uncovered — these tests only exercise the paused / early-return guards with an
+# empty PAIRS list. Add tests that run the loop with one pair and a stubbed
+# get_last_prices / get_current_atr, covering:
+#   - price or ATR is None -> pair is skipped, no state change
+#   - calculate_trading_parameters fires only when _session_count % PARAM_SESSIONS == 0
+#   - is_closing_complete True -> save_closed_position + delete_trailing_state, pair dropped
+#   - no trailing state -> create_position is called
+#   - is_open True -> tick_position is called
+#   - state changed vs previous -> save_trailing_state; state became None -> delete_trailing_state
+#   - per-pair pair_data is recorded into the finalized session
+#   - get_last_prices returning None -> session aborts with "Could not fetch prices"
+# All collaborators (db, get_balance, get_last_prices, get_current_atr,
+# create_position, tick_position, is_open, is_closing_complete) are monkeypatchable
+# at the scheduler module level, as the existing tests already do.
+
 
 def _patch_finalize(monkeypatch) -> list[dict]:
     calls: list[dict] = []
