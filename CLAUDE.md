@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 BoTCoin is an autonomous EUR-based crypto trading bot for Kraken. It runs a trailing-stop strategy driven by ATR volatility classification and persists all state in PostgreSQL. Four Docker services: `botc` (trading engine + FastAPI on :8000), `telegram` (Telegram bot + notify webhook on :8001), `postgres` (PostgreSQL, all state), and `grafana` (observability dashboard on :3000).
 
-This project has three concurrent goals: (1) run as a profitable bot, (2) serve as a portfolio piece reviewed by other engineers, (3) be a vehicle for the author to learn production-grade Python. That changes how to collaborate here: prefer clarity over cleverness, surface non-obvious "why" in PR descriptions, and treat code under `trading/` and `core/` as load-bearing — held to the testing/coverage bar — while `trading/backtest.py` and `trading/optimize_params.py` are research scripts (run manually, excluded from coverage, lower bar). When introducing a non-obvious design choice, add it to the **Design choices** section below.
+This project has three concurrent goals: (1) run as a profitable bot, (2) serve as a portfolio piece reviewed by other engineers, (3) be a vehicle for the author to learn production-grade Python. That changes how to collaborate here: prefer clarity over cleverness, surface non-obvious "why" in PR descriptions, and treat all code under `trading/`, `core/`, and `api/` as load-bearing — held to the testing/coverage bar. (`trading/backtest.py` and the optimizer were once manually-run research scripts; they are now tested library code behind the `/backtest` and `/optimizer/jobs` endpoints.) When introducing a non-obvious design choice, add it to the **Design choices** section below.
 
 Service entry points: `api/app.py` (botc — also starts the APScheduler via FastAPI `lifespan`) and `services/telegram/app.py` (telegram). Both started via `uvicorn` in `docker-compose.yml`.
 
@@ -48,7 +48,7 @@ alembic upgrade head
 alembic revision -m "describe change"
 ```
 
-The coverage gate is **80%**. `core/scheduler.py`, `trading/backtest.py`, and `trading/optimize_params.py` are excluded from coverage measurement.
+The coverage gate is **80%**. Only `scripts/migrations/versions/` is excluded from coverage measurement; all application code under `api/`, `core/`, `exchange/`, `services/`, and `trading/` is measured. (`core/scheduler.py` is measured but its per-pair loop is still under-tested — see the TODO in `tests/unit/core/test_scheduler.py`.)
 
 Pin all dependencies with `==` in `requirements.txt`. Resolve the exact version with `pip show <package>` before adding.
 
@@ -85,15 +85,30 @@ Pin all dependencies with `==` in `requirements.txt`. Resolve the exact version 
 
 ATR is computed from OHLC stored in `ohlc_data`. `get_volatility_level` classifies the current ATR into five levels (LL/LV/MV/HV/HH) using precomputed percentile boundaries. `K_STOP` for each level comes from `PAIR_STOP_PCT_<LEVEL>` — the percentile of historically observed K-values (structural noise analysis via pivot detection).
 
+### Trading tools — backtest & optimizer (`trading/engine.py`, `trading/backtest.py`, `trading/optimizer/`)
+
+Offline analysis tools exposed as authenticated HTTP endpoints on the `botc` service. They read stored OHLC and the live calibration cache but **never mutate trading state**.
+
+- **`trading/engine.py`** — the pure simulation engine (`simulate_operations`). A leaf module: it imports nothing from `core.config` or `parameters_manager`; all configuration is passed in via `EngineConfig`, so the same simulator runs against live state, a backtest request, or an optimizer candidate. It mirrors the live `positions_manager` logic (activation, trailing stop, ATR re-anchoring) so simulations behave like production.
+- **`trading/backtest.py`** — `run_backtest(req) -> BacktestResult`. Pure library (no CLI, no prints). Builds an `EngineConfig` from cached or recomputed calibration and runs the engine. Behind synchronous `POST /backtest`.
+- **`trading/optimizer/search.py`** — `run_optimize` runs two **independent** Optuna TPE studies per search (a `K_ACT` activation branch and a `MIN_MARGIN` branch), each over per-level stop percentiles, then merges and ranks candidates by `robust_pnl = min(train_pnl, test_pnl)`. The train/test split is evaluated in a single continuous run over the full dataset (CONTINUE-only). Modes: `OPTIMIZE` (TPE search), `CURRENT` (evaluate the live `.env` config, 1 trial), `AUTO` (`run_auto_optimize`: multi-seed convergence loop that escalates `n_trials` until `min_agree` of `n_seeds` agree, then compares against `CURRENT`). `mode` is required.
+- **`trading/optimizer/jobs.py`** — `JobStore`, a single-slot async job manager. `try_start` inserts an `optimizer_jobs` row and submits the work to a `ProcessPoolExecutor(max_workers=1, spawn)`; `supervise` awaits the future and persists the result; a second submission while one is running raises `OptimizerBusyError` (→ `409`). Telegram is notified on start, completion, and failure. `worker.py` is the picklable child entry point.
+- **Calibration cache**: the live `core/runtime.py` holds the snapshot of structural events + ATR percentiles. The spawned worker starts with an empty runtime, so `try_start` snapshots the calibration in the parent and passes it explicitly; a sliced request passes `None` and the worker recomputes from the slice.
+- **API**: `api/routes/backtest.py` and `api/routes/optimizer.py`; request/response models in `api/schemas.py`. All endpoints require the `X-Api-Token` header.
+
 ### Database (`core/database.py`)
 
-Five ORM models: `OHLCData`, `TrailingState`, `ClosedPosition`, `BotControl`, `SessionRecord`. Direct SQLAlchemy (no async). All DAL functions are at module level (not a class). Migrations live in `scripts/migrations/versions/` managed by Alembic (`alembic.ini` points there).
+Six ORM models: `OHLCData`, `TrailingState`, `ClosedPosition`, `BotControl`, `OptimizerJob`, `SessionRecord`. Direct SQLAlchemy (no async). All DAL functions are at module level (not a class). Migrations live in `scripts/migrations/versions/` managed by Alembic (`alembic.ini` points there).
+
+When changing an ORM model's table constraints, update **both** the model in `core/database.py` and the corresponding Alembic migration — they are not auto-synced, and CI builds the schema from migrations (a drift between the two recently allowed an invalid `mode` to pass the model but fail the migration's check constraint).
 
 `TrailingState` captures the full active position dict. Fields are optional during the open phase (`trailing_price`, `stop_price`, `closing_order_id`, etc.) and populated progressively as the position advances.
 
 `BotControl` is a generic key/value table (`control_key` → `control_value`) accessed via `get_control_value` / `set_control_value`. Intended for runtime flags that should survive restarts and be toggled without redeploy; **currently has no production callers** — the table and DAL exist but no feature uses it yet.
 
 `SessionRecord` is written once at the start of every `trading_session()` call (status `running`) and updated in the `finally` block with the final status, balance snapshot, per-pair market data, and captured log lines. It is the primary data source for the Grafana Sessions row.
+
+`OptimizerJob` backs the async optimizer (`optimizer_jobs` table). A row is inserted `running` by `JobStore.try_start` and updated to `completed` (with the JSONB result) or `failed`. A `ck_opt_jobs_mode_valid` check constraint restricts `mode` to `OPTIMIZE`/`CURRENT`/`AUTO`; `ck_opt_jobs_status_valid` restricts `status` to `running`/`completed`/`failed`.
 
 ### Exchange wrapper (`exchange/kraken.py`)
 
@@ -121,7 +136,10 @@ Non-obvious decisions a reviewer would otherwise question. Update this list when
 - **Module-level lock + 1 call/sec in `exchange/kraken.py`.** Kraken's tier-0 limit allows more, but the bot has no latency budget that would benefit from optimizing it. A simple lock is correct, obvious, and cheap; a token bucket would add code without solving a real problem.
 - **APScheduler started from the FastAPI `lifespan`.** Co-locating the scheduler with the API means one process, one health endpoint, one set of logs. The alternative — a separate worker container — would double the deployment surface for no operational gain at this scale.
 - **`_safe_call` returns `None` on every error instead of raising.** Kraken outages, rate-limit hits, and transient network errors are *expected* during a long-running session; a missed tick is recoverable, a crashed bot is not. Callers must handle `None`; the trade-off is verbosity in callers vs. resilience overall.
-- **`backtest.py` and `optimize_params.py` excluded from coverage.** Research code — run manually, iterated on freely, not part of the production path. Holding them to the same testing bar would slow exploration without protecting anything that ships.
+- **Backtest and optimizer share one pure engine (`trading/engine.py`).** Configuration is passed in via `EngineConfig`, never read from module globals, so the same simulator runs against live state, a backtest request, and an optimizer candidate. This keeps both tools faithful to production behavior without duplicating the trailing-stop logic — at the cost of threading config through every call instead of reaching for globals.
+- **The optimizer runs as a single-slot spawned process.** The Optuna search is CPU-bound and would block the event loop and starve the scheduler if run inline. `ProcessPoolExecutor(max_workers=1, spawn)` isolates it, one job at a time (a second submission returns `409`), with job state persisted in `optimizer_jobs` so a restart marks an interrupted job `failed` rather than leaving it `running`.
+- **Two independent Optuna studies per search (`K_ACT` vs `MIN_MARGIN`), merged and ranked.** A single mixed study was highly seed-sensitive — different seeds found radically different optima. Splitting by activation type and merging globally is far more stable. Candidates rank by `robust_pnl = min(train_pnl, test_pnl)` so configs that overfit one half don't win.
+- **Optimizer split is CONTINUE-only.** The simulation runs once over the full dataset and is partitioned at the train/test boundary, matching production where the bot never resets mid-history. (Earlier `RESET`/`BOTH` split methods were removed because they penalized the realistic continuous path.)
 - **No global stop-loss.** Risk is bounded by the trailing-stop distance only. This is a deliberate strategy choice (early exits during normal volatility hurt expected value more than tail losses cost). Adding a hard floor is a strategy decision and must be discussed, not introduced as a "safety improvement."
 - **`telegram` runs as a separate service, not inside `botc`.** PTB's `Application.run_polling()` blocks its thread indefinitely. Co-locating it with the scheduler would risk a dropped Telegram connection stalling the trading loop. A separate service means the trading engine is entirely unaffected by Telegram's availability.
 - **`_SessionLogCollector` attaches to the root logger rather than threading a context object.** The alternative — passing a log buffer through the call graph (`trading_session` → `positions_manager` → `market_analyzer` → …) — would require modifying every function signature. The root-logger approach captures records from every module called during the session with zero changes to any call site.
