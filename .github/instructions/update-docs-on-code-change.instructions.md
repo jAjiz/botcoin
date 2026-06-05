@@ -219,7 +219,7 @@ If `apply-doc-file-structure == true`, then apply the following configurable ins
 Maintain these documentation files and update as needed:
 
 - **README.md**: Project overview, quick start, basic usage
-- **CHANGELOG.md**: Version history and user-facing changes
+- **docs/CHANGELOG.md**: Version history and user-facing changes
 - **docs/**: Detailed documentation
   - `installation.md`: Setup and installation guide
   - `configuration.md`: Configuration options and examples
@@ -534,7 +534,7 @@ Before considering documentation complete, and concluding on the **final procedu
 - [ ] API documentation is complete and accurate
 - [ ] Configuration examples are up to date
 - [ ] Breaking changes are documented with migration guide
-- [ ] CHANGELOG.md is updated
+- [ ] docs/CHANGELOG.md is updated
 - [ ] Links are valid and not broken
 - [ ] Installation instructions are current
 - [ ] Environment variables are documented

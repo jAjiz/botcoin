@@ -8,8 +8,8 @@ BoTCoin is a production-grade backend service built using modern Python engineer
 
 <table>
   <tr>
-    <td><img src="docs/grafana.png" alt="Grafana dashboard — market, ATR, position, and performance panels"></td>
-    <td><img src="docs/telegram.png" alt="Telegram bot — market and position commands"></td>
+    <td><img src="docs/images/grafana.png" alt="Grafana dashboard — market, ATR, position, and performance panels"></td>
+    <td><img src="docs/images/telegram.png" alt="Telegram bot — market and position commands"></td>
   </tr>
 </table>
 
@@ -67,15 +67,15 @@ Each decision links to its phase in the roadmap — execution plans and design r
 
 | Technology | Decision | Reference |
 |---|---|---|
-| Docker | Single image, multi-service Compose; no host Python required | [Roadmap](ROADMAP.md#phase-1--infrastructure-first-docker-completed) |
-| APScheduler | `AsyncIOScheduler` in the FastAPI `lifespan`; `max_instances=1` prevents overlapping ticks | [Roadmap](ROADMAP.md#phase-2--managed-execution-apscheduler-completed) |
-| Testing | Two-tier pytest (unit + integration) runs entirely inside Docker for production parity | [Roadmap](ROADMAP.md#phase-3--testing-strategy-completed) |
-| PostgreSQL | Synchronous SQLAlchemy under async FastAPI; module-level DAL instead of a repository class | [Roadmap](ROADMAP.md#phase-4--professional-persistence-postgresql-completed) |
-| FastAPI | `botc` and `telegram` split into two services so Telegram's long-poll lifecycle cannot stall the trading loop | [Roadmap](ROADMAP.md#phase-5--rest-api-layer-fastapi-completed) |
-| ruff | Single tool for lint + format + import sorting; `pyproject.toml` as the single config source | [Roadmap](ROADMAP.md#phase-6--code-quality-linting--type-safety-completed) |
-| CI/CD | GHCR image-based deploy; VPS holds only `.env` + two compose files, no source clone | [Roadmap](ROADMAP.md#phase-7--cicd-pipeline) |
-| Grafana | Per-session `sessions` table + filesystem-provisioned dashboard; SQL-native, no Loki / Prometheus | [Roadmap](ROADMAP.md#phase-8--observability-grafana-dashboard) |
-| Optuna | Backtest & optimizer exposed as API endpoints; the CPU-bound optimizer runs in a spawned child process with a single-slot lock and Postgres-persisted jobs; Optuna TPE replaces the exhaustive grid | [Roadmap](ROADMAP.md#phase-10--trading-tools-integration-backtest--optimizer-completed) |
+| Docker | Single image, multi-service Compose; no host Python required | [Roadmap](docs/ROADMAP.md#phase-1--infrastructure-first-docker-completed) |
+| APScheduler | `AsyncIOScheduler` in the FastAPI `lifespan`; `max_instances=1` prevents overlapping ticks | [Roadmap](docs/ROADMAP.md#phase-2--managed-execution-apscheduler-completed) |
+| Testing | Two-tier pytest (unit + integration) runs entirely inside Docker for production parity | [Roadmap](docs/ROADMAP.md#phase-3--testing-strategy-completed) |
+| PostgreSQL | Synchronous SQLAlchemy under async FastAPI; module-level DAL instead of a repository class | [Roadmap](docs/ROADMAP.md#phase-4--professional-persistence-postgresql-completed) |
+| FastAPI | `botc` and `telegram` split into two services so Telegram's long-poll lifecycle cannot stall the trading loop | [Roadmap](docs/ROADMAP.md#phase-5--rest-api-layer-fastapi-completed) |
+| ruff | Single tool for lint + format + import sorting; `pyproject.toml` as the single config source | [Roadmap](docs/ROADMAP.md#phase-6--code-quality-linting--type-safety-completed) |
+| CI/CD | GHCR image-based deploy; VPS holds only `.env` + two compose files, no source clone | [Roadmap](docs/ROADMAP.md#phase-7--cicd-pipeline) |
+| Grafana | Per-session `sessions` table + filesystem-provisioned dashboard; SQL-native, no Loki / Prometheus | [Roadmap](docs/ROADMAP.md#phase-8--observability-grafana-dashboard) |
+| Optuna | Backtest & optimizer exposed as API endpoints; the CPU-bound optimizer runs in a spawned child process with a single-slot lock and Postgres-persisted jobs; Optuna TPE replaces the exhaustive grid | [Roadmap](docs/ROADMAP.md#phase-10--trading-tools-integration-backtest--optimizer-completed) |
 
 Full design rationale is in [CLAUDE.md](CLAUDE.md) under **Design choices**.
 
@@ -161,11 +161,11 @@ is_closing_complete()  — Kraken QueryOrders confirms fill
 
 ## Roadmap & future work
 
-See [ROADMAP.md](ROADMAP.md) for the full phased plan.
+See [ROADMAP.md](docs/ROADMAP.md) for the full phased plan.
 
 **Most recent phase — Phase 10, Trading Tools Integration (completed):** the V1 analysis scripts were folded into the API as JSON endpoints — synchronous `POST /backtest` and an asynchronous `POST /optimizer/jobs` whose CPU-bound search runs in a spawned child process with Postgres-persisted job state. The exhaustive parameter grid was replaced by an Optuna TPE search, and the simulator was extracted into a pure, config-as-argument engine shared by both endpoints. The pure-Python engine met the wall-clock budget, so the optional Numba JIT was evaluated and not adopted — no compiled toolchain in the image.
 
-**Next — Phase 11, Auto-Lookback Window:** replace full-history K_STOP calibration with a per-pair, data-driven lookback window, validated against the new optimizer endpoint. See [ROADMAP.md](ROADMAP.md#phase-11--auto-lookback-window-for-k_stop-calibration) for scope.
+**Next — Phase 11, Auto-Lookback Window:** replace full-history K_STOP calibration with a per-pair, data-driven lookback window, validated against the new optimizer endpoint. See [ROADMAP.md](docs/ROADMAP.md#phase-11--auto-lookback-window-for-k_stop-calibration) for scope.
 
 ---
 
@@ -176,8 +176,8 @@ See [ROADMAP.md](ROADMAP.md) for the full phased plan.
 | [docs/configuration.md](docs/configuration.md) | Every `.env` variable, its default, and its effect |
 | [docs/trading-strategy.md](docs/trading-strategy.md) | ATR classification, K_STOP calibration, position lifecycle |
 | [docs/operations.md](docs/operations.md) | Local dev, production deploy, rollback, monitoring, troubleshooting |
-| [CHANGELOG.md](CHANGELOG.md) | V2 phase-by-phase change history |
-| [ROADMAP.md](ROADMAP.md) | Full improvement areas and phased plan |
+| [docs/CHANGELOG.md](docs/CHANGELOG.md) | V2 phase-by-phase change history |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Full improvement areas and phased plan |
 
 ---
 
