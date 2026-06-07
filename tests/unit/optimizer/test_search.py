@@ -1,4 +1,5 @@
 import copy
+import types
 
 import numpy as np
 import pandas as pd
@@ -122,24 +123,22 @@ def test_run_optimize_uses_passed_calibration(monkeypatch) -> None:
 # --- run_auto_optimize -----------------------------------------------------
 
 
-def _patch_optimize(monkeypatch, mapping: dict[str, float], current_robust: float) -> None:
-    """Route run_optimize by mode: CURRENT returns a fixed robust; OPTIMIZE
-    returns mapping[seed] so convergence can be steered deterministically."""
-
-    def _fake(req: OptimizerRequest, _calibration) -> OptimizerResult:
-        if req.mode == "CURRENT":
-            return _result(current_robust, mode="CURRENT")
-        return _result(mapping[req.seed])
-
-    monkeypatch.setattr(optimizer, "run_optimize", _fake)
+def _patch_auto(monkeypatch, *, seed_robust, current_robust: float) -> None:
+    """Mock the AUTO seams so convergence is steered deterministically without
+    running Optuna: context build is a no-op, each seed's result robust comes
+    from ``seed_robust(seed, n_trials)``, and CURRENT returns ``current_robust``."""
+    monkeypatch.setattr(optimizer, "_build_eval_context", lambda _req, _cal: {"eval_kwargs": {}, "eval_args": {}})
+    monkeypatch.setattr(optimizer, "_new_seed_studies", lambda seed: types.SimpleNamespace(seed=seed))
+    monkeypatch.setattr(optimizer, "_current_result", lambda _req, _ek: _result(current_robust, mode="CURRENT"))
+    monkeypatch.setattr(optimizer, "_seed_result", lambda state, n, _ea, _req: _result(seed_robust(state.seed, n)))
 
 
 def test_auto_converges_first_batch_improvement(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.random, "sample", lambda _pop, k: [11, 22, 33, 44][:k])
     # 3 of 4 seeds agree on 6.84 (rounds equal); current is worse → improvement.
-    _patch_optimize(
+    _patch_auto(
         monkeypatch,
-        {11: 6.84, 22: 6.841, 33: 6.838, 44: -1.0},
+        seed_robust=lambda seed, _n: {11: 6.84, 22: 6.841, 33: 6.838, 44: -1.0}[seed],
         current_robust=-3.7,
     )
 
@@ -157,7 +156,7 @@ def test_auto_converges_first_batch_improvement(monkeypatch) -> None:
 
 def test_auto_converges_but_current_is_better(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.random, "sample", lambda _pop, k: [1, 2, 3, 4][:k])
-    _patch_optimize(monkeypatch, {1: 5.0, 2: 5.0, 3: 5.0, 4: 0.0}, current_robust=9.0)
+    _patch_auto(monkeypatch, seed_robust=lambda seed, _n: {1: 5.0, 2: 5.0, 3: 5.0, 4: 0.0}[seed], current_robust=9.0)
 
     req = OptimizerRequest(pair=_PAIR, mode="AUTO", n_trials=1000, min_agree=3)
     out = run_auto_optimize(req, calibration=None)
@@ -170,16 +169,14 @@ def test_auto_converges_but_current_is_better(monkeypatch) -> None:
 def test_auto_escalates_until_convergence(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.random, "sample", lambda _pop, k: [1, 2, 3, 4][:k])
 
-    def _fake(req: OptimizerRequest, _calibration) -> OptimizerResult:
-        if req.mode == "CURRENT":
-            return _result(0.0, mode="CURRENT")
-        # First batch (n_trials=1000): all-different → no convergence.
-        # Second batch (n_trials=1500): three seeds agree on 7.0.
-        if req.n_trials == 1000:
-            return _result({1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0}[req.seed])
-        return _result({1: 7.0, 2: 7.0, 3: 7.0, 4: 0.0}[req.seed])
+    # First level (1000 trials): all-different → no convergence.
+    # Second level (1500 trials): three seeds agree on 7.0.
+    def _seed_robust(seed: int, n: int) -> float:
+        if n == 1000:
+            return {1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0}[seed]
+        return {1: 7.0, 2: 7.0, 3: 7.0, 4: 0.0}[seed]
 
-    monkeypatch.setattr(optimizer, "run_optimize", _fake)
+    _patch_auto(monkeypatch, seed_robust=_seed_robust, current_robust=0.0)
 
     req = OptimizerRequest(pair=_PAIR, mode="AUTO", n_trials=1000, trial_step=500, max_trials=9000, min_agree=3)
     out = run_auto_optimize(req, calibration=None)
@@ -190,11 +187,11 @@ def test_auto_escalates_until_convergence(monkeypatch) -> None:
 
 def test_auto_no_convergence_returns_best_fallback(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.random, "sample", lambda _pop, k: [1, 2, 3, 4][:k])
-    # Every batch is all-different → never reaches min_agree within the budget.
-    monkeypatch.setattr(
-        optimizer,
-        "run_optimize",
-        lambda req, _c: _result({1: 1.0, 2: 2.0, 3: 3.0, 4: 8.5}[req.seed]),
+    # Every level is all-different → never reaches min_agree within the budget.
+    _patch_auto(
+        monkeypatch,
+        seed_robust=lambda seed, _n: {1: 1.0, 2: 2.0, 3: 3.0, 4: 8.5}[seed],
+        current_robust=0.0,
     )
 
     req = OptimizerRequest(pair=_PAIR, mode="AUTO", n_trials=1000, trial_step=500, max_trials=2000, min_agree=3)

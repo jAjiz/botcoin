@@ -1,9 +1,15 @@
 """Parameter optimizer.
 
-Pure ``run_optimize(req, calibration) -> OptimizerResult``: two parallel Optuna
-TPE searches (k_act branch and min_margin branch) over per-level stop
-percentiles. Each study gets half the trial budget and runs in its own spawned
-process; results are merged and ranked globally by robust_pnl.
+Pure ``run_optimize(req, calibration) -> OptimizerResult``: two Optuna TPE
+searches (k_act branch and min_margin branch) over per-level stop percentiles.
+Each study gets half the trial budget; results are merged and ranked globally by
+robust_pnl.
+
+``run_auto_optimize`` runs several seeds and escalates the trial budget until a
+majority converge. The per-seed studies are kept alive across escalation levels
+and only the *delta* of trials is run each level (warm-start), so the search
+continues instead of restarting from scratch. OHLC and calibration are loaded
+once per AUTO search (``_build_eval_context``) and shared by every seed/level.
 
 Split method is always CONTINUE: the simulation runs on the full dataset and
 results are partitioned at the train/test boundary, matching how a new config
@@ -290,20 +296,11 @@ def _scores_dict(ev: _Eval) -> dict:
     }
 
 
-# --- parallel study runner -------------------------------------------------
+# --- study execution -------------------------------------------------------
 
 
-def _run_study(
-    study_type: str,
-    seed: int,
-    n_trials: int,
-    eval_args: dict,
-) -> tuple[list[tuple], int, int]:
-    """Module-level worker: runs one Optuna study in a spawned process.
-
-    Returns (completed_tuples, n_pruned, n_total) where each completed tuple
-    is (params, value, user_attrs) — plain dicts/floats, fully picklable.
-    """
+def _build_objective(study_type: str, eval_args: dict):
+    """Build the Optuna objective for one branch (``kact`` or ``minmargin``)."""
     suggest_fn = _suggest_kact if study_type == "kact" else _suggest_minmargin
     min_ops: int = eval_args["min_ops"]
     min_test_ops: int = eval_args["min_test_ops"]
@@ -323,8 +320,6 @@ def _run_study(
         )
     }
 
-    study = _build_study(seed)
-
     def objective(trial: optuna.Trial) -> float:
         cand = suggest_fn(trial)
         ev = _evaluate(cand, **eval_kwargs)
@@ -338,23 +333,116 @@ def _run_study(
         trial.set_user_attr("test_pnl", ev.test.total_pnl)
         return ev.robust_pnl
 
-    study.optimize(objective, n_trials=n_trials)
-
-    completed = [(t.params, t.value, t.user_attrs) for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-    n_pruned = sum(1 for t in study.trials if t.state == optuna.trial.TrialState.PRUNED)
-    return completed, n_pruned, len(study.trials)
+    return objective
 
 
-# --- main entry point ------------------------------------------------------
+def _collect_completed(study: optuna.Study) -> list[tuple]:
+    """Plain (params, value, user_attrs) tuples for the study's COMPLETE trials."""
+    return [(t.params, t.value, t.user_attrs) for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
 
 
-def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerResult:
+@dataclass
+class _SeedStudies:
+    """A seed's pair of warm-startable studies (kact + minmargin branches).
+
+    Kept alive across AUTO escalation levels so that *adding* trials continues
+    the TPE search instead of restarting it from scratch. ``kact_done`` /
+    ``mm_done`` track the cumulative trial target already requested per branch,
+    so each escalation only runs the delta.
+    """
+
+    seed: int
+    kact: optuna.Study
+    minmargin: optuna.Study
+    kact_done: int = 0
+    mm_done: int = 0
+
+
+def _new_seed_studies(seed: int) -> _SeedStudies:
+    # minmargin uses seed+1 so the two branches explore independently.
+    return _SeedStudies(seed=seed, kact=_build_study(seed), minmargin=_build_study(seed + 1))
+
+
+def _advance_seed_to(state: _SeedStudies, target_n_trials: int, eval_args: dict) -> tuple[list[tuple], int, int]:
+    """Warm-start: add trials to both branches until each reaches its half of
+    ``target_n_trials``, running only the delta. Returns the merged
+    (completed, n_pruned, n_total) across both branches."""
+    target_kact = target_n_trials // 2
+    target_mm = target_n_trials - target_kact
+
+    if target_kact > state.kact_done:
+        state.kact.optimize(_build_objective("kact", eval_args), n_trials=target_kact - state.kact_done)
+        state.kact_done = target_kact
+    if target_mm > state.mm_done:
+        state.minmargin.optimize(_build_objective("minmargin", eval_args), n_trials=target_mm - state.mm_done)
+        state.mm_done = target_mm
+
+    completed = _collect_completed(state.kact) + _collect_completed(state.minmargin)
+    n_pruned = sum(
+        1 for s in (state.kact, state.minmargin) for t in s.trials if t.state == optuna.trial.TrialState.PRUNED
+    )
+    n_total = len(state.kact.trials) + len(state.minmargin.trials)
+    return completed, n_pruned, n_total
+
+
+def _result_from_completed(
+    req: OptimizerRequest, all_completed: list[tuple], n_pruned: int, n_total: int
+) -> OptimizerResult:
+    """Rank, deduplicate and format the completed trials into an OptimizerResult.
+    Shared by single OPTIMIZE runs and each AUTO seed."""
+    # Rank by robust_pnl (the objective value); break ties by in-sample, then
+    # test, then train PnL so the ordering is deterministic, not insertion-order.
+    ranked = sorted(
+        all_completed,
+        key=lambda t: (
+            t[1],
+            t[2].get("in_sample_pnl", -1e18),
+            t[2].get("test_pnl", -1e18),
+            t[2].get("train_pnl", -1e18),
+        ),
+        reverse=True,
+    )
+
+    # Deduplicate across both branches. Keys are disjoint (k_act vs min_margin
+    # params) so same stop_pcts with different activation types won't collide.
+    seen_params: set[tuple] = set()
+    unique_completed = []
+    for params, value, user_attrs in ranked:
+        key = tuple(sorted(params.items()))
+        if key not in seen_params:
+            seen_params.add(key)
+            unique_completed.append((params, value, user_attrs))
+    top = unique_completed[:5]
+
+    def _trial_dict(params: dict, value: float, user_attrs: dict) -> dict:
+        cand = _candidate_from_params(params)
+        return {
+            **_candidate_to_dict(cand),
+            "in_sample_pnl_pct": _round2(user_attrs.get("in_sample_pnl")),
+            "train_pnl_pct": _round2(user_attrs.get("train_pnl")),
+            "test_pnl_pct": _round2(user_attrs.get("test_pnl")),
+            "robust_pnl_pct": _round2(value),
+        }
+
+    best_cand = _candidate_from_params(top[0][0])
+    return OptimizerResult(
+        pair=req.pair,
+        mode=req.mode,
+        top_candidates=[_trial_dict(p, v, ua) for p, v, ua in top],
+        suggested_env_lines=_format_env_lines(req.pair, best_cand),
+        n_trials_run=n_total,
+        n_trials_pruned=n_pruned,
+    )
+
+
+def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> dict:
+    """Load OHLC once, slice by START/END, compute the train/test split and the
+    calibration, and assemble the eval kwargs/args shared by every trial. Built
+    once per optimize run (and once per whole AUTO search) so the heavy load and
+    calibration are never repeated across seeds or escalation levels."""
     fee_rate = float(req.fee_pct) / 100.0
 
-    df_full = (
-        db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME).dropna(subset=["atr"]).sort_values("time").reset_index(drop=True)
-    )
-    df = df_full
+    df = db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME).dropna(subset=["atr"]).sort_values("time").reset_index(drop=True)
     if req.start:
         df = df[df["dtime"] >= req.start]
     if req.end:
@@ -395,82 +483,38 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
         up_k=up_k,
         down_k=down_k,
     )
+    eval_args = dict(**eval_kwargs, min_ops=req.min_ops, min_test_ops=req.min_test_ops)
+    return {"eval_kwargs": eval_kwargs, "eval_args": eval_args}
 
-    if req.mode == "CURRENT":
-        cand = _candidate_from_env(req.pair)
-        ev = _evaluate(cand, **eval_kwargs)
-        return OptimizerResult(
-            pair=req.pair,
-            mode=req.mode,
-            top_candidates=[{**_candidate_to_dict(cand), **_scores_dict(ev)}],
-            suggested_env_lines=_format_env_lines(req.pair, cand),
-            n_trials_run=1,
-            n_trials_pruned=0,
-        )
 
-    n_kact = req.n_trials // 2
-    n_minmargin = req.n_trials - n_kact
-
-    eval_args = dict(
-        **eval_kwargs,
-        min_ops=req.min_ops,
-        min_test_ops=req.min_test_ops,
-    )
-
-    kact_completed, kact_pruned, kact_total = _run_study("kact", req.seed, n_kact, eval_args)
-    minmargin_completed, minmargin_pruned, minmargin_total = _run_study(
-        "minmargin", req.seed + 1, n_minmargin, eval_args
-    )
-
-    all_completed = kact_completed + minmargin_completed
-    n_pruned = kact_pruned + minmargin_pruned
-
-    if not all_completed:
-        raise ValueError("No candidate met the min_ops / min_test_ops constraints")
-
-    # Rank by robust_pnl (the objective value); break ties by in-sample, then
-    # test, then train PnL so the ordering is deterministic, not insertion-order.
-    all_completed.sort(
-        key=lambda t: (
-            t[1],
-            t[2].get("in_sample_pnl", -1e18),
-            t[2].get("test_pnl", -1e18),
-            t[2].get("train_pnl", -1e18),
-        ),
-        reverse=True,
-    )
-
-    # Deduplicate across both studies. Keys are disjoint (k_act vs min_margin
-    # params) so same stop_pcts with different activation types won't collide.
-    seen_params: set[tuple] = set()
-    unique_completed = []
-    for params, value, user_attrs in all_completed:
-        key = tuple(sorted(params.items()))
-        if key not in seen_params:
-            seen_params.add(key)
-            unique_completed.append((params, value, user_attrs))
-    top = unique_completed[:5]
-
-    def _trial_dict(params: dict, value: float, user_attrs: dict) -> dict:
-        cand = _candidate_from_params(params)
-        return {
-            **_candidate_to_dict(cand),
-            "in_sample_pnl_pct": _round2(user_attrs.get("in_sample_pnl")),
-            "train_pnl_pct": _round2(user_attrs.get("train_pnl")),
-            "test_pnl_pct": _round2(user_attrs.get("test_pnl")),
-            "robust_pnl_pct": _round2(value),
-        }
-
-    best_cand = _candidate_from_params(top[0][0])
-
+def _current_result(req: OptimizerRequest, eval_kwargs: dict) -> OptimizerResult:
+    """Evaluate the live ``.env`` config (CURRENT mode / AUTO's baseline)."""
+    cand = _candidate_from_env(req.pair)
+    ev = _evaluate(cand, **eval_kwargs)
     return OptimizerResult(
         pair=req.pair,
         mode=req.mode,
-        top_candidates=[_trial_dict(p, v, ua) for p, v, ua in top],
-        suggested_env_lines=_format_env_lines(req.pair, best_cand),
-        n_trials_run=kact_total + minmargin_total,
-        n_trials_pruned=n_pruned,
+        top_candidates=[{**_candidate_to_dict(cand), **_scores_dict(ev)}],
+        suggested_env_lines=_format_env_lines(req.pair, cand),
+        n_trials_run=1,
+        n_trials_pruned=0,
     )
+
+
+# --- main entry point ------------------------------------------------------
+
+
+def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerResult:
+    ctx = _build_eval_context(req, calibration)
+
+    if req.mode == "CURRENT":
+        return _current_result(req, ctx["eval_kwargs"])
+
+    state = _new_seed_studies(req.seed)
+    completed, n_pruned, n_total = _advance_seed_to(state, req.n_trials, ctx["eval_args"])
+    if not completed:
+        raise ValueError("No candidate met the min_ops / min_test_ops constraints")
+    return _result_from_completed(req, completed, n_pruned, n_total)
 
 
 # --- AUTO mode convergence loop --------------------------------------------
@@ -494,42 +538,38 @@ def _check_convergence(results: list[OptimizerResult], min_agree: int) -> tuple[
     return best_group[0], len(best_group)
 
 
+def _seed_result(state: _SeedStudies, target_n_trials: int, eval_args: dict, req: OptimizerRequest) -> OptimizerResult:
+    """Advance one seed's studies to ``target_n_trials`` (warm-start) and build
+    its OptimizerResult. The AUTO seam: mocked in tests to steer convergence."""
+    completed, n_pruned, n_total = _advance_seed_to(state, target_n_trials, eval_args)
+    if not completed:
+        raise ValueError("No candidate met the min_ops / min_test_ops constraints")
+    return _result_from_completed(req, completed, n_pruned, n_total)
+
+
 def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerResult:
     seeds = random.sample(range(1, 9999), req.n_seeds)
+    # Load OHLC + calibration once, and keep each seed's studies alive across
+    # escalation levels so adding trials *continues* the search (warm-start)
+    # instead of restarting it from scratch at every level.
+    ctx = _build_eval_context(req, calibration)
+    states = {seed: _new_seed_studies(seed) for seed in seeds}
+
     n_trials = req.n_trials
     last_results: list[OptimizerResult] = []
 
     while n_trials <= req.max_trials:
         last_results = []
         for seed in seeds:
-            sub_req = OptimizerRequest(
-                pair=req.pair,
-                mode="OPTIMIZE",
-                fee_pct=req.fee_pct,
-                start=req.start,
-                end=req.end,
-                train_split=req.train_split,
-                min_ops=req.min_ops,
-                min_test_ops=req.min_test_ops,
-                n_trials=n_trials,
-                seed=seed,
-            )
-            # min_ops constraints not met → treat that seed as non-converging.
+            # min_ops constraints not met → treat that seed as non-converging
+            # this round; its studies persist and may qualify at a higher budget.
             with contextlib.suppress(ValueError):
-                last_results.append(run_optimize(sub_req, calibration))
+                last_results.append(_seed_result(states[seed], n_trials, ctx["eval_args"], req))
 
         converged = _check_convergence(last_results, req.min_agree)
         if converged is not None:
             best, n_agreed = converged
-            current_req = OptimizerRequest(
-                pair=req.pair,
-                mode="CURRENT",
-                fee_pct=req.fee_pct,
-                start=req.start,
-                end=req.end,
-                train_split=req.train_split,
-            )
-            current = run_optimize(current_req, calibration)
+            current = _current_result(req, ctx["eval_kwargs"])
             current_robust = (
                 (current.top_candidates[0].get("robust_pnl_pct") or -1e18) if current.top_candidates else -1e18
             )
