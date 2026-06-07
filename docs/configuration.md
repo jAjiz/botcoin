@@ -50,6 +50,7 @@ Set automatically by Docker Compose via `docker-compose.yml`. Override only when
 | Variable | Required | Default | Effect |
 |---|---|---|---|
 | `PAIRS` | yes | — | Comma-separated list of Kraken pair identifiers, e.g. `XBTEUR,ETHEUR` |
+| `TRADING_ENABLED` | no | `true` | Master trading switch. When `false`, the scheduler still ingests OHLC, calibrates, updates the runtime cache, records sessions and serves the API/optimizer, but never opens, manages or closes positions (no Kraken order placement). Use for a non-trading replica (e.g. a local stack running the optimizer). Must stay `true` in production; do not enable on an instance holding open positions (their trailing stop would freeze) |
 | `SLEEPING_INTERVAL` | no | `60` | Seconds between trading sessions |
 | `PARAM_SESSIONS` | no | `720` | Sessions before recalculating K_STOP parameters (~12 h at 60 s intervals) |
 | `CANDLE_TIMEFRAME` | no | `15` | OHLC candle size in minutes |

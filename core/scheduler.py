@@ -7,7 +7,7 @@ from typing import Any
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-from core.config import PAIRS, PARAM_SESSIONS
+from core.config import PAIRS, PARAM_SESSIONS, TRADING_ENABLED
 from core.utils import now_utc
 from exchange.kraken import get_balance, get_last_prices
 from trading.market_analyzer import get_current_atr
@@ -101,6 +101,17 @@ def trading_session() -> None:
                 "atr": current_atr,
                 "volatility_level": vol_level,
             }
+
+            if not TRADING_ENABLED:
+                # Non-trading replica: observe and persist market data only, never
+                # touch positions. A stored position would be left unmanaged (its
+                # trailing stop frozen), so warn loudly if one is found.
+                if trailing_state.get(pair):
+                    logging.warning(
+                        f"TRADING_ENABLED is false but {pair} has a stored position; "
+                        "it is NOT being managed (trailing stop frozen)."
+                    )
+                continue
 
             if is_closing_complete(trailing_state.get(pair)):
                 # TODO: save_closed_position and delete_trailing_state are separate

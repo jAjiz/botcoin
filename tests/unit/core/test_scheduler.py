@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 import core.database as db
 import core.runtime as runtime
 import core.scheduler as scheduler
@@ -72,3 +74,63 @@ def test_trading_session_records_failed_balance_fetch(monkeypatch):
     assert calls[0]["status"] == "failed"
     assert calls[0]["balance"] is None
     assert "Could not fetch balance" in calls[0]["log_messages"]
+
+
+def _setup_one_pair_loop(monkeypatch, *, trailing_state=None):
+    """Patch the per-pair loop collaborators for a single pair (XBTEUR)."""
+    monkeypatch.setattr(scheduler, "now_utc", lambda: datetime(2026, 5, 12, 10, 0, 0, tzinfo=UTC))
+    monkeypatch.setattr(db, "get_bot_paused", lambda: False)
+    monkeypatch.setattr(scheduler, "get_balance", lambda: {"ZEUR": "100"})
+    monkeypatch.setattr(scheduler, "get_last_prices", lambda _pairs: {"XBTEUR": 50000.0})
+    monkeypatch.setattr(scheduler, "get_current_atr", lambda _pair: 100.0)
+    monkeypatch.setattr(scheduler, "calculate_trading_parameters", lambda _pair: None)
+    monkeypatch.setattr(scheduler, "get_volatility_level", lambda _pair, _atr: "MV")
+    monkeypatch.setattr(runtime, "update_balance", lambda _b: None)
+    monkeypatch.setattr(runtime, "update_pair_data", lambda *a, **k: None)
+    monkeypatch.setattr(runtime, "update_last_run_at", lambda _ts: None)
+    monkeypatch.setattr(db, "load_trailing_state", lambda _pair: trailing_state)
+    monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR"])
+
+
+def test_trading_session_skips_positions_when_trading_disabled(monkeypatch):
+    _setup_one_pair_loop(monkeypatch)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("must not open positions"))
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not manage positions"))
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: pytest.fail("must not check closes"))
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    final = calls[0]
+    # Market data is still ingested and recorded; only trading is skipped.
+    assert final["status"] == "completed"
+    assert final["pair_data"]["XBTEUR"]["volatility_level"] == "MV"
+
+
+def test_trading_session_warns_on_stored_position_when_trading_disabled(monkeypatch):
+    _setup_one_pair_loop(monkeypatch, trailing_state={"pair": "XBTEUR", "entry_price": 50000.0})
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("must not trade"))
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not trade"))
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    assert calls[0]["status"] == "completed"
+    assert "NOT being managed" in calls[0]["log_messages"]
+
+
+def test_trading_session_opens_position_when_trading_enabled(monkeypatch):
+    _setup_one_pair_loop(monkeypatch)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
+    monkeypatch.setattr(scheduler, "is_open", lambda _s: False)
+    created: list = []
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: created.append(a))
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    assert len(created) == 1  # no stored position -> create_position is called once
+    assert calls[0]["status"] == "completed"

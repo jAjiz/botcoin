@@ -211,3 +211,6 @@ __marimo__/
 
 # Local REST Client file with a real API token (copy from api/requests.http.example)
 api/requests.http
+
+# Local database dumps (e.g. pg_dump of ohlc_data for offline optimizer runs)
+*.sql

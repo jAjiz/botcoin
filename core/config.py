@@ -41,6 +41,13 @@ ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))  # ATR calculation period in candl
 ATR_DESV_LIMIT = float(os.getenv("ATR_DESV_LIMIT", 0.2))  # ATR recalibration limit (20%)
 MIN_VALUE = float(os.getenv("MIN_VALUE", 10))  # Minimum value operation in fiat
 
+# Master switch for trading. When false the scheduler still ingests OHLC,
+# calibrates, updates the runtime cache, records sessions and serves the API and
+# optimizer — but never opens, manages or closes positions (no Kraken order
+# placement). Intended for a non-trading replica, e.g. a local stack used to run
+# the optimizer with full features. Always true in production.
+TRADING_ENABLED = os.getenv("TRADING_ENABLED", "true").lower() == "true"
+
 # Pairs names map and info
 PAIRS = {pair: {} for pair in os.getenv("PAIRS", "").split(",")}
 
