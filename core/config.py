@@ -27,11 +27,11 @@ API_SECRET_TOKEN = os.getenv("API_SECRET_TOKEN")
 # Explicit opt-in to run without API auth. Use with caution.
 ALLOW_NO_AUTH = os.getenv("ALLOW_NO_AUTH", "false").lower() == "true"
 
-# Kill switch for the optimizer endpoints. The optimizer is CPU- and RAM-bound
-# and, on a resource-constrained host (e.g. a free-tier micro VM), can starve
-# the trading engine and lock up the machine. Set to true there to reject new
-# optimizer jobs with 503 while leaving the rest of the API running.
-OPTIMIZER_DISABLED = os.getenv("OPTIMIZER_DISABLED", "false").lower() == "true"
+# Maximum number of concurrent optimizer jobs. 0 disables the optimizer entirely
+# (POST /optimizer/jobs returns 503); ≥1 allows up to N jobs in flight (409 when
+# all slots are busy). On a resource-constrained host (e.g. a free-tier micro VM)
+# set to 0 to prevent the CPU-bound search from starving the trading engine.
+MAX_CONCURRENT_JOBS = max(0, int(os.getenv("MAX_CONCURRENT_JOBS", "1")))
 
 # Bot Settings
 SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute
