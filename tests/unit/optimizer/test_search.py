@@ -127,11 +127,11 @@ def _patch_auto(monkeypatch, *, seed_robust, current_robust: float) -> None:
     """Mock the AUTO seams so convergence is steered deterministically without
     running Optuna: context build is a no-op, each seed's result robust comes
     from ``seed_robust(seed, n_trials)``, and CURRENT returns ``current_robust``."""
-    monkeypatch.setattr(optimizer, "_build_eval_context", lambda _req, _cal: {"eval_kwargs": {}, "eval_args": {}})
+    monkeypatch.setattr(optimizer, "_build_eval_context", lambda _req, _cal: None)
     monkeypatch.setattr(optimizer, "_new_seed_studies", lambda seed: types.SimpleNamespace(seed=seed))
-    monkeypatch.setattr(optimizer, "_current_result", lambda _req, _ek: _result(current_robust, mode="CURRENT"))
+    monkeypatch.setattr(optimizer, "_current_result", lambda _req, _ctx: _result(current_robust, mode="CURRENT"))
     monkeypatch.setattr(
-        optimizer, "_seed_result", lambda state, n, _ea, _req, _ex=None: _result(seed_robust(state.seed, n))
+        optimizer, "_seed_result", lambda state, n, _ctx, _req, _ex=None: _result(seed_robust(state.seed, n))
     )
 
 

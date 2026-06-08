@@ -29,6 +29,7 @@ from multiprocessing import get_context
 
 import numpy as np
 import optuna
+import pandas as pd
 from optuna.samplers import TPESampler
 
 import core.database as db
@@ -83,25 +84,20 @@ class Candidate:
 @dataclass(frozen=True)
 class Score:
     total_pnl: float
-    ops: int
     pnl_samples: int
-
-
-def _robust_key(train: Score, test: Score) -> tuple[float, int]:
-    return (float(min(train.total_pnl, test.total_pnl)), int(min(train.pnl_samples, test.pnl_samples)))
 
 
 def _score_run(ops) -> Score:
     if not ops:
-        return Score(total_pnl=-1e18, ops=0, pnl_samples=0)
+        return Score(total_pnl=-1e18, pnl_samples=0)
     total = float(ops[-1].cum_pnl or 0.0)
     pnl_samples = sum(1 for op in ops if op.pnl_abs is not None)
-    return Score(total_pnl=total, ops=len(ops), pnl_samples=pnl_samples)
+    return Score(total_pnl=total, pnl_samples=pnl_samples)
 
 
 def _split_scores_from_single_run(ops, boundary_time: str) -> tuple[Score, Score]:
     if not ops:
-        empty = Score(total_pnl=-1e18, ops=0, pnl_samples=0)
+        empty = Score(total_pnl=-1e18, pnl_samples=0)
         return empty, empty
 
     total_net = float(ops[-1].cum_pnl or 0.0)
@@ -111,8 +107,8 @@ def _split_scores_from_single_run(ops, boundary_time: str) -> tuple[Score, Score
     first_samples = sum(1 for op in before if op.pnl_abs is not None)
     second_samples = sum(1 for op in after if op.pnl_abs is not None)
     return (
-        Score(total_pnl=first_net, ops=len(before), pnl_samples=first_samples),
-        Score(total_pnl=(total_net - first_net), ops=len(after), pnl_samples=second_samples),
+        Score(total_pnl=first_net, pnl_samples=first_samples),
+        Score(total_pnl=(total_net - first_net), pnl_samples=second_samples),
     )
 
 
@@ -261,28 +257,36 @@ class _Eval:
     test_samples: int
 
 
-def _evaluate(
-    cand: Candidate,
-    *,
-    pair: str,
-    df,
-    train_df,
-    test_df,
-    split_boundary_time: str | None,
-    fee_rate: float,
-    atr_thresholds: tuple[float, float, float, float],
-    up_k: dict[str, np.ndarray],
-    down_k: dict[str, np.ndarray],
-) -> _Eval:
-    cfg = _build_engine_config(pair, cand, atr_thresholds, up_k, down_k, ATR_DESV_LIMIT)
-    ops_all = simulate_operations(df, cfg, fee_rate=fee_rate)
+@dataclass(frozen=True)
+class EvalContext:
+    """Everything a trial needs to score a candidate: the working dataframe and
+    its train/test split, the calibration, and the min-ops constraints. Built
+    once per optimize run (``_build_eval_context``) and shared by every seed,
+    level and trial — and shipped to worker processes for branch parallelism."""
+
+    pair: str
+    df: pd.DataFrame
+    train_df: pd.DataFrame
+    test_df: pd.DataFrame
+    split_boundary_time: str | None
+    fee_rate: float
+    atr_thresholds: tuple[float, float, float, float]
+    up_k: dict[str, np.ndarray]
+    down_k: dict[str, np.ndarray]
+    min_ops: int
+    min_test_ops: int
+
+
+def _evaluate(cand: Candidate, ctx: EvalContext) -> _Eval:
+    cfg = _build_engine_config(ctx.pair, cand, ctx.atr_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT)
+    ops_all = simulate_operations(ctx.df, cfg, fee_rate=ctx.fee_rate)
     in_sample = _score_run(ops_all)
 
-    if test_df.empty:
-        return _Eval(in_sample, in_sample, Score(-1e18, 0, 0), in_sample.total_pnl, in_sample.pnl_samples, 0)
+    if ctx.test_df.empty:
+        return _Eval(in_sample, in_sample, Score(-1e18, 0), in_sample.total_pnl, in_sample.pnl_samples, 0)
 
-    train, test = _split_scores_from_single_run(ops_all, split_boundary_time)
-    robust_pnl = _robust_key(train, test)[0]
+    train, test = _split_scores_from_single_run(ops_all, ctx.split_boundary_time)
+    robust_pnl = min(train.total_pnl, test.total_pnl)
     return _Eval(in_sample, train, test, robust_pnl, train.pnl_samples, test.pnl_samples)
 
 
@@ -301,34 +305,17 @@ def _scores_dict(ev: _Eval) -> dict:
 # --- study execution -------------------------------------------------------
 
 
-def _build_objective(study_type: str, eval_args: dict):
+def _build_objective(study_type: str, ctx: EvalContext):
     """Build the Optuna objective for one branch (``kact`` or ``minmargin``)."""
     suggest_fn = _suggest_kact if study_type == "kact" else _suggest_minmargin
-    min_ops: int = eval_args["min_ops"]
-    min_test_ops: int = eval_args["min_test_ops"]
-    test_df = eval_args["test_df"]
-    eval_kwargs = {
-        k: eval_args[k]
-        for k in (
-            "pair",
-            "df",
-            "train_df",
-            "test_df",
-            "split_boundary_time",
-            "fee_rate",
-            "atr_thresholds",
-            "up_k",
-            "down_k",
-        )
-    }
 
     def objective(trial: optuna.Trial) -> float:
         cand = suggest_fn(trial)
-        ev = _evaluate(cand, **eval_kwargs)
-        if test_df.empty:
-            if ev.train_samples < min_ops:
+        ev = _evaluate(cand, ctx)
+        if ctx.test_df.empty:
+            if ev.train_samples < ctx.min_ops:
                 raise optuna.TrialPruned()
-        elif ev.train_samples < min_ops or ev.test_samples < min_test_ops:
+        elif ev.train_samples < ctx.min_ops or ev.test_samples < ctx.min_test_ops:
             raise optuna.TrialPruned()
         trial.set_user_attr("in_sample_pnl", ev.in_sample.total_pnl)
         trial.set_user_attr("train_pnl", ev.train.total_pnl)
@@ -379,18 +366,18 @@ def _branch_executor(target_trials: int):
     return ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn"))
 
 
-def _advance_branch(study: optuna.Study, study_type: str, n_trials: int, eval_args: dict) -> optuna.Study:
+def _advance_branch(study: optuna.Study, study_type: str, n_trials: int, ctx: EvalContext) -> optuna.Study:
     """Run ``n_trials`` more on ``study`` and return it. Module-level and
     picklable so it can run in a worker process: the warm-started study is
     shipped over, advanced, and shipped back."""
-    study.optimize(_build_objective(study_type, eval_args), n_trials=n_trials)
+    study.optimize(_build_objective(study_type, ctx), n_trials=n_trials)
     return study
 
 
 def _advance_seed_to(
     state: _SeedStudies,
     target_n_trials: int,
-    eval_args: dict,
+    ctx: EvalContext,
     executor: ProcessPoolExecutor | None = None,
 ) -> tuple[list[tuple], int, int]:
     """Warm-start: add trials to both branches until each reaches its half of
@@ -404,15 +391,15 @@ def _advance_seed_to(
     d_mm = target_mm - state.mm_done
 
     if executor is not None and d_kact > 0 and d_mm > 0:
-        fut_kact = executor.submit(_advance_branch, state.kact, "kact", d_kact, eval_args)
-        fut_mm = executor.submit(_advance_branch, state.minmargin, "minmargin", d_mm, eval_args)
+        fut_kact = executor.submit(_advance_branch, state.kact, "kact", d_kact, ctx)
+        fut_mm = executor.submit(_advance_branch, state.minmargin, "minmargin", d_mm, ctx)
         state.kact = fut_kact.result()
         state.minmargin = fut_mm.result()
     else:
         if d_kact > 0:
-            _advance_branch(state.kact, "kact", d_kact, eval_args)
+            _advance_branch(state.kact, "kact", d_kact, ctx)
         if d_mm > 0:
-            _advance_branch(state.minmargin, "minmargin", d_mm, eval_args)
+            _advance_branch(state.minmargin, "minmargin", d_mm, ctx)
     state.kact_done = target_kact
     state.mm_done = target_mm
 
@@ -474,10 +461,10 @@ def _result_from_completed(
     )
 
 
-def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> dict:
+def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> EvalContext:
     """Load OHLC once, slice by START/END, compute the train/test split and the
-    calibration, and assemble the eval kwargs/args shared by every trial. Built
-    once per optimize run (and once per whole AUTO search) so the heavy load and
+    calibration, and assemble the EvalContext shared by every trial. Built once
+    per optimize run (and once per whole AUTO search) so the heavy load and
     calibration are never repeated across seeds or escalation levels."""
     fee_rate = float(req.fee_pct) / 100.0
 
@@ -511,7 +498,7 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> dict
     up_k = _k_values_by_level(up_events)
     down_k = _k_values_by_level(down_events)
 
-    eval_kwargs = dict(
+    return EvalContext(
         pair=req.pair,
         df=df,
         train_df=train_df,
@@ -521,15 +508,15 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> dict
         atr_thresholds=atr_thresholds,
         up_k=up_k,
         down_k=down_k,
+        min_ops=req.min_ops,
+        min_test_ops=req.min_test_ops,
     )
-    eval_args = dict(**eval_kwargs, min_ops=req.min_ops, min_test_ops=req.min_test_ops)
-    return {"eval_kwargs": eval_kwargs, "eval_args": eval_args}
 
 
-def _current_result(req: OptimizerRequest, eval_kwargs: dict) -> OptimizerResult:
+def _current_result(req: OptimizerRequest, ctx: EvalContext) -> OptimizerResult:
     """Evaluate the live ``.env`` config (CURRENT mode / AUTO's baseline)."""
     cand = _candidate_from_env(req.pair)
-    ev = _evaluate(cand, **eval_kwargs)
+    ev = _evaluate(cand, ctx)
     return OptimizerResult(
         pair=req.pair,
         mode=req.mode,
@@ -547,14 +534,11 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
     ctx = _build_eval_context(req, calibration)
 
     if req.mode == "CURRENT":
-        return _current_result(req, ctx["eval_kwargs"])
+        return _current_result(req, ctx)
 
     state = _new_seed_studies(req.seed)
     with _branch_executor(req.n_trials) as executor:
-        completed, n_pruned, n_total = _advance_seed_to(state, req.n_trials, ctx["eval_args"], executor)
-    if not completed:
-        raise ValueError("No candidate met the min_ops / min_test_ops constraints")
-    return _result_from_completed(req, completed, n_pruned, n_total)
+        return _seed_result(state, req.n_trials, ctx, req, executor)
 
 
 # --- AUTO mode convergence loop --------------------------------------------
@@ -581,13 +565,14 @@ def _check_convergence(results: list[OptimizerResult], min_agree: int) -> tuple[
 def _seed_result(
     state: _SeedStudies,
     target_n_trials: int,
-    eval_args: dict,
+    ctx: EvalContext,
     req: OptimizerRequest,
     executor: ProcessPoolExecutor | None = None,
 ) -> OptimizerResult:
     """Advance one seed's studies to ``target_n_trials`` (warm-start) and build
-    its OptimizerResult. The AUTO seam: mocked in tests to steer convergence."""
-    completed, n_pruned, n_total = _advance_seed_to(state, target_n_trials, eval_args, executor)
+    its OptimizerResult. Shared by single OPTIMIZE runs and each AUTO seed; the
+    AUTO seam is mocked in tests to steer convergence."""
+    completed, n_pruned, n_total = _advance_seed_to(state, target_n_trials, ctx, executor)
     if not completed:
         raise ValueError("No candidate met the min_ops / min_test_ops constraints")
     return _result_from_completed(req, completed, n_pruned, n_total)
@@ -613,12 +598,12 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
                 # min_ops constraints not met → treat that seed as non-converging
                 # this round; its studies persist and may qualify at a higher budget.
                 with contextlib.suppress(ValueError):
-                    last_results.append(_seed_result(states[seed], n_trials, ctx["eval_args"], req, executor))
+                    last_results.append(_seed_result(states[seed], n_trials, ctx, req, executor))
 
             converged = _check_convergence(last_results, req.min_agree)
             if converged is not None:
                 best, n_agreed = converged
-                current = _current_result(req, ctx["eval_kwargs"])
+                current = _current_result(req, ctx)
                 current_robust = (
                     (current.top_candidates[0].get("robust_pnl_pct") or -1e18) if current.top_candidates else -1e18
                 )
