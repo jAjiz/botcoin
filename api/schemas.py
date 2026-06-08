@@ -101,12 +101,12 @@ class OptimizerRequest(BaseModel):
 
 
 class OptimizerJobAcceptedResponse(BaseModel):
-    job_id: str
+    job_id: int
     status: Literal["running"] = "running"
 
 
 class OptimizerJobStatusResponse(BaseModel):
-    job_id: str
+    job_id: int
     pair: str
     mode: str
     split_method: str

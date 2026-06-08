@@ -8,7 +8,7 @@ from api.schemas import (
     OptimizerJobStatusResponse,
     OptimizerRequest,
 )
-from core.config import OPTIMIZER_DISABLED, PAIRS
+from core.config import MAX_CONCURRENT_JOBS, PAIRS
 from trading.optimizer.jobs import JOB_STORE, OptimizerBusyError
 from trading.optimizer.search import OptimizerRequest as DTORequest
 
@@ -21,20 +21,20 @@ def _row_to_response(row: dict) -> OptimizerJobStatusResponse:
 
 @router.post("/jobs", response_model=OptimizerJobAcceptedResponse, status_code=202)
 async def submit(req: OptimizerRequest) -> OptimizerJobAcceptedResponse:
-    if OPTIMIZER_DISABLED:
-        raise HTTPException(status_code=503, detail="Optimizer is disabled on this host (OPTIMIZER_DISABLED=true)")
+    if MAX_CONCURRENT_JOBS <= 0:
+        raise HTTPException(status_code=503, detail="Optimizer is disabled on this host (MAX_CONCURRENT_JOBS=0)")
     if req.pair not in PAIRS:
         raise HTTPException(status_code=400, detail=f"Unknown pair: {req.pair}")
     try:
         job_id = JOB_STORE.try_start(DTORequest(**req.model_dump()))
     except OptimizerBusyError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    asyncio.create_task(JOB_STORE.supervise())  # noqa: RUF006
+    asyncio.create_task(JOB_STORE.supervise(job_id))  # noqa: RUF006
     return OptimizerJobAcceptedResponse(job_id=job_id)
 
 
 @router.get("/jobs/{job_id}", response_model=OptimizerJobStatusResponse)
-def get_job(job_id: str) -> OptimizerJobStatusResponse:
+def get_job(job_id: int) -> OptimizerJobStatusResponse:
     row = db.get_optimizer_job(job_id)
     if row is None:
         raise HTTPException(status_code=404, detail=f"Unknown job: {job_id}")

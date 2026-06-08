@@ -7,38 +7,40 @@ from multiprocessing import get_context
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
+from core.config import MAX_CONCURRENT_JOBS
 from trading.optimizer.worker import _worker_func
 
-_EXECUTOR = ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn"))
+_EXECUTOR = ProcessPoolExecutor(max_workers=max(MAX_CONCURRENT_JOBS, 1), mp_context=get_context("spawn"))
 
 
 @dataclass
 class _ActiveJob:
-    job_id: str
+    job_id: int
     future: Future
     pair: str
 
 
 class OptimizerBusyError(Exception):
-    """Raised when a new submission arrives while an optimization is already running."""
+    """Raised when a new submission arrives while all optimizer slots are busy."""
 
 
 class JobStore:
-    def __init__(self) -> None:
+    def __init__(self, max_concurrent: int = MAX_CONCURRENT_JOBS) -> None:
         self._lock = threading.Lock()
-        self._active: _ActiveJob | None = None
+        self._active: dict[int, _ActiveJob] = {}
+        self._max = max_concurrent
 
-    def try_start(self, req) -> str:
-        """Atomically: confirm slot is free, INSERT optimizer_jobs row, submit worker.
-        Returns job_id. Raises OptimizerBusyError if another job is running.
+    def try_start(self, req) -> int:
+        """Atomically: confirm a slot is free, INSERT optimizer_jobs row, submit worker.
+        Returns job_id (int). Raises OptimizerBusyError if all slots are busy.
 
         Snapshots the live calibration here (in the parent) and passes it to the
         worker, because the spawned child starts with an empty core.runtime and
         cannot read the cache itself. Sliced requests get None and the worker
         recomputes from the slice."""
         with self._lock:
-            if self._active is not None and not self._active.future.done():
-                raise OptimizerBusyError(f"Optimizer job {self._active.job_id} is already running")
+            if len(self._active) >= self._max:
+                raise OptimizerBusyError(f"All {self._max} optimizer slot(s) are busy — try again later")
             calibration = None
             if not req.start and not req.end:
                 calibration = runtime.get_pair_calibration(req.pair)
@@ -49,17 +51,18 @@ class JobStore:
                 request=req.__dict__,
             )
             logging.info(
-                f"🔧 [Optimizer] Started for {req.pair}\nMode: {req.mode}\nJob: {job_id}",
+                f"🔧 [Optimizer] Started for {req.pair}\nMode: {req.mode}\nJob: #{job_id}",
                 to_telegram=True,
             )
             future = _EXECUTOR.submit(_worker_func, req.__dict__, calibration)
-            self._active = _ActiveJob(job_id=job_id, future=future, pair=req.pair)
+            self._active[job_id] = _ActiveJob(job_id=job_id, future=future, pair=req.pair)
             return job_id
 
-    async def supervise(self) -> None:
-        """Awaits the active job's future and persists the result. Called once
+    async def supervise(self, job_id: int) -> None:
+        """Awaits a specific job's future and persists the result. Called once
         per job via asyncio.create_task() immediately after try_start()."""
-        active = self._snapshot_active()
+        with self._lock:
+            active = self._active.get(job_id)
         if active is None:
             return
         try:
@@ -67,10 +70,6 @@ class JobStore:
             self._finalize(active, "ok", result)
         except Exception as exc:
             self._finalize(active, "error", str(exc))
-
-    def _snapshot_active(self) -> _ActiveJob | None:
-        with self._lock:
-            return self._active
 
     def _finalize(self, active: _ActiveJob, kind: str, payload) -> None:
         try:
@@ -94,7 +93,7 @@ class JobStore:
                 )
         finally:
             with self._lock:
-                self._active = None
+                self._active.pop(active.job_id, None)
 
     def _notify_auto(self, active: _ActiveJob, payload: dict) -> None:
         best = (payload.get("top_candidates") or [{}])[0]
@@ -127,14 +126,16 @@ class JobStore:
 
     def shutdown(self) -> None:
         """Called from FastAPI lifespan finally block. Cancel pending work and
-        mark any running job as failed in the DB; process cleanup is left to Docker."""
-        active = self._snapshot_active()
-        if active is None:
+        mark any running jobs as failed in the DB; process cleanup is left to Docker."""
+        with self._lock:
+            active_jobs = list(self._active.values())
+        if not active_jobs:
             return
         _EXECUTOR.shutdown(wait=False, cancel_futures=True)
-        db.fail_optimizer_job(active.job_id, "interrupted by shutdown")
+        for active in active_jobs:
+            db.fail_optimizer_job(active.job_id, "interrupted by shutdown")
         with self._lock:
-            self._active = None
+            self._active.clear()
 
 
 JOB_STORE = JobStore()

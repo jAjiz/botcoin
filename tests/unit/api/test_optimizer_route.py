@@ -12,7 +12,7 @@ from trading.optimizer.jobs import OptimizerBusyError
 
 _PAIR = "XBTEUR"
 _PAIRS = {_PAIR: {}}
-_JOB_ID = "11111111-1111-1111-1111-111111111111"
+_JOB_ID = 1
 _TS = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 _JOB_ROW = {
@@ -65,7 +65,7 @@ def test_submit_returns_202_with_job_id(monkeypatch) -> None:
 
 
 def test_submit_disabled_returns_503(monkeypatch) -> None:
-    monkeypatch.setattr(optimizer_route, "OPTIMIZER_DISABLED", True)
+    monkeypatch.setattr(optimizer_route, "MAX_CONCURRENT_JOBS", 0)
     client = _make_client(monkeypatch)
     resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "OPTIMIZE"})
     assert resp.status_code == 503
@@ -74,7 +74,7 @@ def test_submit_disabled_returns_503(monkeypatch) -> None:
 
 def test_submit_busy_returns_409(monkeypatch) -> None:
     def _busy(req):
-        raise OptimizerBusyError("already running")
+        raise OptimizerBusyError("all slots busy")
 
     monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", _busy)
     client = _make_client(monkeypatch)
@@ -85,7 +85,7 @@ def test_submit_busy_returns_409(monkeypatch) -> None:
 def test_get_job_404_when_unknown(monkeypatch) -> None:
     monkeypatch.setattr(db, "get_optimizer_job", lambda jid: None)
     client = _make_client(monkeypatch)
-    resp = client.get("/optimizer/jobs/nonexistent-id")
+    resp = client.get("/optimizer/jobs/999")
     assert resp.status_code == 404
 
 
