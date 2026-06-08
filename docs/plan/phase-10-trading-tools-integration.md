@@ -1,5 +1,7 @@
 # Phase 10 – Trading Tools Integration: Backtest + Optimizer as API endpoints
 
+> **Status note (updated 2026-06-08).** Phase 10 shipped (PRs #46 and #47). The Steps below are the **original design record** and are kept as-is for the history of how the design was reasoned. Several details evolved during implementation and in the follow-up PR #47 — module layout, mode names, the split method, the search structure, and the migration revision all differ from what is written here. **Before relying on any specific code reference below, read [Appendix B — Drift from this plan](#appendix-b--drift-from-this-plan-current-state-2026-06-08) for the reconciled current state.** The follow-up work to make jobs concurrent and switch to sequential IDs is planned in [Phase 10.1](#phase-101--concurrent-optimizer-jobs--sequential-job-ids-planned-2026-06-08).
+
 ## Context
 
 - Branch: `feature/phase-10-trading-tools-integration` (to be created from `main`).
@@ -1296,3 +1298,159 @@ From empirical runs: seed=42 converges around 1000 trials; seed=7 needs ~6000. S
 5. Unit tests: mock `run_optimize` to return fixed `robust_pnl_pct` values, verify `_check_convergence` grouping and threshold logic.
 
 **Commit:** `feat(optimizer): add AUTO mode with multi-seed convergence loop`.
+
+---
+
+## Appendix B — Drift from this plan: current state (2026-06-08)
+
+Phase 10 shipped across PRs #46 and #47. This appendix reconciles the **original Steps 0–10 + Appendix A** above with the code that actually landed, so the document stays trustworthy as a portfolio artifact. Where the body and this appendix disagree, **this appendix is the truth** for the current `main`.
+
+### Module layout
+
+| Plan (Steps 5–8) | Actual on `main` |
+| --- | --- |
+| Top-level `optimizer/` package (sibling of `trading/`) | `trading/optimizer/` package |
+| `trading/optimizer.py` (single file, renamed from `optimize_params.py`) | `trading/optimizer/search.py` (`run_optimize`, `run_auto_optimize`) |
+| `optimizer/jobs.py`, `optimizer/worker.py` | `trading/optimizer/jobs.py`, `trading/optimizer/worker.py` |
+| Imports `from optimizer.jobs import JOB_STORE` | `from trading.optimizer.jobs import JOB_STORE` |
+
+### Modes and search structure
+
+- **Mode names**: the body's `CONSERVATIVE` / `AGGRESSIVE` / `CURRENT` were replaced by **`OPTIMIZE` / `CURRENT` / `AUTO`** (as already shown in Appendix A). `mode` is **required** — it has no default.
+- **The `AGGRESSIVE` vs `CONSERVATIVE` mode split became two independent Optuna studies inside a single `OPTIMIZE` run.** A `K_ACT` (activation) branch and a `MIN_MARGIN` branch each run their own TPE study over per-level stop percentiles; the candidates are merged globally and ranked by `robust_pnl = min(train_pnl, test_pnl)`. (A single mixed study was too seed-sensitive — see the Design choices section in `CLAUDE.md`.)
+- **Split is `CONTINUE`-only.** The body's `RESET` / `CONTINUE` / `BOTH` `split_method` request field was removed. The simulation runs once over the full dataset and is partitioned at the train/test boundary (matching production, where the bot never resets mid-history). `split_method` is no longer a user-facing request field; jobs are recorded with `split_method="CONTINUE"` for the DB column.
+- **`mode="AUTO"`** is the multi-seed convergence loop from Appendix A (`run_auto_optimize`): it escalates `n_trials` until `min_agree` of `n_seeds` seeds agree, then compares the winner against `CURRENT`.
+
+### PR #47 additions (not in the original plan)
+
+These landed after the plan was written and are now load-bearing:
+
+- **AUTO warm-starts the escalation.** Each seed's two studies are kept alive across escalation levels; raising the budget from N to N+step runs only the `step` extra trials and *continues* the TPE search instead of rebuilding from scratch. Worst-case trial count drops from `seeds × Σ(levels)` to `seeds × max_trials`.
+- **The `K_ACT` and `MIN_MARGIN` branches run in parallel** (a nested 2-process pool), gated by `_PARALLEL_MIN_TRIALS` so small runs and unit tests stay sequential. The nested pool is safe inside the `jobs.py` single-slot worker because `ProcessPoolExecutor` workers are not daemonic.
+- **`_build_eval_context`** loads OHLC + calibration once per search and shares it across every seed/level.
+
+### Optimizer result shape
+
+`OptimizerResult` is richer than the body's §5.4 sketch. Current fields used by the API and Telegram include: `mode`, `pair`, `converged`, `seeds_used`, `n_trials_run`, `is_improvement`, `n_seeds_agreed`, `top_candidates` (each with `k_act`, `stop_pcts`, `min_margin`, `in_sample_pnl_pct`, `train_pnl_pct`, `test_pnl_pct`, `robust_pnl_pct`), `n_trials_pruned`, `current_robust_pnl`, `suggested_env_lines`, `n_trials_at_convergence`.
+
+### Defaults
+
+| Field | Plan | Actual |
+| --- | --- | --- |
+| `n_trials` | 300 | 1000 |
+| `max_trials` (AUTO) | 4000 | 9000 |
+| `n_seeds` / `min_agree` / `trial_step` | 4 / 3 / 500 | 4 / 3 / 500 (unchanged) |
+
+### Migration
+
+- Filename: `scripts/migrations/versions/20260602_02_optimizer_jobs.py`.
+- `down_revision = "20260524_01"` (the body's §6.3 guessed `"20260414_01"`; the real chain runs through the Phase-8 observability and Phase-9 `balance_to_bot_control` migrations first).
+- The `mode` check constraint is `mode IN ('OPTIMIZE','CURRENT','AUTO')`. The `id` PK is a `UUID` with `gen_random_uuid()` (`pgcrypto`) — **changed to a sequential integer in Phase 10.1 below.**
+
+### Concurrency / kill switch
+
+- As shipped, the optimizer is **single-slot** (`ProcessPoolExecutor(max_workers=1, spawn)`, `JobStore._active`); a second submission returns `409`.
+- A separate `OPTIMIZER_DISABLED` env flag (added after Phase 10) makes `POST /optimizer/jobs` return `503` on resource-constrained hosts.
+- **Both of these are superseded by Phase 10.1**, which folds the kill switch into a concurrency limit.
+
+---
+
+## Phase 10.1 — Concurrent optimizer jobs + sequential job IDs (planned 2026-06-08)
+
+### Context
+
+- Branch: `feat/concurrent-optimizer-jobs` (created from `main`).
+- Two independent changes shipped together:
+  1. Replace the single-slot model with **N concurrent jobs**, configurable by env var. `0` disables the optimizer, replacing the separate `OPTIMIZER_DISABLED` flag.
+  2. Switch the `optimizer_jobs` primary key from **UUID → sequential integer** so jobs are easy to refer to (`#1`, `#2`, …) in Telegram and when querying.
+
+### Decisions
+
+- **Env var: `MAX_CONCURRENT_JOBS`** (int, default `1` — preserves current behavior). `0` → optimizer disabled (route returns `503`); `≥1` → up to N jobs in flight, `409` when all slots are busy. Replaces `OPTIMIZER_DISABLED` entirely (no alias).
+- **Migration: drop + recreate `optimizer_jobs`.** UUID→integer is not an in-place cast, and the table is disposable telemetry (no user data), so the migration drops and recreates it with an identity PK. Existing job history is lost — acceptable and called out in the PR.
+- **Resource note.** Each `AUTO` job already spawns a nested 2-process pool (the `K_ACT` / `MIN_MARGIN` branches, gated by `_PARALLEL_MIN_TRIALS`). So N concurrent jobs imply up to ~N×3 worker processes. On a small host, keep `MAX_CONCURRENT_JOBS` low (or `0`). This nests safely: outer `ProcessPoolExecutor` workers are not daemonic.
+
+### Step 1 — Config
+
+`core/config.py`: remove `OPTIMIZER_DISABLED`; add
+
+```python
+MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "1"))  # 0 disables the optimizer
+```
+
+(validate `>= 0`).
+
+### Step 2 — Database: sequential ID
+
+`core/database.py`:
+
+- `OptimizerJob.id` → `Column(BigInteger, primary_key=True, autoincrement=True)` (mirrors `SessionRecord`).
+- `to_dict()` returns `self.id` (int), no longer `str(self.id)`.
+- `create_optimizer_job(...) -> int` returns `row.id` after `flush()`.
+- `get_optimizer_job(job_id: int)` filters by integer id.
+- Remove now-unused imports: `import uuid` and `from sqlalchemy.dialects.postgresql import UUID as PG_UUID` (used only for this PK).
+
+### Step 3 — Migration
+
+`scripts/migrations/versions/20260608_01_optimizer_jobs_serial_id.py`, `down_revision = "20260602_02"`:
+
+- `upgrade()`: `op.drop_table("optimizer_jobs")` then recreate with an identity/`BigInteger` PK and the same checks (`ck_opt_jobs_status_valid`, `ck_opt_jobs_mode_valid` for `OPTIMIZE`/`CURRENT`/`AUTO`) and indexes (`ix_opt_jobs_created_at_desc`, `ix_opt_jobs_status_running`).
+- `downgrade()`: recreate with the UUID PK + `gen_random_uuid()` default.
+
+### Step 4 — JobStore: single-slot → N-slot
+
+`trading/optimizer/jobs.py`:
+
+- `_ActiveJob.job_id: int`.
+- `_active: _ActiveJob | None` → `_active: dict[int, _ActiveJob]`; store `_max = MAX_CONCURRENT_JOBS`.
+- Executor sized to capacity: `ProcessPoolExecutor(max_workers=max(MAX_CONCURRENT_JOBS, 1), mp_context=spawn)`. The `max(…, 1)` guard avoids the `ValueError` a `0`-worker pool raises; when disabled the route short-circuits with `503`, so `submit` is never reached.
+- `try_start(req)`: under the lock, `if len(self._active) >= self._max: raise OptimizerBusyError("all N slots busy")`; otherwise insert the row, snapshot calibration, submit, and `self._active[job_id] = _ActiveJob(...)`.
+- `supervise(job_id: int)`: awaits **that job's** future, finalizes it, and removes it from the dict.
+- `_finalize(...)`: `del self._active[active.job_id]` instead of `self._active = None`.
+- `shutdown()`: iterate over all active jobs, mark each `failed`, then shut the executor down.
+
+### Step 5 — Route
+
+`api/routes/optimizer.py`:
+
+- Import `MAX_CONCURRENT_JOBS` (replacing `OPTIMIZER_DISABLED`).
+- `if MAX_CONCURRENT_JOBS <= 0: raise HTTPException(503, "Optimizer is disabled (MAX_CONCURRENT_JOBS=0)")`.
+- `asyncio.create_task(JOB_STORE.supervise(job_id))`.
+- `GET /optimizer/jobs/{job_id}`: path param typed `int`.
+
+### Step 6 — Schemas
+
+`api/schemas.py`: `OptimizerJobAcceptedResponse.job_id: int` and `OptimizerJobStatusResponse.job_id: int`.
+
+### Step 7 — Tests
+
+- `tests/unit/optimizer/test_jobs.py`: refactor `_active` to a dict; `test_try_start_busy_raises` fills `_max` slots; `supervise()` → `supervise(job_id)`; `_finalize` removes from the dict; **add a concurrency test** (with `_max=2`, two jobs start and a third raises `OptimizerBusyError`). Job ids are ints.
+- `tests/unit/api/test_optimizer_route.py`: `_JOB_ID` → int (e.g. `1`); `test_submit_disabled_returns_503` monkeypatches `MAX_CONCURRENT_JOBS = 0`.
+- Keep the 80% coverage gate.
+
+### Step 8 — Docs / config / CLAUDE.md
+
+- `.env.example`: `OPTIMIZER_DISABLED=false` → `MAX_CONCURRENT_JOBS=1`.
+- `docs/configuration.md` + `docs/operations.md`: replace the `OPTIMIZER_DISABLED` row/note; on a small host (e.g. e2-micro) set `MAX_CONCURRENT_JOBS=0`. Document the ~N×3 process note.
+- `CLAUDE.md`: update the optimizer section (no longer "single-slot" / "`max_workers=1`" / "a second submission returns 409 always") and the **Design choices** entry "The optimizer runs as a single-slot spawned process." → N-slot configurable via `MAX_CONCURRENT_JOBS`.
+
+### Verification
+
+- `PYTHONPATH=. pytest tests/unit/ && ruff check . && ruff format --check .`
+- `alembic upgrade head` and `downgrade` against the docker Postgres.
+- Smoke: `MAX_CONCURRENT_JOBS=2` → launch XBTEUR + ETHEUR together (both run), a third returns `409`; then `MAX_CONCURRENT_JOBS=0` → `503`.
+
+### Acceptance checklist
+
+- [ ] `MAX_CONCURRENT_JOBS` controls capacity; `0` returns `503`, full slots return `409`, otherwise `202`.
+- [ ] `OPTIMIZER_DISABLED` is gone from the code, `.env.example`, and docs.
+- [ ] `optimizer_jobs.id` is a sequential integer; `job_id` is an `int` end-to-end (DAL, JobStore, route, schemas, Telegram).
+- [ ] Alembic `upgrade`/`downgrade` run cleanly on an empty Postgres.
+- [ ] `pytest tests/unit` passes at the 80% gate, including the new concurrency test.
+
+**Commits:**
+
+1. `feat(optimizer): replace OPTIMIZER_DISABLED with MAX_CONCURRENT_JOBS concurrency limit`
+2. `feat(database): sequential integer PK for optimizer_jobs (drop+recreate migration)`
+3. `feat(optimizer): N-slot JobStore with per-job supervision`
+4. `docs: update config/operations/CLAUDE for concurrent optimizer jobs`
