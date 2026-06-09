@@ -21,8 +21,9 @@ This document outlines the improvement areas and phased plan for the next iterat
   - [Phase 8 – Observability: Grafana Dashboard](#phase-8--observability-grafana-dashboard)
   - [Phase 9 – Project Documentation & Portfolio Framing](#phase-9--project-documentation--portfolio-framing)
   - [Phase 10 – Trading Tools Integration: Backtest + Optimizer](#phase-10--trading-tools-integration-backtest--optimizer)
-  - [Phase 11 – Auto-Lookback Window for K_STOP Calibration](#phase-11--auto-lookback-window-for-k_stop-calibration)
-  - [Phase 12 – Strategy Refinement: Trend/Chop Regime Filter](#phase-12--strategy-refinement-trendchop-regime-filter)
+  - [Phase 11 – Strategy Refinement: Trend/Chop Regime Filter](#phase-11--strategy-refinement-trendchop-regime-filter)
+- [Appendix: Deferred Phases](#-appendix-deferred-phases)
+  - [Auto-Lookback Window for K_STOP Calibration](#auto-lookback-window-for-k_stop-calibration)
 - [Out of Scope](#-out-of-scope)
 
 ---
@@ -83,10 +84,7 @@ The README is the project's cover letter. It must lead with engineering decision
 ### 10. Trading Tools Integration: Backtest + Optimizer
 The V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) are CLI-only and mutate global trading config — a hazard the live bot is currently isolated from only because they are invoked out-of-process. Folding them into the API as JSON endpoints — sync `/backtest`, async `/optimizer/jobs` with Postgres persistence and a single-slot `multiprocessing` worker — turns one-off scripts into reusable services without risking the live bot's config state. A pure config-as-argument engine (`trading/engine.py`) decouples simulation from globals, and Optuna TPE search replaces the exhaustive grid. Numba JIT is held as an optional, benchmark-gated speedup rather than a baseline dependency.
 
-### 11. Auto-Lookback Window for K_STOP Calibration
-The live bot calibrates K_STOP on *all* available OHLC history, which mixes obsolete volatility regimes into the percentile-based stop sizing. This phase makes the lookback **data-driven**: on each recalibration the bot sweeps a set of candidate windows, recomputes K_STOP for each, and picks the smallest window whose K_STOP values have stabilized (a plateau within a fixed relative tolerance against longer windows). This is a deliberate **change to live trading behavior** (stop distances shift), kept isolated in its own phase with before/after analysis, and it builds on the calibration cache introduced in Phase 10 so the live bot, backtest, and optimizer all agree on what "recent" means.
-
-### 12. Strategy Refinement: Trend/Chop Regime Filter
+### 11. Strategy Refinement: Trend/Chop Regime Filter
 The current ATR-based volatility classification measures move *magnitude* but not move *efficiency* — a low-vol trend and a low-vol chop receive identical K_STOP values and are treated identically. Trailing-stop strategies bleed in sideways markets through repeated false-reversal entries (each clipped by fees and slippage), so adding a regime filter that gates new entries during chop addresses the strategy's known weak case without altering the exit logic. The Choppiness Index reuses the existing ATR pipeline and fits the project's percentile-calibration style.
 
 ---
@@ -371,26 +369,7 @@ Detailed execution plan: [`plan/phase-10-trading-tools-integration.md`](plan/pha
 
 ---
 
-### Phase 11 – Auto-Lookback Window for K_STOP Calibration
-
-**Goal:** Replace full-history K_STOP calibration with a data-driven lookback window selected per pair via a K_STOP stability sweep, so the percentile-based stop sizing reflects the current volatility regime rather than the entire price history. This is a deliberate change to live trading behavior, isolated here with explicit before/after validation, and built on Phase 10's calibration cache.
-
-**Scope:**
-
-- [ ] Add the candidate-window sweep + plateau selector (`_select_lookback_window`) to `parameters_manager`: recompute K_STOP across `[30d, 45d, 60d, 90d, 120d, 180d, 240d, 365d]`, pick the smallest window whose values agree within a fixed relative tolerance with the next longer windows; fall back to the longest feasible window with a warning
-- [ ] Refactor `calculate_k_stops` into a percentile-argument form (`calculate_k_stops_for_events`) so the sweep can use a fixed neutral percentile independent of the per-pair choice
-- [ ] Wire the selector into `calculate_trading_parameters`: select window → slice → run the existing percentile + `analyze_structural_noise` + `calculate_k_stops` pipeline on the slice
-- [ ] Extend the Phase 10 calibration cache entry with `window_days` + `window_sweep`; surface the chosen window in backtest/optimizer responses
-- [ ] Unit tests: smallest-stable-window, fallback-to-longest, insufficient-data, None-level handling, and a cache assertion that the chosen window is one of the candidates
-- [ ] Before/after analysis: document how each pair's K_STOP ladder and selected window shift versus full-history calibration, and validate via `POST /optimizer/jobs` (Phase 10) that the change is non-regressive on historical PnL
-
-**Dependencies:** Requires Phase 10's calibration cache and (for principled validation) the backtest/optimizer endpoints.
-
-**Success criteria:** On startup with ≥ 1 year of OHLC, each pair's selected `window_days` is one of the candidate values (a plateau was found) or a logged fallback. The selected window and sweep metadata are visible via the calibration cache and the API. The K_STOP shift versus full-history calibration is documented in `docs/trading-strategy.md` and shown to be non-regressive on backtested PnL.
-
----
-
-### Phase 12 – Strategy Refinement: Trend/Chop Regime Filter
+### Phase 11 – Strategy Refinement: Trend/Chop Regime Filter
 
 **Goal:** Add a Choppiness Index–based regime classifier that gates new position entries during sideways markets while leaving the trailing-stop exit logic untouched. The filter reuses the existing OHLC + ATR pipeline, introduces no new external dependencies, and ships in two stages — observation first, enforcement second — so behavior changes are validated against live data before being enabled.
 
@@ -420,6 +399,22 @@ Detailed execution plan: [`plan/phase-10-trading-tools-integration.md`](plan/pha
 - Stage B can ship before Phase 10 using percentile-derived thresholds, but principled threshold optimization requires the backtest/optimizer endpoints delivered in Phase 10.
 
 **Success criteria:** The bot publishes a per-pair regime label through the API and Telegram. With enforcement enabled, no new positions activate while the regime is `CHOP`, and regime transitions are smoothed by hysteresis (no flicker within the configured dead band). Existing open positions are unaffected by regime flips and continue to exit only via the trailing stop. Threshold values are documented in `docs/trading-strategy.md` with a traceable derivation (percentile or backtest-derived).
+
+---
+
+## 📎 Appendix: Deferred Phases
+
+Phases that were designed but deferred due to prerequisite data or changed priorities.
+
+---
+
+### Auto-Lookback Window for K_STOP Calibration
+
+**Goal:** Replace full-history K_STOP calibration with a data-driven lookback window selected per pair via a K_STOP stability sweep, so the percentile-based stop sizing reflects the current volatility regime rather than the entire price history.
+
+**Why deferred:** The plateau heuristic requires a meaningful history range to produce a stable signal. With only ~28 days of OHLC at the time of design, no candidate window could be reliably distinguished from another — the sweep would always fall back to the longest feasible window, adding cost with no benefit. Revisit once ~60+ days of OHLC are available (~mid-July 2026).
+
+**Design notes:** Sweep candidates `[30d, 45d, 60d, 90d, 120d, 180d, 240d, 365d]`; pick the smallest window whose K_STOP agrees within 10% relative tolerance with the next two longer windows. Uses a fixed neutral P90 percentile for the sweep, independent of per-pair `PAIR_STOP_PCT_*` values, to isolate window-driven variance from percentile-driven variance. Builds on Phase 10's calibration cache.
 
 ---
 

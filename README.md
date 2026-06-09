@@ -165,7 +165,7 @@ See [ROADMAP.md](docs/ROADMAP.md) for the full phased plan.
 
 **Most recent phase — Phase 10, Trading Tools Integration (completed):** the V1 analysis scripts were folded into the API as JSON endpoints — synchronous `POST /backtest` and an asynchronous `POST /optimizer/jobs` whose CPU-bound search runs in a spawned child process with Postgres-persisted job state. The exhaustive parameter grid was replaced by an Optuna TPE search, and the simulator was extracted into a pure, config-as-argument engine shared by both endpoints. The pure-Python engine met the wall-clock budget, so the optional Numba JIT was evaluated and not adopted — no compiled toolchain in the image.
 
-**Next — Phase 11, Auto-Lookback Window:** replace full-history K_STOP calibration with a per-pair, data-driven lookback window, validated against the new optimizer endpoint. See [ROADMAP.md](docs/ROADMAP.md#phase-11--auto-lookback-window-for-k_stop-calibration) for scope.
+**Next — Phase 11, Trend/Chop Regime Filter:** add a Choppiness Index–based regime classifier that gates new position entries during sideways markets while leaving the trailing-stop exit logic untouched. See [ROADMAP.md](docs/ROADMAP.md#phase-11--strategy-refinement-trendchop-regime-filter) for scope.
 
 ---
 
