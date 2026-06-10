@@ -481,9 +481,7 @@ def _advance_seed_to(
     return completed, n_total
 
 
-def _result_from_completed(
-    req: OptimizerRequest, all_completed: list[tuple], n_total: int
-) -> OptimizerResult:
+def _result_from_completed(req: OptimizerRequest, all_completed: list[tuple], n_total: int) -> OptimizerResult:
     """Rank, deduplicate and format the completed trials into an OptimizerResult.
     Shared by single OPTIMIZE runs and each AUTO seed."""
     # Rank by robust_pnl (the objective value); break ties by in-sample, then
@@ -719,5 +717,3 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
         converged=False,
         seeds_used=seeds,
     )
-
-
