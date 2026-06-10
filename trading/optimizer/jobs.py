@@ -1,7 +1,7 @@
 import asyncio
 import threading
 from concurrent.futures import Future, ProcessPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from multiprocessing import get_context
 
 import core.database as db
@@ -44,17 +44,20 @@ class JobStore:
             calibration = None
             if not req.start and not req.end:
                 calibration = runtime.get_pair_calibration(req.pair)
+            # asdict (not __dict__) so a nested SearchSpace is fully dict-ified —
+            # JSONB-serializable for the DB row and picklable for the worker.
+            req_dict = asdict(req)
             job_id = db.create_optimizer_job(
                 pair=req.pair,
                 mode=req.mode,
                 split_method="CONTINUE",
-                request=req.__dict__,
+                request=req_dict,
             )
             logging.info(
                 f"🔧 [Optimizer] Started for {req.pair} (job={job_id})\nMode: {req.mode}",
                 to_telegram=True,
             )
-            future = _EXECUTOR.submit(_worker_func, req.__dict__, calibration)
+            future = _EXECUTOR.submit(_worker_func, req_dict, calibration)
             self._active[job_id] = _ActiveJob(job_id=job_id, future=future, pair=req.pair)
             return job_id
 
@@ -99,30 +102,24 @@ class JobStore:
         best = (payload.get("top_candidates") or [{}])[0]
         robust = best.get("robust_pnl_pct")
         robust_str = f"{robust:.2f}%" if robust is not None else "n/a"
-        n_conv = payload.get("n_trials_at_convergence")
+        n_trials = payload.get("n_trials_run")
         n_agreed = payload.get("n_seeds_agreed", 0)
         n_seeds = len(payload.get("seeds_used") or [])
         env_lines = "\n".join(payload.get("suggested_env_lines") or [])
 
         if payload.get("converged"):
-            current_robust = payload.get("current_robust_pnl")
-            current_str = f"{current_robust:.2f}%" if current_robust is not None else "n/a"
-            if payload.get("is_improvement"):
-                msg = (
-                    f"🚀 [AutoOptimize] {active.pair} (job={active.job_id}) — improvement found\n"
-                    f"Converged: {n_agreed}/{n_seeds} seeds, {n_conv} trials\n"
-                    f"Current robust: {current_str} → New: {robust_str}\n"
-                    f"{env_lines}"
-                )
-            else:
-                msg = (
-                    f"ℹ️ [AutoOptimize] {active.pair} (job={active.job_id}) — current is better\n"  # noqa: RUF001 (intentional info emoji)
-                    f"Converged: {n_agreed}/{n_seeds} seeds, {n_conv} trials\n"
-                    f"{current_str} (current) vs {robust_str} (found) — no change needed\n"
-                    f"{env_lines}"
-                )
+            msg = (
+                f"✅ [AutoOptimize] {active.pair} (job={active.job_id}) — converged\n"
+                f"{n_agreed}/{n_seeds} seeds, {n_trials} trials\n"
+                f"Best robust: {robust_str}\n"
+                f"{env_lines}"
+            )
         else:
-            msg = f"⚠️ [AutoOptimize] {active.pair} (job={active.job_id}) — no convergence reached\nBest found: {robust_str}\n{env_lines}"
+            msg = (
+                f"⚠️ [AutoOptimize] {active.pair} (job={active.job_id}) — no convergence reached\n"
+                f"Best found: {robust_str}\n"
+                f"{env_lines}"
+            )
         logging.info(msg, to_telegram=True)
 
     def shutdown(self) -> None:

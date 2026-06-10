@@ -206,7 +206,7 @@ a single continuous run (no mid-history reset).
 |---|---|
 | `OPTIMIZE` | Run the TPE search at a fixed `n_trials` / `seed`; returns the ranked top candidates. |
 | `CURRENT` | Evaluate the live `.env` config only (1 trial) — a baseline to compare against. |
-| `AUTO` | Multi-seed convergence loop: run `OPTIMIZE` across `n_seeds` random seeds, escalating `n_trials` by `trial_step` until `min_agree` of them agree (or `max_trials` is hit), then compare the winner to `CURRENT` and report whether it improves on the live config. |
+| `AUTO` | Multi-seed convergence loop: run `OPTIMIZE` across `n_seeds` random seeds, escalating `n_trials` by `trial_step` until `min_agree` of them agree on the same config (or `max_trials` is hit). Reports only the search outcome — comparing the winner to the live config is a separate step (run `CURRENT`). |
 
 | Field | Default | Applies to | Meaning |
 |---|---|---|---|
@@ -226,9 +226,10 @@ a single continuous run (no mid-history reset).
 A completed job's `result` holds the ranked `top_candidates` (each with its
 `k_act`/`min_margin`, per-level stop percentiles, and in-sample/train/test/robust
 PnL) and ready-to-paste `suggested_env_lines`. AUTO results additionally report
-`converged`, `is_improvement`, `current_robust_pnl`, `seeds_used`, `n_seeds_agreed`,
-and `n_trials_at_convergence`. Applying them is manual: copy the suggested lines into
-`.env` and redeploy (hot-reload of trading parameters is future work).
+`converged`, `seeds_used`, `n_seeds_agreed`. To check
+whether the winner beats the live config, run `CURRENT` and compare the robust PnL.
+Applying them is manual: copy the suggested lines into `.env` and redeploy (hot-reload
+of trading parameters is future work).
 
 ---
 

@@ -15,8 +15,13 @@ from trading.optimizer.search import OptimizerRequest as DTORequest
 router = APIRouter(prefix="/optimizer", tags=["optimizer"])
 
 
+_HIDDEN_ROW_KEYS = ("id", "pair", "mode", "split_method")
+
+
 def _row_to_response(row: dict) -> OptimizerJobStatusResponse:
-    return OptimizerJobStatusResponse(job_id=row["id"], **{k: v for k, v in row.items() if k != "id"})
+    # pair/mode now live inside the echoed `request`; split_method is CONTINUE-only
+    # and no longer surfaced. The typed request/result models order + group the rest.
+    return OptimizerJobStatusResponse(job_id=row["id"], **{k: v for k, v in row.items() if k not in _HIDDEN_ROW_KEYS})
 
 
 @router.post("/jobs", response_model=OptimizerJobAcceptedResponse, status_code=202)
@@ -25,6 +30,10 @@ async def submit(req: OptimizerRequest) -> OptimizerJobAcceptedResponse:
         raise HTTPException(status_code=503, detail="Optimizer is disabled on this host (MAX_CONCURRENT_JOBS=0)")
     if req.pair not in PAIRS:
         raise HTTPException(status_code=400, detail=f"Unknown pair: {req.pair}")
+    # search_space is required for the search modes (enforced here, not on the model,
+    # so the same model can echo historical requests back without re-failing).
+    if req.mode in ("OPTIMIZE", "AUTO") and req.search_space is None:
+        raise HTTPException(status_code=422, detail="search_space is required for OPTIMIZE and AUTO modes")
     try:
         job_id = JOB_STORE.try_start(DTORequest(**req.model_dump()))
     except OptimizerBusyError as e:
