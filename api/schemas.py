@@ -125,13 +125,36 @@ class SearchSpace(BaseModel):
 
 
 class AutoSettings(BaseModel):
-    """AUTO-mode convergence knobs, grouped (only meaningful for mode=AUTO). Unlike
-    SearchSpace these keep sensible defaults, so AUTO works without spelling them out."""
+    """AUTO-mode convergence knobs (ignored for OPTIMIZE/CURRENT). Unlike
+    SearchSpace they keep defaults, so AUTO works without spelling them out."""
 
     n_seeds: int = Field(default=4, ge=2, le=8)
     min_agree: int = Field(default=3, ge=2, le=8)
     trial_step: int = Field(default=500, ge=100, le=2_000)
     max_trials: int = Field(default=9_000, ge=500, le=20_000)
+
+
+
+class CurrentParams(BaseModel):
+    """CURRENT-mode evaluation knobs (ignored by OPTIMIZE/AUTO). Each field set
+    replaces the value read from the live .env, allowing sensitivity runs against
+    any config without touching the running bot."""
+
+    stop_pcts: dict[str, float] | None = None
+    k_act: float | None = Field(default=None, ge=0.0)
+    min_margin: float | None = Field(default=None, ge=0.0)
+
+    @model_validator(mode="after")
+    def _validate(self) -> CurrentParams:
+        if self.stop_pcts is not None:
+            required = {"LL", "LV", "MV", "HV", "HH"}
+            if set(self.stop_pcts.keys()) != required:
+                raise ValueError(f"stop_pcts must contain exactly the keys {sorted(required)}")
+            for lvl, v in self.stop_pcts.items():
+                if not (0.0 <= v <= 1.0):
+                    raise ValueError(f"stop_pcts[{lvl}]={v} must be in [0, 1]")
+        return self
+
 
 
 class OptimizerRequest(BaseModel):
@@ -145,14 +168,13 @@ class OptimizerRequest(BaseModel):
     min_test_ops: int = 0
     n_trials: int = Field(default=1_000, ge=1, le=10_000)
     seed: int = 42
-    # AUTO-mode knobs (ignored for OPTIMIZE/CURRENT). Omit to use defaults.
+    # Mode applicability of each group is documented on its class. search_space is
+    # required for OPTIMIZE/AUTO, but enforced at the route (not as a model
+    # validator) so this same model can echo a stored request back without
+    # re-failing historical jobs that predate the field.
     auto_settings: AutoSettings | None = None
-    # Search grids for OPTIMIZE/AUTO (the search dimensions); ignored by CURRENT,
-    # which evaluates the live .env config and searches nothing. The "required for
-    # OPTIMIZE/AUTO" rule is enforced at the route (not as a model validator) so
-    # this same model can echo a stored request back without re-failing historical
-    # jobs that predate the search_space field.
     search_space: SearchSpace | None = None
+    current_params: CurrentParams | None = None
 
 
 class OptimizerJobAcceptedResponse(BaseModel):
@@ -175,11 +197,13 @@ class CandidateResult(BaseModel):
     train_pnl_pct: float | None = None
     test_pnl_pct: float | None = None
     robust_pnl_pct: float | None = None
+    train_ops: int | None = None
+    test_ops: int | None = None
 
 
 class AutoResult(BaseModel):
-    """AUTO-only consensus outcome, grouped (present only for AUTO results).
-    Comparing the winner against the live config is a separate concern (CURRENT mode)."""
+    """AUTO-only consensus outcome. Comparing the winner against the live config
+    is a separate concern (CURRENT mode)."""
 
     converged: bool = False
     n_seeds_agreed: int = 0

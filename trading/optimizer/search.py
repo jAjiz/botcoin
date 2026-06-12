@@ -360,6 +360,8 @@ def _scores_dict(ev: _Eval) -> dict:
         "train_pnl_pct": _clean(ev.train.total_pnl),
         "test_pnl_pct": _clean(ev.test.total_pnl),
         "robust_pnl_pct": _clean(ev.robust_pnl),
+        "train_ops": ev.train_samples,
+        "test_ops": ev.test_samples,
     }
 
 
@@ -381,6 +383,8 @@ def _build_objective(study_type: str, ctx: EvalContext):
         trial.set_user_attr("in_sample_pnl", ev.in_sample.total_pnl)
         trial.set_user_attr("train_pnl", ev.train.total_pnl)
         trial.set_user_attr("test_pnl", ev.test.total_pnl)
+        trial.set_user_attr("train_ops", ev.train_samples)
+        trial.set_user_attr("test_ops", ev.test_samples)
         return ev.robust_pnl
 
     return objective
@@ -516,6 +520,8 @@ def _result_from_completed(req: OptimizerRequest, all_completed: list[tuple], n_
             "train_pnl_pct": _round2(user_attrs.get("train_pnl")),
             "test_pnl_pct": _round2(user_attrs.get("test_pnl")),
             "robust_pnl_pct": _round2(value),
+            "train_ops": user_attrs.get("train_ops"),
+            "test_ops": user_attrs.get("test_ops"),
         }
 
     best_cand = _candidate_from_params(top[0][0])
