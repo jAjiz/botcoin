@@ -208,6 +208,7 @@ __marimo__/
 
 # Claude
 .claude/
+.mcp.json
 
 # Local REST Client file with a real API token (copy from api/requests.http.example)
 api/requests.http
