@@ -134,7 +134,6 @@ class AutoSettings(BaseModel):
     max_trials: int = Field(default=9_000, ge=500, le=20_000)
 
 
-
 class CurrentParams(BaseModel):
     """CURRENT-mode evaluation knobs (ignored by OPTIMIZE/AUTO). Each field set
     replaces the value read from the live .env, allowing sensitivity runs against
@@ -154,7 +153,6 @@ class CurrentParams(BaseModel):
                 if not (0.0 <= v <= 1.0):
                     raise ValueError(f"stop_pcts[{lvl}]={v} must be in [0, 1]")
         return self
-
 
 
 class OptimizerRequest(BaseModel):
