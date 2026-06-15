@@ -80,6 +80,24 @@ class AutoSettings:
     max_trials: int = 9_000
 
 
+@dataclass(frozen=True)
+class CurrentParams:
+    """CURRENT-mode evaluation knobs. Each field set replaces the value read
+    from the live .env; all None evaluates the live config as-is."""
+
+    stop_pcts: dict[str, float] | None = None
+    k_act: float | None = None
+    min_margin: float | None = None
+
+
+def _current_params_from_dict(d: dict) -> CurrentParams:
+    return CurrentParams(
+        stop_pcts=d.get("stop_pcts"),
+        k_act=d.get("k_act"),
+        min_margin=d.get("min_margin"),
+    )
+
+
 def _grid_from_dict(d: dict | None) -> GridSpec | None:
     return None if d is None else GridSpec(**d)
 
@@ -177,18 +195,29 @@ def _format_env_lines(pair: str, cand: Candidate) -> list[str]:
     return lines
 
 
-def _candidate_from_env(pair: str) -> Candidate:
-    raw_k_act = TRADING_PARAMS[pair]["buy"].get("K_ACT")
-    try:
-        k_act = float(raw_k_act) if raw_k_act is not None and str(raw_k_act).strip() != "" else None
-    except (TypeError, ValueError):
-        k_act = None
-    raw_mm = TRADING_PARAMS[pair]["buy"].get("MIN_MARGIN", 0) or 0
-    try:
-        min_margin = float(raw_mm)
-    except (TypeError, ValueError):
-        min_margin = 0.0
-    stop_pcts = {lvl: float(STOP_PERCENTILES[pair][lvl]) for lvl in LEVELS}
+def _candidate_from_env(req: "OptimizerRequest") -> Candidate:
+    pair = req.pair
+    cur = req.current_params or CurrentParams()
+    if cur.k_act is not None:
+        k_act = cur.k_act
+    else:
+        raw_k_act = TRADING_PARAMS[pair]["buy"].get("K_ACT")
+        try:
+            k_act = float(raw_k_act) if raw_k_act is not None and str(raw_k_act).strip() != "" else None
+        except (TypeError, ValueError):
+            k_act = None
+    if cur.min_margin is not None:
+        min_margin = cur.min_margin
+    else:
+        raw_mm = TRADING_PARAMS[pair]["buy"].get("MIN_MARGIN", 0) or 0
+        try:
+            min_margin = float(raw_mm)
+        except (TypeError, ValueError):
+            min_margin = 0.0
+    if cur.stop_pcts is not None:
+        stop_pcts = {lvl: float(cur.stop_pcts[lvl]) for lvl in LEVELS}
+    else:
+        stop_pcts = {lvl: float(STOP_PERCENTILES[pair][lvl]) for lvl in LEVELS}
     return Candidate(k_act=k_act, min_margin=min_margin, stop_pcts=stop_pcts)
 
 
@@ -284,12 +313,16 @@ class OptimizerRequest:
     # Search grids (required for OPTIMIZE/AUTO, ignored by CURRENT). Accepts a
     # SearchSpace or the plain dict produced by model_dump()/asdict round-trips.
     search_space: SearchSpace | None = None
+    # CURRENT-mode .env overrides; ignored by OPTIMIZE/AUTO.
+    current_params: CurrentParams | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.search_space, dict):
             object.__setattr__(self, "search_space", _search_space_from_dict(self.search_space))
         if isinstance(self.auto_settings, dict):
             object.__setattr__(self, "auto_settings", AutoSettings(**self.auto_settings))
+        if isinstance(self.current_params, dict):
+            object.__setattr__(self, "current_params", _current_params_from_dict(self.current_params))
 
 
 @dataclass(frozen=True)
@@ -589,7 +622,7 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
 
 def _current_result(req: OptimizerRequest, ctx: EvalContext) -> OptimizerResult:
     """Evaluate the live ``.env`` config (CURRENT mode)."""
-    cand = _candidate_from_env(req.pair)
+    cand = _candidate_from_env(req)
     ev = _evaluate(cand, ctx)
     return OptimizerResult(
         pair=req.pair,

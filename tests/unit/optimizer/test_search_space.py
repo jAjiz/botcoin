@@ -6,10 +6,11 @@ from dataclasses import asdict
 import pytest
 from pydantic import ValidationError
 
+from api.schemas import CurrentParams as ApiCurrentParams
 from api.schemas import GridSpec as ApiGridSpec
 from api.schemas import OptimizerRequest as ApiOptimizerRequest
 from api.schemas import SearchSpace as ApiSearchSpace
-from trading.optimizer.search import AutoSettings, GridSpec, OptimizerRequest, SearchSpace
+from trading.optimizer.search import AutoSettings, CurrentParams, GridSpec, OptimizerRequest, SearchSpace
 
 
 def _api_space() -> dict:
@@ -120,3 +121,41 @@ def test_dataclass_coerces_dict_auto_settings() -> None:
     assert isinstance(req.auto_settings, AutoSettings)
     assert req.auto_settings.n_seeds == 5
     assert asdict(req)["auto_settings"]["max_trials"] == 3000
+
+
+# --- CurrentParams validation + round-trip ----------------------------------
+
+
+def test_current_params_rejects_incomplete_stop_pcts() -> None:
+    with pytest.raises(ValidationError, match="exactly the keys"):
+        ApiCurrentParams(stop_pcts={"LL": 0.5, "LV": 0.5})
+
+
+def test_current_params_rejects_stop_out_of_bounds() -> None:
+    with pytest.raises(ValidationError, match="must be in"):
+        ApiCurrentParams(stop_pcts={"LL": 0.5, "LV": 0.5, "MV": 0.5, "HV": 0.5, "HH": 1.5})
+
+
+def test_dataclass_coerces_dict_current_params() -> None:
+    """current_params accepts the plain dict round-trip and re-hydrates to CurrentParams."""
+    api_req = ApiOptimizerRequest(
+        pair="XBTEUR",
+        mode="CURRENT",
+        current_params={"min_margin": 0.004},
+    )
+    req = OptimizerRequest(pair="XBTEUR", mode="CURRENT", current_params=api_req.current_params.model_dump())
+    assert isinstance(req.current_params, CurrentParams)
+    assert req.current_params.min_margin == 0.004
+    assert req.current_params.k_act is None
+    assert req.current_params.stop_pcts is None
+
+    rt = asdict(req)["current_params"]
+    req2 = OptimizerRequest(pair="XBTEUR", mode="CURRENT", current_params=rt)
+    assert req2.current_params.min_margin == 0.004
+
+
+def test_dataclass_current_params_all_none_is_default() -> None:
+    req = OptimizerRequest(pair="XBTEUR", mode="CURRENT", current_params={"k_act": 1.0})
+    assert req.current_params.k_act == 1.0
+    assert req.current_params.min_margin is None
+    assert req.current_params.stop_pcts is None
