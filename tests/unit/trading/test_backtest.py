@@ -27,7 +27,7 @@ def _setup_common(monkeypatch, sample_dataframe) -> None:
     monkeypatch.setattr(
         backtest,
         "TRADING_PARAMS",
-        {_PAIR: {"buy": {"K_ACT": None, "MIN_MARGIN": 0.0}, "sell": {"K_ACT": None, "MIN_MARGIN": 0.0}}},
+        {_PAIR: {"K_ACT": None, "MIN_MARGIN": 0.0}},
     )
 
 

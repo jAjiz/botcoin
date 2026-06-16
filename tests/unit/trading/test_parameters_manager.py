@@ -59,8 +59,10 @@ def test_get_k_stop_uses_fallbacks_when_current_level_missing(monkeypatch) -> No
         "TRADING_PARAMS",
         {
             "XBTEUR": {
-                "sell": {"K_STOP": {"LL": None, "LV": None, "MV": None, "HV": None, "HH": 5.5}},
-                "buy": {"K_STOP": {"LL": None, "LV": None, "MV": None, "HV": None, "HH": 4.4}},
+                "K_STOP": {
+                    "sell": {"LL": None, "LV": None, "MV": None, "HV": None, "HH": 5.5},
+                    "buy": {"LL": None, "LV": None, "MV": None, "HV": None, "HH": 4.4},
+                }
             }
         },
     )
@@ -99,7 +101,7 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     monkeypatch.setattr(
         parameters_manager,
         "TRADING_PARAMS",
-        {pair: {"sell": {"K_STOP": {}}, "buy": {"K_STOP": {}}}},
+        {pair: {"K_STOP": {"sell": {}, "buy": {}}}},
     )
 
     parameters_manager.calculate_trading_parameters(pair, infoLog=False)
@@ -111,7 +113,7 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     assert parameters_manager.PAIRS[pair]["atr_95pct"] == pytest.approx(4.5)
 
     # K_STOP sell side (from real uptrend events, 2 events X 5 vol levels)
-    sell = parameters_manager.TRADING_PARAMS[pair]["sell"]["K_STOP"]
+    sell = parameters_manager.TRADING_PARAMS[pair]["K_STOP"]["sell"]
     assert sell["LL"] == 10.0
     assert sell["LV"] == 3.4
     assert sell["MV"] == 2.0
@@ -119,7 +121,7 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     assert sell["HH"] == 1.2
 
     # K_STOP buy side (from real downtrend events, 2 events X 5 vol levels)
-    buy = parameters_manager.TRADING_PARAMS[pair]["buy"]["K_STOP"]
+    buy = parameters_manager.TRADING_PARAMS[pair]["K_STOP"]["buy"]
     assert buy["LL"] == 11.0
     assert buy["LV"] == 3.4
     assert buy["MV"] == 2.0

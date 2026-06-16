@@ -26,17 +26,11 @@ class PairCalibration:
 
 
 @dataclass(frozen=True)
-class SidePolicy:
-    k_act: float | None
-    min_margin: float
-
-
-@dataclass(frozen=True)
 class EngineConfig:
     pair: str
     calibration: PairCalibration
-    buy: SidePolicy
-    sell: SidePolicy
+    k_act: float | None
+    min_margin: float
     atr_desv_limit: float
 
 
@@ -104,12 +98,11 @@ def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float) -> float | None:
 
 
 def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float) -> float:
-    policy = cfg.sell if side == "sell" else cfg.buy
-    k_act = policy.k_act
+    k_act = cfg.k_act
     if k_act is not None:
         return float(k_act) * atr_val
     k_stop = lookup_k_stop(cfg, side, atr_val) or 0.0
-    return float(k_stop) * atr_val + (policy.min_margin * reference_price)
+    return float(k_stop) * atr_val + (cfg.min_margin * reference_price)
 
 
 def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float) -> float:

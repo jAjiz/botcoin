@@ -1,3 +1,4 @@
+import core.config as config
 import core.validation as validation
 
 
@@ -86,15 +87,14 @@ def _stub_pair_config(
     allocation=None,
     stops=None,
 ):
-    """Replace the module-level config that validate_pair_params reads/writes."""
-    monkeypatch.setattr(validation, "PAIRS", {pair: {}})
-    monkeypatch.setattr(validation, "VOLATILITY_LEVELS", ("LL", "LV", "MV", "HV", "HH"))
-    default_trading = {"sell": {"K_ACT": "1.2", "MIN_MARGIN": "0"}, "buy": {"K_ACT": "1.2", "MIN_MARGIN": "0"}}
+    """Replace the config-module dicts that validate_pair_params reads/writes."""
+    monkeypatch.setattr(config, "PAIRS", {pair: {}})
+    default_trading = {"K_ACT": "1.2", "MIN_MARGIN": "0", "K_STOP": {"buy": {}, "sell": {}}}
     default_allocation = {"TARGET_PCT": "50", "HODL_PCT": "25"}
     default_stops = {lvl: "0.9" for lvl in ("LL", "LV", "MV", "HV", "HH")}
-    monkeypatch.setattr(validation, "TRADING_PARAMS", {pair: trading or default_trading})
-    monkeypatch.setattr(validation, "ASSET_ALLOCATION", {pair: allocation or default_allocation})
-    monkeypatch.setattr(validation, "STOP_PERCENTILES", {pair: stops or default_stops})
+    monkeypatch.setattr(config, "TRADING_PARAMS", {pair: trading or default_trading})
+    monkeypatch.setattr(config, "ASSET_ALLOCATION", {pair: allocation or default_allocation})
+    monkeypatch.setattr(config, "STOP_PERCENTILES", {pair: stops or default_stops})
 
 
 def test_validate_pair_params_happy_path_normalizes_values(monkeypatch) -> None:
@@ -103,57 +103,57 @@ def test_validate_pair_params_happy_path_normalizes_values(monkeypatch) -> None:
     validation.validate_pair_params(errors)
 
     assert errors == []
-    assert validation.TRADING_PARAMS["XBTEUR"]["sell"]["K_ACT"] == 1.2
-    assert validation.TRADING_PARAMS["XBTEUR"]["sell"]["MIN_MARGIN"] == 0.0
-    assert validation.ASSET_ALLOCATION["XBTEUR"]["TARGET_PCT"] == 50.0
-    assert validation.ASSET_ALLOCATION["XBTEUR"]["HODL_PCT"] == 25.0
-    assert validation.STOP_PERCENTILES["XBTEUR"]["LL"] == 0.9
+    assert config.TRADING_PARAMS["XBTEUR"]["K_ACT"] == 1.2
+    assert config.TRADING_PARAMS["XBTEUR"]["MIN_MARGIN"] == 0.0
+    assert config.ASSET_ALLOCATION["XBTEUR"]["TARGET_PCT"] == 50.0
+    assert config.ASSET_ALLOCATION["XBTEUR"]["HODL_PCT"] == 25.0
+    assert config.STOP_PERCENTILES["XBTEUR"]["LL"] == 0.9
 
 
-def test_validate_pair_params_empty_k_act_becomes_none_and_min_margin_required(monkeypatch) -> None:
+def test_validate_pair_params_empty_k_act_becomes_none_and_min_margin_used(monkeypatch) -> None:
     _stub_pair_config(
         monkeypatch,
-        trading={
-            "sell": {"K_ACT": "", "MIN_MARGIN": "0.5"},
-            "buy": {"K_ACT": None, "MIN_MARGIN": ""},
-        },
+        trading={"K_ACT": "", "MIN_MARGIN": "0.5", "K_STOP": {"buy": {}, "sell": {}}},
     )
     errors = []
     validation.validate_pair_params(errors)
 
-    assert validation.TRADING_PARAMS["XBTEUR"]["sell"]["K_ACT"] is None
-    assert validation.TRADING_PARAMS["XBTEUR"]["sell"]["MIN_MARGIN"] == 0.5
-    # buy side: K_ACT unset AND MIN_MARGIN unset → error.
-    assert any("XBTEUR_BUY_MIN_MARGIN is required" in e for e in errors)
+    assert errors == []
+    assert config.TRADING_PARAMS["XBTEUR"]["K_ACT"] is None
+    assert config.TRADING_PARAMS["XBTEUR"]["MIN_MARGIN"] == 0.5
+
+
+def test_validate_pair_params_min_margin_required_when_k_act_unset(monkeypatch) -> None:
+    _stub_pair_config(
+        monkeypatch,
+        trading={"K_ACT": None, "MIN_MARGIN": "", "K_STOP": {"buy": {}, "sell": {}}},
+    )
+    errors = []
+    validation.validate_pair_params(errors)
+    # K_ACT unset AND MIN_MARGIN unset → error.
+    assert any("XBTEUR_MIN_MARGIN is required" in e for e in errors)
 
 
 def test_validate_pair_params_invalid_k_act_flagged(monkeypatch) -> None:
     _stub_pair_config(
         monkeypatch,
-        trading={
-            "sell": {"K_ACT": "not-a-number", "MIN_MARGIN": "0"},
-            "buy": {"K_ACT": "1.0", "MIN_MARGIN": "0"},
-        },
+        trading={"K_ACT": "not-a-number", "MIN_MARGIN": "0", "K_STOP": {"buy": {}, "sell": {}}},
     )
     errors = []
     validation.validate_pair_params(errors)
-    assert any("XBTEUR_SELL_K_ACT must be a float" in e for e in errors)
+    assert any("XBTEUR_K_ACT must be a float" in e for e in errors)
 
 
 def test_validate_pair_params_min_margin_unused_when_k_act_defined(monkeypatch) -> None:
     _stub_pair_config(
         monkeypatch,
-        trading={
-            "sell": {"K_ACT": "1.5", "MIN_MARGIN": ""},
-            "buy": {"K_ACT": "1.5", "MIN_MARGIN": None},
-        },
+        trading={"K_ACT": "1.5", "MIN_MARGIN": "", "K_STOP": {"buy": {}, "sell": {}}},
     )
     errors = []
     validation.validate_pair_params(errors)
     # No error: MIN_MARGIN unused when K_ACT is defined. Normalized to 0.
     assert errors == []
-    assert validation.TRADING_PARAMS["XBTEUR"]["sell"]["MIN_MARGIN"] == 0.0
-    assert validation.TRADING_PARAMS["XBTEUR"]["buy"]["MIN_MARGIN"] == 0.0
+    assert config.TRADING_PARAMS["XBTEUR"]["MIN_MARGIN"] == 0.0
 
 
 def test_validate_pair_params_target_pct_over_100_flagged(monkeypatch) -> None:
@@ -171,20 +171,19 @@ def test_validate_pair_params_hodl_pct_over_100_flagged(monkeypatch) -> None:
 
 
 def test_validate_pair_params_target_pct_sum_over_100_flagged(monkeypatch) -> None:
-    monkeypatch.setattr(validation, "PAIRS", {"XBTEUR": {}, "ETHEUR": {}})
-    monkeypatch.setattr(validation, "VOLATILITY_LEVELS", ("LL", "LV", "MV", "HV", "HH"))
-    trading = {"sell": {"K_ACT": "1.2", "MIN_MARGIN": "0"}, "buy": {"K_ACT": "1.2", "MIN_MARGIN": "0"}}
+    monkeypatch.setattr(config, "PAIRS", {"XBTEUR": {}, "ETHEUR": {}})
+    trading = {"K_ACT": "1.2", "MIN_MARGIN": "0", "K_STOP": {"buy": {}, "sell": {}}}
     stops = {lvl: "0.9" for lvl in ("LL", "LV", "MV", "HV", "HH")}
-    monkeypatch.setattr(validation, "TRADING_PARAMS", {"XBTEUR": trading, "ETHEUR": trading})
+    monkeypatch.setattr(config, "TRADING_PARAMS", {"XBTEUR": dict(trading), "ETHEUR": dict(trading)})
     monkeypatch.setattr(
-        validation,
+        config,
         "ASSET_ALLOCATION",
         {
             "XBTEUR": {"TARGET_PCT": "60", "HODL_PCT": "10"},
             "ETHEUR": {"TARGET_PCT": "60", "HODL_PCT": "10"},
         },
     )
-    monkeypatch.setattr(validation, "STOP_PERCENTILES", {"XBTEUR": stops, "ETHEUR": stops})
+    monkeypatch.setattr(config, "STOP_PERCENTILES", {"XBTEUR": dict(stops), "ETHEUR": dict(stops)})
 
     errors = []
     validation.validate_pair_params(errors)
@@ -207,4 +206,4 @@ def test_validate_pair_params_stop_pct_empty_uses_default(monkeypatch) -> None:
     validation.validate_pair_params(errors)
     assert errors == []
     for lvl in ("LL", "LV", "MV", "HV", "HH"):
-        assert validation.STOP_PERCENTILES["XBTEUR"][lvl] == 0.90
+        assert config.STOP_PERCENTILES["XBTEUR"][lvl] == 0.90
