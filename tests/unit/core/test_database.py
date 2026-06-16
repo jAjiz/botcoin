@@ -962,3 +962,44 @@ def test_finalize_session_swallows_snapshot_write_error(monkeypatch, caplog):
     )
 
     assert "Error saving latest_balance" in caplog.text
+
+
+def test_pair_config_to_dict_round_trips_types():
+    from core.database import PairConfig
+
+    row = PairConfig(
+        pair="XBTEUR",
+        target_pct=Decimal("30.000"),
+        hodl_pct=Decimal("10.000"),
+        k_act=Decimal("2.0000"),
+        min_margin=Decimal("0.00100000"),
+        stop_pct_ll=Decimal("0.900"),
+        stop_pct_lv=Decimal("0.900"),
+        stop_pct_mv=Decimal("0.900"),
+        stop_pct_hv=Decimal("0.900"),
+        stop_pct_hh=Decimal("0.950"),
+    )
+    d = row.to_dict()
+    assert d["pair"] == "XBTEUR"
+    assert d["target_pct"] == 30.0
+    assert d["k_act"] == 2.0
+    assert d["stop_pct_hh"] == 0.95
+    assert isinstance(d["min_margin"], float)
+
+
+def test_pair_config_to_dict_handles_null_k_act():
+    from core.database import PairConfig
+
+    row = PairConfig(
+        pair="ETHEUR",
+        target_pct=Decimal("0"),
+        hodl_pct=Decimal("0"),
+        k_act=None,
+        min_margin=Decimal("0.002"),
+        stop_pct_ll=Decimal("0.9"),
+        stop_pct_lv=Decimal("0.9"),
+        stop_pct_mv=Decimal("0.9"),
+        stop_pct_hv=Decimal("0.9"),
+        stop_pct_hh=Decimal("0.9"),
+    )
+    assert row.to_dict()["k_act"] is None

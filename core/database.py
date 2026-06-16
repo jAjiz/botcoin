@@ -263,6 +263,58 @@ class BotControl(Base):
         }
 
 
+class PairConfig(Base):
+    """Per-pair dynamic trading configuration (DB-authoritative, seeded from env)."""
+
+    __tablename__ = "pair_config"
+
+    pair = Column(Text, primary_key=True, nullable=False)
+    target_pct = Column(Numeric(6, 3), nullable=False, default=0)
+    hodl_pct = Column(Numeric(6, 3), nullable=False, default=0)
+    k_act = Column(Numeric(10, 4), nullable=True)
+    min_margin = Column(Numeric(12, 8), nullable=False, default=0)
+    stop_pct_ll = Column(Numeric(4, 3), nullable=False, default=0.90)
+    stop_pct_lv = Column(Numeric(4, 3), nullable=False, default=0.90)
+    stop_pct_mv = Column(Numeric(4, 3), nullable=False, default=0.90)
+    stop_pct_hv = Column(Numeric(4, 3), nullable=False, default=0.90)
+    stop_pct_hh = Column(Numeric(4, 3), nullable=False, default=0.90)
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    updated_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("target_pct >= 0 AND target_pct <= 100", name="ck_pair_config_target_pct_range"),
+        CheckConstraint("hodl_pct >= 0 AND hodl_pct <= 100", name="ck_pair_config_hodl_pct_range"),
+        CheckConstraint("k_act IS NULL OR k_act >= 0", name="ck_pair_config_k_act_nonneg"),
+        CheckConstraint("min_margin >= 0", name="ck_pair_config_min_margin_nonneg"),
+        CheckConstraint("stop_pct_ll >= 0 AND stop_pct_ll <= 1", name="ck_pair_config_stop_ll_range"),
+        CheckConstraint("stop_pct_lv >= 0 AND stop_pct_lv <= 1", name="ck_pair_config_stop_lv_range"),
+        CheckConstraint("stop_pct_mv >= 0 AND stop_pct_mv <= 1", name="ck_pair_config_stop_mv_range"),
+        CheckConstraint("stop_pct_hv >= 0 AND stop_pct_hv <= 1", name="ck_pair_config_stop_hv_range"),
+        CheckConstraint("stop_pct_hh >= 0 AND stop_pct_hh <= 1", name="ck_pair_config_stop_hh_range"),
+    )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pair": self.pair,
+            "target_pct": float(self.target_pct),
+            "hodl_pct": float(self.hodl_pct),
+            "k_act": float(self.k_act) if self.k_act is not None else None,
+            "min_margin": float(self.min_margin),
+            "stop_pct_ll": float(self.stop_pct_ll),
+            "stop_pct_lv": float(self.stop_pct_lv),
+            "stop_pct_mv": float(self.stop_pct_mv),
+            "stop_pct_hv": float(self.stop_pct_hv),
+            "stop_pct_hh": float(self.stop_pct_hh),
+            "updated_at": self.updated_at,
+            "updated_by": self.updated_by,
+        }
+
+
 class OptimizerJob(Base):
     """Optimizer job state and results."""
 
@@ -691,6 +743,29 @@ def get_bot_paused() -> bool:
 def set_bot_paused(paused: bool, updated_by: str | None = None) -> None:
     """Set bot paused state in bot_control table."""
     set_control_value("bot_paused", "true" if paused else "false", updated_by=updated_by)
+
+
+# ============================================================================
+# Pair Config Operations
+# ============================================================================
+
+
+def load_all_pair_config() -> dict[str, dict[str, Any]]:
+    """Return {pair: pair_config_dict} for all stored pairs."""
+    try:
+        with get_session() as session:
+            return {row.pair: row.to_dict() for row in session.query(PairConfig).all()}
+    except Exception as e:
+        logger.error(f"Error loading pair_config: {e}")
+        return {}
+
+
+def upsert_pair_config(pair: str, values: dict[str, Any], updated_by: str | None = None) -> None:
+    """Insert or update one pair's config row. ``values`` is a flat typed dict
+    with keys target_pct, hodl_pct, k_act, min_margin, stop_pct_ll..stop_pct_hh."""
+    with get_session() as session:
+        session.merge(PairConfig(pair=pair, updated_by=updated_by, **values))
+    logger.debug(f"Saved pair_config for {pair}")
 
 
 # ============================================================================
