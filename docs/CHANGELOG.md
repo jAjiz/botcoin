@@ -10,6 +10,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [2.10.1] – V2 Milestone Closed
+
+The V2 milestone — evolving BoTCoin into a production-grade backend service — is complete (Phases 0–10). This release is a documentation-only reorganization that freezes the V2 record and opens the V3 roadmap.
+
+### Changed
+- Archived the V2 roadmap and all phase execution plans under `docs/v2/` (`docs/v2/ROADMAP.md`, `docs/v2/plans/`). The V2 roadmap was reviewed and closed (consistency fixes; "carried forward to V3" note).
+- Renamed `docs/plan/` → `docs/plans/`; `docs/plans/` now holds plans for the active roadmap.
+- Repointed `README.md` links to the new documentation paths.
+
+### Added
+- Fresh V3 roadmap at `docs/ROADMAP.md`, seeded with the two items scoped under V2 but never built: Trend/Chop Regime Filter (V3 Phase 1, formerly V2 Phase 11) and the deferred Auto-Lookback Window for K_STOP Calibration.
+
+### Removed
+- Retired the unused GitHub Copilot environment from Phase 0 (`.github/agents/`, `.github/instructions/`, `.github/skills/`). AI-assisted development now uses Claude Code, documented in `CLAUDE.md`.
+
+---
+
 ## [2.10.0] – Phase 10: Trading Tools Integration — Backtest + Optimizer
 
 ### Added
