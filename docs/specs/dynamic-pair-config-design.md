@@ -1,6 +1,5 @@
 # Dynamic Pair Configuration — Design
 
-**Date:** 2026-06-16
 **Status:** Approved (brainstorming) — ready for implementation plan
 **Roadmap:** V3 Phase 1 (regime filter moves to Phase 2)
 

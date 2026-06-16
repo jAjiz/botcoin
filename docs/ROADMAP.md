@@ -38,7 +38,7 @@ inconsistency — the optimizer already treats `k_act`/`min_margin` as single
 values.
 
 **Scope:** Full design at
-[`superpowers/specs/2026-06-16-dynamic-pair-config-design.md`](superpowers/specs/2026-06-16-dynamic-pair-config-design.md).
+[`specs/dynamic-pair-config-design.md`](specs/dynamic-pair-config-design.md).
 
 - [ ] `pair_config` table (ORM model + Alembic migration); DB-authoritative,
       seeded once from `.env`
