@@ -2,14 +2,15 @@
 
 This is the active roadmap for BoTCoin. It continues from the **closed V2 milestone**, whose goal — evolving BoTCoin into a production-grade backend service with professional persistence, observability, and testability — was achieved across Phases 0–10. The frozen V2 record lives at [`v2/ROADMAP.md`](v2/ROADMAP.md).
 
-V3's overarching theme is still being formalized. This roadmap is currently seeded with the two items that were scoped under V2 but never built. Other work already in progress (e.g. Dynamic Configuration) will be folded in here once V3's direction is settled.
+V3's overarching theme is still being formalized. This roadmap is currently seeded with the items scoped under V2 but never built, plus Dynamic Pair Configuration as Phase 1.
 
 ---
 
 ## 📋 Table of Contents
 
 - [Phased Roadmap](#-phased-roadmap)
-  - [Phase 1 – Strategy Refinement: Trend/Chop Regime Filter](#phase-1--strategy-refinement-trendchop-regime-filter)
+  - [Phase 1 – Dynamic Pair Configuration](#phase-1--dynamic-pair-configuration)
+  - [Phase 2 – Strategy Refinement: Trend/Chop Regime Filter](#phase-2--strategy-refinement-trendchop-regime-filter)
 - [Appendix: Deferred Phases](#-appendix-deferred-phases)
   - [Auto-Lookback Window for K_STOP Calibration](#auto-lookback-window-for-k_stop-calibration)
 
@@ -19,7 +20,51 @@ V3's overarching theme is still being formalized. This roadmap is currently seed
 
 ---
 
-### Phase 1 – Strategy Refinement: Trend/Chop Regime Filter
+### Phase 1 – Dynamic Pair Configuration
+
+**Goal:** Make the pair-specific trading parameters currently fixed in `.env` —
+`target_pct`, `hodl_pct`, `k_act`, `min_margin`, and the volatility-based stop
+percentiles (`stop_pct_<level>`) — editable at runtime through both the HTTP API
+and Telegram, with changes taking effect automatically on the next bot session,
+no restart required. Ships with a cleanup: `k_act`/`min_margin` collapse from
+per-side to a single value per pair (`K_STOP` stays per-side, as it is derived).
+
+**Why:** These parameters are the main strategy knobs. Tuning any of them today
+requires editing `.env` and restarting `botc`, interrupting the trading loop.
+Exposing them through the existing API + Telegram surfaces (mirroring
+`/control/pause`) lets the operator retune live and apply optimizer
+recommendations without a redeploy. The per-side collapse removes an existing
+inconsistency — the optimizer already treats `k_act`/`min_margin` as single
+values.
+
+**Scope:** Full design at
+[`superpowers/specs/2026-06-16-dynamic-pair-config-design.md`](superpowers/specs/2026-06-16-dynamic-pair-config-design.md).
+
+- [ ] `pair_config` table (ORM model + Alembic migration); DB-authoritative,
+      seeded once from `.env`
+- [ ] `core/config_store.py` — load/seed at startup, typed reads, atomic
+      `apply_patch` that updates the live dicts
+- [ ] Per-pair dirty flag in `core/runtime.py`; `core/scheduler.py` recalcs
+      `K_STOP` at the next session when a `stop_pct` changes
+- [ ] `GET /config`, `GET /config/{pair}`, `PATCH /config/{pair}`
+      (`api/routes/config.py` + schemas)
+- [ ] Telegram `/config [pair]` and `/setconfig <pair> <field> <value>`
+- [ ] Collapse `k_act`/`min_margin` to single per-pair across config, validation,
+      `positions_manager`, `engine`, `optimizer`, `backtest`; drop
+      `PAIR_SELL_/BUY_` env vars; update `.env.example` + `docs/configuration.md`
+- [ ] Reusable `normalize_pair_config` shared by startup validation and runtime
+      patches (incl. cross-pair `target_pct` sum check)
+- [ ] Unit tests across store, validation, API, Telegram, scheduler, and the
+      collapse regression (80% gate)
+
+**Success criteria:** An operator can query and modify any pair-specific
+parameter via the API and Telegram; changes persist in `pair_config` and take
+effect on the next session without a restart; `.env` seeds config only on first
+boot; `k_act`/`min_margin` are single per pair everywhere.
+
+---
+
+### Phase 2 – Strategy Refinement: Trend/Chop Regime Filter
 
 **Goal:** Add a Choppiness Index–based regime classifier that gates new position entries during sideways markets while leaving the trailing-stop exit logic untouched. The filter reuses the existing OHLC + ATR pipeline, introduces no new external dependencies, and ships in two stages — observation first, enforcement second — so behavior changes are validated against live data before being enabled.
 
