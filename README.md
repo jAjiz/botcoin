@@ -65,17 +65,17 @@ docker compose down                # stop all services
 
 Each decision links to its phase in the roadmap — execution plans and design rationale are linked from there.
 
-| Technology | Decision | Reference |
+| Technology | Why it was chosen | Reference |
 |---|---|---|
-| Docker | Single image, multi-service Compose; no host Python required | [Roadmap](docs/v2/ROADMAP.md#phase-1--infrastructure-first-docker-completed) |
-| APScheduler | `AsyncIOScheduler` in the FastAPI `lifespan`; `max_instances=1` prevents overlapping ticks | [Roadmap](docs/v2/ROADMAP.md#phase-2--managed-execution-apscheduler-completed) |
-| Testing | Two-tier pytest (unit + integration) runs entirely inside Docker for production parity | [Roadmap](docs/v2/ROADMAP.md#phase-3--testing-strategy-completed) |
-| PostgreSQL | Synchronous SQLAlchemy under async FastAPI; module-level DAL instead of a repository class | [Roadmap](docs/v2/ROADMAP.md#phase-4--professional-persistence-postgresql-completed) |
-| FastAPI | `botc` and `telegram` split into two services so Telegram's long-poll lifecycle cannot stall the trading loop | [Roadmap](docs/v2/ROADMAP.md#phase-5--rest-api-layer-fastapi-completed) |
-| ruff | Single tool for lint + format + import sorting; `pyproject.toml` as the single config source | [Roadmap](docs/v2/ROADMAP.md#phase-6--code-quality-linting--type-safety-completed) |
-| CI/CD | GHCR image-based deploy; VPS holds only `.env` + two compose files, no source clone | [Roadmap](docs/v2/ROADMAP.md#phase-7--cicd-pipeline-completed) |
-| Grafana | Per-session `sessions` table + filesystem-provisioned dashboard; SQL-native, no Loki / Prometheus | [Roadmap](docs/v2/ROADMAP.md#phase-8--observability-grafana-dashboard-completed) |
-| Optuna | Backtest & optimizer exposed as API endpoints; the CPU-bound optimizer runs in a spawned child process with a single-slot lock and Postgres-persisted jobs; Optuna TPE replaces the exhaustive grid | [Roadmap](docs/v2/ROADMAP.md#phase-10--trading-tools-integration-backtest--optimizer-completed) |
+| Docker | Ships the whole four-service stack as one image so it runs identically on a laptop and the VPS — no host Python or dependency drift. | [Roadmap](docs/v2/ROADMAP.md#phase-1--infrastructure-first-docker-completed) |
+| APScheduler | The bot works by running a trading session on a fixed interval, over and over. A lightweight in-process scheduler is the simplest, cleanest way to do that — no separate worker or task queue to run and maintain. | [Roadmap](docs/v2/ROADMAP.md#phase-2--managed-execution-apscheduler-completed) |
+| pytest | Fixtures + monkeypatch fit the mock-the-exchange testing style; the unit/integration split runs inside Docker so tests hit the same image and Postgres as production. | [Roadmap](docs/v2/ROADMAP.md#phase-3--testing-strategy-completed) |
+| PostgreSQL | One reliable store for all trading state and history, with transactions to keep that state consistent. Sync SQLAlchemy because the loop ticks every few seconds — no concurrent load to justify async. | [Roadmap](docs/v2/ROADMAP.md#phase-4--professional-persistence-postgresql-completed) |
+| FastAPI | Async REST layer with built-in validation and OpenAPI docs; `botc` and `telegram` are split so Telegram's blocking long-poll can never stall the trading loop. | [Roadmap](docs/v2/ROADMAP.md#phase-5--rest-api-layer-fastapi-completed) |
+| ruff | One Rust-fast tool replaces flake8 + black + isort for lint, format, and import sorting, configured solely in `pyproject.toml`. | [Roadmap](docs/v2/ROADMAP.md#phase-6--code-quality-linting--type-safety-completed) |
+| GitHub Actions + GHCR | Build the image once in CI and deploy by tag; the VPS pulls from GHCR and holds only `.env` + compose files — no source clone or on-host build. | [Roadmap](docs/v2/ROADMAP.md#phase-7--cicd-pipeline-completed) |
+| Grafana | A ready-made observability dashboard that reads the bot's Postgres tables directly with plain SQL, so market data, positions, and performance are visible without building a custom UI. | [Roadmap](docs/v2/ROADMAP.md#phase-8--observability-grafana-dashboard-completed) |
+| Optuna | The original optimizer tried every parameter combination one by one (an exhaustive grid scan), which was slow and didn't scale. Optuna searches intelligently for good parameters instead, and now runs as an API endpoint in a background process with its jobs saved in Postgres. | [Roadmap](docs/v2/ROADMAP.md#phase-10--trading-tools-integration-backtest--optimizer-completed) |
 
 Full design rationale is in [CLAUDE.md](CLAUDE.md) under **Design choices**.
 
