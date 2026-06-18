@@ -142,7 +142,7 @@ def test_run_optimize_no_global_mutation(monkeypatch) -> None:
     monkeypatch.setitem(
         config.TRADING_PARAMS,
         _PAIR,
-        {"buy": {"K_ACT": "1.0", "MIN_MARGIN": "0.005"}, "sell": {"K_ACT": "1.0", "MIN_MARGIN": "0.005"}},
+        {"K_ACT": "1.0", "MIN_MARGIN": "0.005"},
     )
     monkeypatch.setitem(config.PAIRS, _PAIR, {"atr_20pct": 1.0, "atr_50pct": 2.0})
 
@@ -160,7 +160,7 @@ def test_run_optimize_current_mode(monkeypatch) -> None:
     monkeypatch.setattr(
         optimizer,
         "TRADING_PARAMS",
-        {_PAIR: {"buy": {"K_ACT": None, "MIN_MARGIN": 0.005}, "sell": {"K_ACT": None, "MIN_MARGIN": 0.005}}},
+        {_PAIR: {"K_ACT": None, "MIN_MARGIN": 0.005}},
     )
     monkeypatch.setattr(optimizer, "STOP_PERCENTILES", {_PAIR: dict.fromkeys(_LEVELS, 0.9)})
 

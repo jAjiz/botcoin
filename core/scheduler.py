@@ -90,7 +90,7 @@ def trading_session() -> None:
                 logging.error("Could not fetch price or ATR. Skipping this pair.")
                 continue
 
-            if _session_count % PARAM_SESSIONS == 0:
+            if _session_count % PARAM_SESSIONS == 0 or runtime.pop_config_dirty(pair):
                 calculate_trading_parameters(pair)
 
             vol_level = get_volatility_level(pair, current_atr)

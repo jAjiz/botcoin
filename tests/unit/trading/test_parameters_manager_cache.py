@@ -25,7 +25,7 @@ def test_calculate_trading_parameters_populates_calibration_cache(monkeypatch, s
     monkeypatch.setattr(
         parameters_manager,
         "TRADING_PARAMS",
-        {pair: {"sell": {"K_STOP": {}}, "buy": {"K_STOP": {}}}},
+        {pair: {"K_STOP": {"sell": {}, "buy": {}}}},
     )
 
     parameters_manager.calculate_trading_parameters(pair, infoLog=False)

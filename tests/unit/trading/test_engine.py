@@ -46,8 +46,8 @@ def _cfg(
             k_stop_buy=kb,
             k_stop_sell=ks,
         ),
-        buy=engine.SidePolicy(k_act=k_act, min_margin=min_margin),
-        sell=engine.SidePolicy(k_act=k_act, min_margin=min_margin),
+        k_act=k_act,
+        min_margin=min_margin,
         atr_desv_limit=atr_desv_limit,
     )
 

@@ -1,10 +1,10 @@
 import logging
 from typing import Any
 
+import core.config as config
 from core.config import (
     ALLOW_NO_AUTH,
     API_SECRET_TOKEN,
-    ASSET_ALLOCATION,
     ATR_DESV_LIMIT,
     ATR_PERIOD,
     CANDLE_TIMEFRAME,
@@ -14,12 +14,10 @@ from core.config import (
     PARAM_SESSIONS,
     SLEEPING_INTERVAL,
     STOP_PCT_DEFAULT,
-    STOP_PERCENTILES,
     TELEGRAM_ENABLED,
     TELEGRAM_POLL_INTERVAL,
     TELEGRAM_TOKEN,
     TELEGRAM_USER_ID,
-    TRADING_PARAMS,
     VOLATILITY_LEVELS,
 )
 from exchange.kraken import build_pairs_map
@@ -90,73 +88,72 @@ def _parse_float(
     return f
 
 
-def validate_pair_params(errors: list[str]) -> None:
-    """Validate and normalize per-pair trading parameters.
+def normalize_pair_config(pair: str, raw: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """Validate + normalize one pair's flat config.
 
+    ``raw`` keys: k_act, min_margin, target_pct, hodl_pct, stop_pct_ll..stop_pct_hh
+    (values may be strings, floats, or None). Returns (typed_flat, errors).
     Rules:
-    - K_ACT: float, or unset/empty (treated as None — fall through to K_STOP+MIN_MARGIN path).
-    - MIN_MARGIN: only required (must be float) when K_ACT is None.
-    - TARGET_PCT: float in [0, 100]; the sum across pairs must also be <= 100.
-    - HODL_PCT: float in [0, 100].
-    - STOP_PCT_<level>: float in [0, 1] or unset (default 0.90).
-
-    On success, writes normalized typed values back into TRADING_PARAMS,
-    ASSET_ALLOCATION and STOP_PERCENTILES so consumers always see floats/None.
+    - k_act: float >= 0, or None (falls through to K_STOP + MIN_MARGIN path).
+    - min_margin: float >= 0; required when k_act is None; normalized to 0.0 when
+      k_act is set.
+    - target_pct, hodl_pct: float in [0, 100] (default 0.0 when unset).
+    - stop_pct_<level>: float in [0, 1] (default STOP_PCT_DEFAULT when unset).
+    The cross-pair target sum is checked separately by target_sum_error.
     """
-    total_target = 0.0
-    for pair in PAIRS:
-        for side in ("sell", "buy"):
-            side_label = side.upper()
+    errors: list[str] = []
+    out: dict[str, Any] = {}
 
-            k_act = _parse_float(
-                TRADING_PARAMS[pair][side]["K_ACT"],
-                f"{pair}_{side_label}_K_ACT",
-                errors,
-            )
-            TRADING_PARAMS[pair][side]["K_ACT"] = k_act
+    k_act = _parse_float(raw.get("k_act"), f"{pair}_K_ACT", errors, min_val=0)
+    out["k_act"] = k_act
 
-            min_margin_raw = TRADING_PARAMS[pair][side]["MIN_MARGIN"]
-            if k_act is None:
-                min_margin = _parse_float(min_margin_raw, f"{pair}_{side_label}_MIN_MARGIN", errors)
-                if min_margin is None and min_margin_raw in (None, ""):
-                    errors.append(f"{pair}_{side_label}_MIN_MARGIN is required when K_ACT is not set")
-                TRADING_PARAMS[pair][side]["MIN_MARGIN"] = min_margin
-            else:
-                # K_ACT defined — MIN_MARGIN unused. Normalize to a float if parseable, else 0.
-                parsed = _parse_float(min_margin_raw, f"{pair}_{side_label}_MIN_MARGIN", [])
-                TRADING_PARAMS[pair][side]["MIN_MARGIN"] = parsed if parsed is not None else 0.0
+    mm_raw = raw.get("min_margin")
+    if k_act is None:
+        min_margin = _parse_float(mm_raw, f"{pair}_MIN_MARGIN", errors, min_val=0)
+        if min_margin is None and mm_raw in (None, ""):
+            errors.append(f"{pair}_MIN_MARGIN is required when K_ACT is not set")
+        out["min_margin"] = min_margin
+    else:
+        parsed = _parse_float(mm_raw, f"{pair}_MIN_MARGIN", [], min_val=0)
+        out["min_margin"] = parsed if parsed is not None else 0.0
 
-        target_pct = _parse_float(
-            ASSET_ALLOCATION[pair]["TARGET_PCT"],
-            f"{pair}_TARGET_PCT",
-            errors,
-            min_val=0,
-            max_val=100,
-        )
-        ASSET_ALLOCATION[pair]["TARGET_PCT"] = target_pct if target_pct is not None else 0.0
-        total_target += ASSET_ALLOCATION[pair]["TARGET_PCT"]
+    target = _parse_float(raw.get("target_pct"), f"{pair}_TARGET_PCT", errors, min_val=0, max_val=100)
+    out["target_pct"] = target if target is not None else 0.0
 
-        hodl_pct = _parse_float(
-            ASSET_ALLOCATION[pair]["HODL_PCT"],
-            f"{pair}_HODL_PCT",
-            errors,
-            min_val=0,
-            max_val=100,
-        )
-        ASSET_ALLOCATION[pair]["HODL_PCT"] = hodl_pct if hodl_pct is not None else 0.0
+    hodl = _parse_float(raw.get("hodl_pct"), f"{pair}_HODL_PCT", errors, min_val=0, max_val=100)
+    out["hodl_pct"] = hodl if hodl is not None else 0.0
 
-        for level in VOLATILITY_LEVELS:
-            parsed = _parse_float(
-                STOP_PERCENTILES[pair][level],
-                f"{pair}_STOP_PCT_{level}",
-                errors,
-                min_val=0,
-                max_val=1,
-            )
-            STOP_PERCENTILES[pair][level] = parsed if parsed is not None else STOP_PCT_DEFAULT
+    for level in VOLATILITY_LEVELS:
+        key = f"stop_pct_{level.lower()}"
+        parsed = _parse_float(raw.get(key), f"{pair}_STOP_PCT_{level}", errors, min_val=0, max_val=1)
+        out[key] = parsed if parsed is not None else STOP_PCT_DEFAULT
 
-    if total_target > 100:
-        errors.append(f"Sum of TARGET_PCT across all pairs must not exceed 100 (got {total_target:g})")
+    return out, errors
+
+
+def target_sum_error(targets: dict[str, float]) -> str | None:
+    """Return an error string if the sum of target_pct across pairs exceeds 100."""
+    total = sum(targets.values())
+    if total > 100:
+        return f"Sum of TARGET_PCT across all pairs must not exceed 100 (got {total:g})"
+    return None
+
+
+def validate_pair_params(errors: list[str]) -> None:
+    """Validate and normalize per-pair trading parameters, writing typed values
+    back into the live dicts. Shares normalize_pair_config with the runtime
+    config store so startup and runtime apply identical rules."""
+    typed_targets: dict[str, float] = {}
+    for pair in config.PAIRS:
+        raw = config.get_pair_config(pair)
+        typed, errs = normalize_pair_config(pair, raw)
+        errors.extend(errs)
+        config.set_pair_config(pair, typed)
+        typed_targets[pair] = typed["target_pct"]
+
+    err = target_sum_error(typed_targets)
+    if err:
+        errors.append(err)
 
 
 def build_and_validate_pairs(errors: list[str]) -> None:

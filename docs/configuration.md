@@ -69,10 +69,8 @@ For each pair listed in `PAIRS`, define the following variables by replacing `PA
 |---|---|---|---|
 | `PAIR_TARGET_PCT` | yes | — | Target portfolio allocation for this asset as a percentage of total portfolio value |
 | `PAIR_HODL_PCT` | yes | — | Minimum hold threshold; the bot does not sell below this percentage |
-| `PAIR_K_ACT` | no | — | ATR multiplier for activation price distance. If omitted, `K_STOP × ATR + MIN_MARGIN × entry_price` is used instead |
-| `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` | no | — | Per-side overrides for `K_ACT` |
-| `PAIR_MIN_MARGIN` | no | — | Minimum profit margin from entry price as a fraction (e.g. `0.009` = 0.9 %). Used only when `K_ACT` is not set |
-| `PAIR_SELL_MIN_MARGIN` / `PAIR_BUY_MIN_MARGIN` | no | — | Per-side overrides for `MIN_MARGIN` |
+| `PAIR_K_ACT` | no | — | ATR multiplier for activation price distance (single per pair — no per-side variants). If omitted, `K_STOP × ATR + MIN_MARGIN × entry_price` is used instead |
+| `PAIR_MIN_MARGIN` | no | — | Minimum profit margin from entry price as a fraction (e.g. `0.009` = 0.9 %; single per pair — no per-side variants). Used only when `K_ACT` is not set |
 | `PAIR_STOP_PCT_LL` | yes | — | K_STOP percentile for Very Low Volatility (LL) regime |
 | `PAIR_STOP_PCT_LV` | yes | — | K_STOP percentile for Low Volatility (LV) regime |
 | `PAIR_STOP_PCT_MV` | yes | — | K_STOP percentile for Medium Volatility (MV) regime |
@@ -80,6 +78,20 @@ For each pair listed in `PAIRS`, define the following variables by replacing `PA
 | `PAIR_STOP_PCT_HH` | yes | — | K_STOP percentile for Very High Volatility (HH) regime |
 
 See [trading-strategy.md](trading-strategy.md) for how K_STOP percentiles are derived and what values to choose.
+
+### DB-authoritative config (Phase 1)
+
+The parameters above (`TARGET_PCT`, `HODL_PCT`, `K_ACT`, `MIN_MARGIN`, `STOP_PCT_<level>`) are **DB-authoritative** once the bot has booted. On first boot `core/config_store.py` seeds the `pair_config` table from `.env`; subsequent boots read from the DB and `.env` values for these fields are ignored.
+
+To query or modify them at runtime without a restart:
+
+- `GET /config` — returns current config for all pairs
+- `GET /config/{pair}` — returns config for one pair
+- `PATCH /config/{pair}` — updates one or more fields for a pair (validated, persisted, applied immediately; `stop_pct` changes trigger `K_STOP` recalculation on the next scheduler session)
+
+Telegram equivalents: `/config [pair]` (read) and `/setconfig <pair> <field> <value>` (write).
+
+All REST endpoints require the `X-Api-Token` header (see [API authentication](#api-authentication)).
 
 ---
 

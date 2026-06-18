@@ -63,10 +63,11 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
     sell_k_stops = calculate_k_stops(pair, uptrend_events)
     buy_k_stops = calculate_k_stops(pair, downtrend_events)
 
-    TRADING_PARAMS[pair]["sell"]["K_STOP"] = sell_k_stops
-    TRADING_PARAMS[pair]["buy"]["K_STOP"] = buy_k_stops
+    TRADING_PARAMS[pair]["K_STOP"] = {"sell": sell_k_stops, "buy": buy_k_stops}
 
     if infoLog:
+        pct_msg = " | ".join(f"{lvl}:{STOP_PERCENTILES[pair][lvl]}" for lvl in LEVELS)
+        logging.info(f"Stop percentiles → {pct_msg}")
 
         def fmt(k):
             return f"{k:.2f}" if k is not None else "N/A"
@@ -99,8 +100,8 @@ def build_calibration(pair: str) -> PairCalibration:
         atr_p50=float(PAIRS[pair]["atr_50pct"]),
         atr_p80=float(PAIRS[pair]["atr_80pct"]),
         atr_p95=float(PAIRS[pair]["atr_95pct"]),
-        k_stop_buy=dict(TRADING_PARAMS[pair]["buy"].get("K_STOP") or {}),
-        k_stop_sell=dict(TRADING_PARAMS[pair]["sell"].get("K_STOP") or {}),
+        k_stop_buy=dict(TRADING_PARAMS[pair]["K_STOP"].get("buy") or {}),
+        k_stop_sell=dict(TRADING_PARAMS[pair]["K_STOP"].get("sell") or {}),
     )
 
 
@@ -120,13 +121,13 @@ def get_volatility_level(pair: str, atr_val: float) -> str:
 def get_k_stop(pair: str, side: str, atr_val: float) -> float | None:
     vol = get_volatility_level(pair, atr_val)
 
-    k_stop = TRADING_PARAMS[pair][side]["K_STOP"].get(vol)
+    k_stop = TRADING_PARAMS[pair]["K_STOP"][side].get(vol)
     if k_stop is not None:
         return k_stop
 
     # Try opposite side K_STOP as fallback
     op_side = "buy" if side == "sell" else "sell"
-    k_stop = TRADING_PARAMS[pair][op_side]["K_STOP"].get(vol)
+    k_stop = TRADING_PARAMS[pair]["K_STOP"][op_side].get(vol)
     if k_stop is not None:
         return k_stop
 
@@ -135,7 +136,7 @@ def get_k_stop(pair: str, side: str, atr_val: float) -> float | None:
     for offset in range(1, len(LEVELS)):
         for neighbor in (idx - offset, idx + offset):
             if 0 <= neighbor < len(LEVELS):
-                k_stop = TRADING_PARAMS[pair][side]["K_STOP"].get(LEVELS[neighbor])
+                k_stop = TRADING_PARAMS[pair]["K_STOP"][side].get(LEVELS[neighbor])
                 if k_stop is not None:
                     return k_stop
 

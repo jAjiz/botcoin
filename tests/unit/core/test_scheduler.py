@@ -134,3 +134,35 @@ def test_trading_session_opens_position_when_trading_enabled(monkeypatch):
 
     assert len(created) == 1  # no stored position -> create_position is called once
     assert calls[0]["status"] == "completed"
+
+
+def test_trading_session_recalcs_params_when_config_dirty(monkeypatch):
+    _setup_one_pair_loop(monkeypatch)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)
+    recalcs: list[str] = []
+    monkeypatch.setattr(scheduler, "calculate_trading_parameters", lambda pair: recalcs.append(pair))
+    # Force the counter off a PARAM_SESSIONS multiple so only the dirty flag can trigger.
+    monkeypatch.setattr(scheduler, "_session_count", 1)
+    monkeypatch.setattr(scheduler, "PARAM_SESSIONS", 720)
+    _patch_finalize(monkeypatch)
+
+    runtime.mark_config_dirty("XBTEUR")
+    scheduler.trading_session()
+
+    assert recalcs == ["XBTEUR"]
+
+
+def test_trading_session_no_recalc_when_not_dirty_and_off_cycle(monkeypatch):
+    _setup_one_pair_loop(monkeypatch)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)
+    recalcs: list[str] = []
+    monkeypatch.setattr(scheduler, "calculate_trading_parameters", lambda pair: recalcs.append(pair))
+    monkeypatch.setattr(scheduler, "_session_count", 1)
+    monkeypatch.setattr(scheduler, "PARAM_SESSIONS", 720)
+    _patch_finalize(monkeypatch)
+
+    # ensure no leftover dirty flag from another test
+    runtime.pop_config_dirty("XBTEUR")
+    scheduler.trading_session()
+
+    assert recalcs == []

@@ -58,18 +58,13 @@ STOP_PCT_DEFAULT = 0.90  # Fallback STOP_PCT if not set for a level
 
 
 # Trading params
-def _build_trading_params() -> dict[str, dict[str, dict[str, Any]]]:
+def _build_trading_params() -> dict[str, dict[str, Any]]:
     params = {}
     for pair in PAIRS:
         params[pair] = {
-            "sell": {
-                "K_ACT": os.getenv(f"{pair}_SELL_K_ACT", os.getenv(f"{pair}_K_ACT")),
-                "MIN_MARGIN": os.getenv(f"{pair}_SELL_MIN_MARGIN", os.getenv(f"{pair}_MIN_MARGIN")),
-            },
-            "buy": {
-                "K_ACT": os.getenv(f"{pair}_BUY_K_ACT", os.getenv(f"{pair}_K_ACT")),
-                "MIN_MARGIN": os.getenv(f"{pair}_BUY_MIN_MARGIN", os.getenv(f"{pair}_MIN_MARGIN")),
-            },
+            "K_ACT": os.getenv(f"{pair}_K_ACT"),
+            "MIN_MARGIN": os.getenv(f"{pair}_MIN_MARGIN"),
+            "K_STOP": {"buy": {}, "sell": {}},
         }
     return params
 
@@ -106,3 +101,27 @@ def _build_percentiles() -> dict[str, dict[str, Any]]:
 
 
 STOP_PERCENTILES = _build_percentiles()
+
+
+# Flat config view <-> live dicts. The "flat" dict uses the keys
+# target_pct, hodl_pct, k_act, min_margin, stop_pct_ll..stop_pct_hh and is the
+# representation shared by validation, the config store, and the API.
+def set_pair_config(pair: str, typed: dict[str, Any]) -> None:
+    TRADING_PARAMS[pair]["K_ACT"] = typed["k_act"]
+    TRADING_PARAMS[pair]["MIN_MARGIN"] = typed["min_margin"]
+    ASSET_ALLOCATION[pair]["TARGET_PCT"] = typed["target_pct"]
+    ASSET_ALLOCATION[pair]["HODL_PCT"] = typed["hodl_pct"]
+    for lvl in VOLATILITY_LEVELS:
+        STOP_PERCENTILES[pair][lvl] = typed[f"stop_pct_{lvl.lower()}"]
+
+
+def get_pair_config(pair: str) -> dict[str, Any]:
+    flat = {
+        "k_act": TRADING_PARAMS[pair]["K_ACT"],
+        "min_margin": TRADING_PARAMS[pair]["MIN_MARGIN"],
+        "target_pct": ASSET_ALLOCATION[pair]["TARGET_PCT"],
+        "hodl_pct": ASSET_ALLOCATION[pair]["HODL_PCT"],
+    }
+    for lvl in VOLATILITY_LEVELS:
+        flat[f"stop_pct_{lvl.lower()}"] = STOP_PERCENTILES[pair][lvl]
+    return flat

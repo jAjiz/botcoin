@@ -38,7 +38,7 @@ from optuna.samplers import TPESampler
 import core.database as db
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
-from trading.engine import EngineConfig, PairCalibration, SidePolicy, simulate_operations
+from trading.engine import EngineConfig, PairCalibration, simulate_operations
 from trading.market_analyzer import analyze_structural_noise
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -201,7 +201,7 @@ def _candidate_from_env(req: "OptimizerRequest") -> Candidate:
     if cur.k_act is not None:
         k_act = cur.k_act
     else:
-        raw_k_act = TRADING_PARAMS[pair]["buy"].get("K_ACT")
+        raw_k_act = TRADING_PARAMS[pair].get("K_ACT")
         try:
             k_act = float(raw_k_act) if raw_k_act is not None and str(raw_k_act).strip() != "" else None
         except (TypeError, ValueError):
@@ -209,7 +209,7 @@ def _candidate_from_env(req: "OptimizerRequest") -> Candidate:
     if cur.min_margin is not None:
         min_margin = cur.min_margin
     else:
-        raw_mm = TRADING_PARAMS[pair]["buy"].get("MIN_MARGIN", 0) or 0
+        raw_mm = TRADING_PARAMS[pair].get("MIN_MARGIN", 0) or 0
         try:
             min_margin = float(raw_mm)
         except (TypeError, ValueError):
@@ -252,8 +252,13 @@ def _build_engine_config(
         k_stop_buy=buy_k_stop,
         k_stop_sell=sell_k_stop,
     )
-    side = SidePolicy(k_act=cand.k_act, min_margin=cand.min_margin or 0.0)
-    return EngineConfig(pair=pair, calibration=calibration, buy=side, sell=side, atr_desv_limit=atr_desv_limit)
+    return EngineConfig(
+        pair=pair,
+        calibration=calibration,
+        k_act=cand.k_act,
+        min_margin=cand.min_margin or 0.0,
+        atr_desv_limit=atr_desv_limit,
+    )
 
 
 # --- Optuna search ---------------------------------------------------------

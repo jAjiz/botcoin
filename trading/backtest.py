@@ -12,7 +12,7 @@ import numpy as np
 import core.database as db
 import core.runtime as runtime
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, TRADING_PARAMS
-from trading.engine import EngineConfig, Operation, PairCalibration, SidePolicy, simulate_operations
+from trading.engine import EngineConfig, Operation, PairCalibration, simulate_operations
 from trading.market_analyzer import analyze_structural_noise
 from trading.parameters_manager import calculate_k_stops
 
@@ -128,15 +128,13 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
         k_stop_sell=calculate_k_stops(req.pair, up_events),
     )
 
-    side_buy = SidePolicy(
-        k_act=_coerce_float(TRADING_PARAMS[req.pair]["buy"].get("K_ACT")),
-        min_margin=float(TRADING_PARAMS[req.pair]["buy"].get("MIN_MARGIN") or 0.0),
+    cfg = EngineConfig(
+        req.pair,
+        calibration,
+        k_act=_coerce_float(TRADING_PARAMS[req.pair].get("K_ACT")),
+        min_margin=float(TRADING_PARAMS[req.pair].get("MIN_MARGIN") or 0.0),
+        atr_desv_limit=ATR_DESV_LIMIT,
     )
-    side_sell = SidePolicy(
-        k_act=_coerce_float(TRADING_PARAMS[req.pair]["sell"].get("K_ACT")),
-        min_margin=float(TRADING_PARAMS[req.pair]["sell"].get("MIN_MARGIN") or 0.0),
-    )
-    cfg = EngineConfig(req.pair, calibration, buy=side_buy, sell=side_sell, atr_desv_limit=ATR_DESV_LIMIT)
 
     operations = simulate_operations(df, cfg, fee_rate=req.fee_pct / 100.0, max_ops=req.max_ops)
     summary = _build_summary(operations, row_count=len(df), source=source)

@@ -14,7 +14,7 @@ def test_calculate_activation_price_uses_k_act_when_defined(monkeypatch) -> None
     monkeypatch.setattr(
         positions_manager,
         "TRADING_PARAMS",
-        {"XBTEUR": {"sell": {"K_ACT": 2.0, "MIN_MARGIN": 0.01}, "buy": {"K_ACT": 2.0, "MIN_MARGIN": 0.01}}},
+        {"XBTEUR": {"K_ACT": 2.0, "MIN_MARGIN": 0.01}},
     )
 
     result = positions_manager.calculate_activation_price("XBTEUR", "sell", 100.0, 5.0)
@@ -26,7 +26,7 @@ def test_calculate_activation_price_uses_k_stop_and_margin_fallback(monkeypatch)
     monkeypatch.setattr(
         positions_manager,
         "TRADING_PARAMS",
-        {"XBTEUR": {"sell": {"K_ACT": None, "MIN_MARGIN": 0.1}, "buy": {"K_ACT": None, "MIN_MARGIN": 0.1}}},
+        {"XBTEUR": {"K_ACT": None, "MIN_MARGIN": 0.1}},
     )
     monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 2.0)
 

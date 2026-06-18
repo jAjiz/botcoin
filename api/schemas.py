@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MarketItem(BaseModel):
@@ -244,3 +244,33 @@ class OptimizerJobStatusResponse(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+
+class PairConfig(BaseModel):
+    pair: str
+    target_pct: float
+    hodl_pct: float
+    k_act: float | None = None
+    min_margin: float
+    stop_pct_ll: float
+    stop_pct_lv: float
+    stop_pct_mv: float
+    stop_pct_hv: float
+    stop_pct_hh: float
+
+
+class PairConfigPatch(BaseModel):
+    """Partial update. Unset fields are ignored; an explicit null k_act switches
+    the pair to the K_STOP + MIN_MARGIN activation path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target_pct: float | None = Field(default=None, ge=0, le=100)
+    hodl_pct: float | None = Field(default=None, ge=0, le=100)
+    k_act: float | None = Field(default=None, ge=0)
+    min_margin: float | None = Field(default=None, ge=0)
+    stop_pct_ll: float | None = Field(default=None, ge=0, le=1)
+    stop_pct_lv: float | None = Field(default=None, ge=0, le=1)
+    stop_pct_mv: float | None = Field(default=None, ge=0, le=1)
+    stop_pct_hv: float | None = Field(default=None, ge=0, le=1)
+    stop_pct_hh: float | None = Field(default=None, ge=0, le=1)

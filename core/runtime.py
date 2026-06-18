@@ -17,6 +17,7 @@ _shared_data = {
     #   "computed_at": datetime,
     # }}
     # Phase 11 extends this entry with "window_days" + "window_sweep".
+    "config_dirty": set(),  # pairs whose config changed since the last scheduler check
 }
 
 
@@ -89,3 +90,17 @@ def get_pair_calibration(pair: str) -> dict[str, Any] | None:
     with _lock:
         entry = _shared_data["pair_calibration"].get(pair)
         return None if entry is None else dict(entry)  # shallow copy, matches existing pattern
+
+
+def mark_config_dirty(pair: str) -> None:
+    with _lock:
+        _shared_data["config_dirty"].add(pair)
+
+
+def pop_config_dirty(pair: str) -> bool:
+    """Return True (and clear) if pair's config changed since the last check."""
+    with _lock:
+        if pair in _shared_data["config_dirty"]:
+            _shared_data["config_dirty"].discard(pair)
+            return True
+        return False
