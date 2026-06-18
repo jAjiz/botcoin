@@ -5,7 +5,6 @@ import core.config as config
 from core.config import (
     ALLOW_NO_AUTH,
     API_SECRET_TOKEN,
-    ASSET_ALLOCATION,
     ATR_DESV_LIMIT,
     ATR_PERIOD,
     CANDLE_TIMEFRAME,
@@ -15,12 +14,10 @@ from core.config import (
     PARAM_SESSIONS,
     SLEEPING_INTERVAL,
     STOP_PCT_DEFAULT,
-    STOP_PERCENTILES,
     TELEGRAM_ENABLED,
     TELEGRAM_POLL_INTERVAL,
     TELEGRAM_TOKEN,
     TELEGRAM_USER_ID,
-    TRADING_PARAMS,
     VOLATILITY_LEVELS,
 )
 from exchange.kraken import build_pairs_map
