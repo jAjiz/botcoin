@@ -308,7 +308,7 @@ async def test_config_command_specific_pair(monkeypatch):
     await polling.config_command(update, MockContext(args=["XBTEUR"]))
 
     assert "XBTEUR" in update.message.replies[0]
-    assert "k_act: 2" in update.message.replies[0]
+    assert "Target %: 30" in update.message.replies[0]
 
 
 @pytest.mark.asyncio
