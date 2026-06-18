@@ -316,9 +316,7 @@ async def test_setconfig_command_patches_single_field(monkeypatch):
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
     monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
     mock = _mock_client()
-    mock.patch = __import__("unittest").mock.AsyncMock(
-        return_value=_mock_response({**_CONFIG_ITEM, "target_pct": 25.0})
-    )
+    mock.patch = AsyncMock(return_value=_mock_response({**_CONFIG_ITEM, "target_pct": 25.0}))
     monkeypatch.setattr(polling, "client", mock)
 
     update = MockUpdate()
@@ -333,7 +331,7 @@ async def test_setconfig_command_k_act_none_sends_null(monkeypatch):
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
     monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
     mock = _mock_client()
-    mock.patch = __import__("unittest").mock.AsyncMock(return_value=_mock_response({**_CONFIG_ITEM, "k_act": None}))
+    mock.patch = AsyncMock(return_value=_mock_response({**_CONFIG_ITEM, "k_act": None}))
     monkeypatch.setattr(polling, "client", mock)
 
     update = MockUpdate()

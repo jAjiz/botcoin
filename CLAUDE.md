@@ -124,7 +124,7 @@ Rate-limited to 1 call/second via a module-level lock. `_safe_call` wraps every 
 
 ## Configuration
 
-Per-pair parameters are loaded from env vars by `core/config.py` into the `TRADING_PARAMS` dict. The key pattern:
+Per-pair parameters are loaded from env vars by `core/config.py` into the `TRADING_PARAMS` dict on startup. Since Phase 1, these values are also persisted in the `pair_config` DB table (seeded from `.env` on first boot via `config_store.load_or_seed()`); the DB is now the authoritative source and parameters can be changed at runtime via `PATCH /config/{pair}` without a restart. The key pattern:
 
 - `PAIR_TARGET_PCT` / `PAIR_HODL_PCT`: Portfolio allocation (inventory manager)
 - `PAIR_K_ACT`: Activation ATR multiplier; `0` = immediate activation (single per pair — per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` variants have been removed)

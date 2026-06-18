@@ -16,6 +16,26 @@ import core.runtime as runtime
 from core.config import PAIRS, VOLATILITY_LEVELS
 from core.validation import normalize_pair_config, target_sum_error
 
+# Column precisions from the pair_config migration (Numeric scale values).
+_SCALE = {
+    "target_pct": 3,
+    "hodl_pct": 3,
+    "k_act": 4,
+    "min_margin": 8,
+    **{f"stop_pct_{lvl.lower()}": 3 for lvl in VOLATILITY_LEVELS},
+}
+
+
+def _round_to_db_precision(typed: dict[str, Any]) -> dict[str, Any]:
+    rounded = {}
+    for k, v in typed.items():
+        if k in _SCALE and v is not None:
+            rounded[k] = round(float(v), _SCALE[k])
+        else:
+            rounded[k] = v
+    return rounded
+
+
 _lock = threading.Lock()
 
 # The flat config keys persisted in pair_config and exchanged with the API.
@@ -76,6 +96,23 @@ def apply_patch(pair: str, fields: dict[str, Any], updated_by: str | None = None
             raise UnknownPairError(pair)
 
         current = config.get_pair_config(pair)
+
+        # When switching k_act from set to null, require an explicit min_margin
+        # if the current value is 0 (auto-zeroed in k_act-active mode).
+        if (
+            "k_act" in fields
+            and fields["k_act"] is None
+            and current.get("k_act") is not None
+            and "min_margin" not in fields
+            and float(current.get("min_margin") or 0) == 0.0
+        ):
+            raise ConfigValidationError(
+                [
+                    f"{pair}: min_margin must be provided when setting k_act to null "
+                    f"(current min_margin is 0, which was set automatically while k_act was active)"
+                ]
+            )
+
         merged = {**current, **fields}
         typed, errors = normalize_pair_config(pair, merged)
 
@@ -87,6 +124,8 @@ def apply_patch(pair: str, fields: dict[str, Any], updated_by: str | None = None
 
         if errors:
             raise ConfigValidationError(errors)
+
+        typed = _round_to_db_precision(typed)
 
         stop_changed = any(
             typed[f"stop_pct_{lvl.lower()}"] != current[f"stop_pct_{lvl.lower()}"] for lvl in VOLATILITY_LEVELS

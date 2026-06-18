@@ -37,9 +37,18 @@ def test_load_or_seed_inserts_when_row_absent(monkeypatch):
 def test_load_or_seed_loads_when_row_present(monkeypatch):
     _seed_dicts(monkeypatch, ["XBTEUR"])
     row = {
-        "pair": "XBTEUR", "target_pct": 40.0, "hodl_pct": 5.0, "k_act": None,
-        "min_margin": 0.002, "stop_pct_ll": 0.8, "stop_pct_lv": 0.8, "stop_pct_mv": 0.8,
-        "stop_pct_hv": 0.8, "stop_pct_hh": 0.9, "updated_at": None, "updated_by": None,
+        "pair": "XBTEUR",
+        "target_pct": 40.0,
+        "hodl_pct": 5.0,
+        "k_act": None,
+        "min_margin": 0.002,
+        "stop_pct_ll": 0.8,
+        "stop_pct_lv": 0.8,
+        "stop_pct_mv": 0.8,
+        "stop_pct_hv": 0.8,
+        "stop_pct_hh": 0.9,
+        "updated_at": None,
+        "updated_by": None,
     }
     monkeypatch.setattr(config_store.db, "load_all_pair_config", lambda: {"XBTEUR": row})
     monkeypatch.setattr(
@@ -75,7 +84,9 @@ def test_apply_patch_updates_dict_and_persists(monkeypatch):
 
 def test_apply_patch_invalid_leaves_dict_and_db_untouched(monkeypatch):
     _seed_dicts(monkeypatch, ["XBTEUR"])
-    monkeypatch.setattr(config_store.db, "upsert_pair_config", lambda *a, **k: pytest.fail("must not persist on invalid"))
+    monkeypatch.setattr(
+        config_store.db, "upsert_pair_config", lambda *a, **k: pytest.fail("must not persist on invalid")
+    )
 
     with pytest.raises(config_store.ConfigValidationError):
         config_store.apply_patch("XBTEUR", {"target_pct": 150.0})
@@ -118,3 +129,12 @@ def test_apply_patch_k_act_null_keeps_min_margin(monkeypatch):
     result = config_store.apply_patch("XBTEUR", {"k_act": None, "min_margin": 0.001})
     assert result["k_act"] is None
     assert result["min_margin"] == 0.001
+
+
+def test_apply_patch_k_act_null_without_margin_rejected_when_current_margin_is_zero(monkeypatch):
+    _seed_dicts(monkeypatch, ["XBTEUR"])  # current: k_act=2.0, min_margin=0.0
+    monkeypatch.setattr(config_store.db, "upsert_pair_config", lambda *a, **k: pytest.fail("must not persist"))
+
+    with pytest.raises(config_store.ConfigValidationError) as exc:
+        config_store.apply_patch("XBTEUR", {"k_act": None})  # no min_margin
+    assert "min_margin" in exc.value.errors[0].lower()
