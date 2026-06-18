@@ -320,7 +320,7 @@ async def test_setconfig_command_patches_single_field(monkeypatch):
     monkeypatch.setattr(polling, "client", mock)
 
     update = MockUpdate()
-    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target_pct", "25"]))
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target", "25"]))
 
     mock.patch.assert_called_once_with("/config/XBTEUR", json={"target_pct": 25.0})
     assert "✅" in update.message.replies[0]
@@ -335,7 +335,7 @@ async def test_setconfig_command_k_act_none_sends_null(monkeypatch):
     monkeypatch.setattr(polling, "client", mock)
 
     update = MockUpdate()
-    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "k_act", "none"]))
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "kact", "none"]))
 
     mock.patch.assert_called_once_with("/config/XBTEUR", json={"k_act": None})
 
@@ -344,7 +344,7 @@ async def test_setconfig_command_k_act_none_sends_null(monkeypatch):
 async def test_setconfig_command_bad_arity_shows_usage(monkeypatch):
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
     update = MockUpdate()
-    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target_pct"]))
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target"]))
     assert "Usage:" in update.message.replies[0]
 
 
@@ -362,8 +362,8 @@ async def test_setconfig_command_none_rejected_for_non_k_act(monkeypatch):
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
     monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
     update = MockUpdate()
-    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target_pct", "none"]))
-    assert "Only k_act" in update.message.replies[0]
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target", "none"]))
+    assert "Only kact" in update.message.replies[0]
 
 
 @pytest.mark.asyncio

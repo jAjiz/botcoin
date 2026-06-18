@@ -12,17 +12,18 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("telegram.bot").setLevel(logging.WARNING)
 
-_CONFIG_FIELDS = (
-    "target_pct",
-    "hodl_pct",
-    "k_act",
-    "min_margin",
-    "stop_pct_ll",
-    "stop_pct_lv",
-    "stop_pct_mv",
-    "stop_pct_hv",
-    "stop_pct_hh",
-)
+_FIELD_MAP = {
+    "target": "target_pct",
+    "hodl": "hodl_pct",
+    "kact": "k_act",
+    "margin": "min_margin",
+    "stop-ll": "stop_pct_ll",
+    "stop-lv": "stop_pct_lv",
+    "stop-mv": "stop_pct_mv",
+    "stop-hv": "stop_pct_hv",
+    "stop-hh": "stop_pct_hh",
+}
+_CONFIG_FIELDS = tuple(_FIELD_MAP)
 
 
 def _format_pair_config(item: dict) -> str:
@@ -251,7 +252,16 @@ async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 async def setconfig_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _check_auth(update):
         return
-    usage = "Usage: /setconfig <PAIR> <field> <value>\nFields: " + ", ".join(_CONFIG_FIELDS)
+    usage = (
+        "Usage: /setconfig <PAIR> <field> <value>\n\n"
+        "Fields:\n"
+        "  target       Target allocation %\n"
+        "  hodl         Hodl allocation %\n"
+        "  kact         Activation ATR multiplier ('none' to disable)\n"
+        "  margin       Min price margin from entry\n"
+        "  stop-ll/lv/mv/hv/hh   K-stop percentile per volatility level\n\n"
+        "Example: /setconfig XBTEUR stop-mv 0.6"
+    )
     if len(context.args) != 3:
         await update.message.reply_text(usage)
         return
@@ -267,14 +277,15 @@ async def setconfig_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(f"❌ Unknown field: {field}\nFields: {', '.join(_CONFIG_FIELDS)}")
         return
 
+    api_field = _FIELD_MAP[field]
     if value.lower() == "none":
-        if field != "k_act":
-            await update.message.reply_text("❌ Only k_act may be set to 'none'.")
+        if field != "kact":
+            await update.message.reply_text("❌ Only kact may be set to 'none'.")
             return
-        body = {"k_act": None}
+        body = {api_field: None}
     else:
         try:
-            body = {field: float(value)}
+            body = {api_field: float(value)}
         except ValueError:
             await update.message.reply_text(f"❌ Invalid value for {field}: '{value}' is not a number.")
             return
