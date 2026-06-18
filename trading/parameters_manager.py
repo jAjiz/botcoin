@@ -66,6 +66,8 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
     TRADING_PARAMS[pair]["K_STOP"] = {"sell": sell_k_stops, "buy": buy_k_stops}
 
     if infoLog:
+        pct_msg = " | ".join(f"{lvl}:{STOP_PERCENTILES[pair][lvl]}" for lvl in LEVELS)
+        logging.info(f"Stop percentiles → {pct_msg}")
 
         def fmt(k):
             return f"{k:.2f}" if k is not None else "N/A"
