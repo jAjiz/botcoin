@@ -30,12 +30,10 @@ def _format_pair_config(item: dict) -> str:
     k_act_str = "None" if k_act is None else f"{k_act:g}"
     return (
         f"━━━ {item['pair']} ━━━\n"
-        f"target_pct: {item['target_pct']:g}\n"
-        f"hodl_pct: {item['hodl_pct']:g}\n"
-        f"k_act: {k_act_str}\n"
-        f"min_margin: {item['min_margin']:g}\n"
-        f"stop_pct: LL {item['stop_pct_ll']:g} | LV {item['stop_pct_lv']:g} | "
-        f"MV {item['stop_pct_mv']:g} | HV {item['stop_pct_hv']:g} | HH {item['stop_pct_hh']:g}"
+        f"Target %: {item['target_pct']:g}  |  Hodl %: {item['hodl_pct']:g}\n"
+        f"K-act: {k_act_str}  |  Min margin: {item['min_margin']:g}\n"
+        f"Stop percentiles: LL {item['stop_pct_ll']:g} -  LV {item['stop_pct_lv']:g}  -  MV {item['stop_pct_mv']:g}\n"
+        f"HV {item['stop_pct_hv']:g}  -  HH {item['stop_pct_hh']:g}"
     )
 
 
