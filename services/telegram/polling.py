@@ -12,6 +12,32 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram").setLevel(logging.WARNING)
 logging.getLogger("telegram.bot").setLevel(logging.WARNING)
 
+_CONFIG_FIELDS = (
+    "target_pct",
+    "hodl_pct",
+    "k_act",
+    "min_margin",
+    "stop_pct_ll",
+    "stop_pct_lv",
+    "stop_pct_mv",
+    "stop_pct_hv",
+    "stop_pct_hh",
+)
+
+
+def _format_pair_config(item: dict) -> str:
+    k_act = item.get("k_act")
+    k_act_str = "None" if k_act is None else f"{k_act:g}"
+    return (
+        f"━━━ {item['pair']} ━━━\n"
+        f"target_pct: {item['target_pct']:g}\n"
+        f"hodl_pct: {item['hodl_pct']:g}\n"
+        f"k_act: {k_act_str}\n"
+        f"min_margin: {item['min_margin']:g}\n"
+        f"stop_pct: LL {item['stop_pct_ll']:g} | LV {item['stop_pct_lv']:g} | "
+        f"MV {item['stop_pct_mv']:g} | HV {item['stop_pct_hv']:g} | HH {item['stop_pct_hh']:g}"
+    )
+
 
 def _check_auth(update: Update) -> bool:
     if not TELEGRAM_USER_ID:
@@ -41,6 +67,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/resume - Resume bot operations\n"
         "/market [pair] - Current market data (all or specific pair)\n"
         "/positions [pair] - Open positions (all or specific pair)\n"
+        "/config [pair] - Show pair configuration (all or specific pair)\n"
+        "/setconfig <pair> <field> <value> - Update a config field\n"
         "/help - Show this help\n\n"
         f"Configured pairs: {pairs_list}\n"
         "Example: /market XBTEUR"
@@ -201,6 +229,70 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text(f"❌ Error fetching positions: {e}")
 
 
+async def config_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _check_auth(update):
+        return
+    try:
+        pair_filter = context.args[0].upper() if context.args else None
+        if pair_filter and pair_filter not in PAIRS:
+            await update.message.reply_text(f"❌ Unknown pair: {pair_filter}\nAvailable: {', '.join(PAIRS.keys())}")
+            return
+
+        url = f"/config/{pair_filter}" if pair_filter else "/config"
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+        items = [data] if pair_filter else data
+        msg = "⚙️ Pair Config:\n\n" + "\n\n".join(_format_pair_config(item) for item in items)
+        await update.message.reply_text(msg)
+    except Exception as e:
+        logging.error(f"Error in config_command: {e}")
+        await update.message.reply_text(f"❌ Error fetching config: {e}")
+
+
+async def setconfig_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _check_auth(update):
+        return
+    usage = "Usage: /setconfig <PAIR> <field> <value>\nFields: " + ", ".join(_CONFIG_FIELDS)
+    if len(context.args) != 3:
+        await update.message.reply_text(usage)
+        return
+
+    pair = context.args[0].upper()
+    field = context.args[1].lower()
+    value = context.args[2]
+
+    if pair not in PAIRS:
+        await update.message.reply_text(f"❌ Unknown pair: {pair}\nAvailable: {', '.join(PAIRS.keys())}")
+        return
+    if field not in _CONFIG_FIELDS:
+        await update.message.reply_text(f"❌ Unknown field: {field}\nFields: {', '.join(_CONFIG_FIELDS)}")
+        return
+
+    if value.lower() == "none":
+        if field != "k_act":
+            await update.message.reply_text("❌ Only k_act may be set to 'none'.")
+            return
+        body = {"k_act": None}
+    else:
+        try:
+            body = {field: float(value)}
+        except ValueError:
+            await update.message.reply_text(f"❌ Invalid value for {field}: '{value}' is not a number.")
+            return
+
+    try:
+        resp = await client.patch(f"/config/{pair}", json=body)
+        if resp.status_code == 422:
+            await update.message.reply_text(f"❌ Invalid: {resp.json().get('detail')}")
+            return
+        resp.raise_for_status()
+        await update.message.reply_text(f"✅ {pair} {field} updated.")
+    except Exception as e:
+        logging.error(f"Error in setconfig_command: {e}")
+        await update.message.reply_text(f"❌ Error updating config: {e}")
+
+
 def build_tg_app() -> Application:
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("help", help_command))
@@ -209,4 +301,6 @@ def build_tg_app() -> Application:
     app.add_handler(CommandHandler("resume", resume_command))
     app.add_handler(CommandHandler("market", market_command))
     app.add_handler(CommandHandler("positions", positions_command))
+    app.add_handler(CommandHandler("config", config_command))
+    app.add_handler(CommandHandler("setconfig", setconfig_command))
     return app

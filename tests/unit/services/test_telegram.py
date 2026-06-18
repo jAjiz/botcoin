@@ -278,3 +278,89 @@ def test_notify_accepts_request_with_correct_token(monkeypatch):
 def test_notify_rejects_when_no_token_and_no_opt_in(monkeypatch):
     client, _ = _notify_client(monkeypatch, token=None, allow_no_auth=False)
     assert client.post("/notify", json={"message": "x", "level": "info"}).status_code == 401
+
+
+# ============================================================================
+# Config / Setconfig commands
+# ============================================================================
+
+_CONFIG_ITEM = {
+    "pair": "XBTEUR", "target_pct": 30.0, "hodl_pct": 10.0, "k_act": 2.0, "min_margin": 0.0,
+    "stop_pct_ll": 0.9, "stop_pct_lv": 0.9, "stop_pct_mv": 0.9, "stop_pct_hv": 0.9, "stop_pct_hh": 0.9,
+}
+
+
+@pytest.mark.asyncio
+async def test_config_command_specific_pair(monkeypatch):
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
+    monkeypatch.setattr(polling, "client", _mock_client(get=_mock_response(_CONFIG_ITEM)))
+
+    update = MockUpdate()
+    await polling.config_command(update, MockContext(args=["XBTEUR"]))
+
+    assert "XBTEUR" in update.message.replies[0]
+    assert "k_act: 2" in update.message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_setconfig_command_patches_single_field(monkeypatch):
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
+    mock = _mock_client()
+    mock.patch = __import__("unittest").mock.AsyncMock(return_value=_mock_response({**_CONFIG_ITEM, "target_pct": 25.0}))
+    monkeypatch.setattr(polling, "client", mock)
+
+    update = MockUpdate()
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target_pct", "25"]))
+
+    mock.patch.assert_called_once_with("/config/XBTEUR", json={"target_pct": 25.0})
+    assert "✅" in update.message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_setconfig_command_k_act_none_sends_null(monkeypatch):
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
+    mock = _mock_client()
+    mock.patch = __import__("unittest").mock.AsyncMock(return_value=_mock_response({**_CONFIG_ITEM, "k_act": None}))
+    monkeypatch.setattr(polling, "client", mock)
+
+    update = MockUpdate()
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "k_act", "none"]))
+
+    mock.patch.assert_called_once_with("/config/XBTEUR", json={"k_act": None})
+
+
+@pytest.mark.asyncio
+async def test_setconfig_command_bad_arity_shows_usage(monkeypatch):
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    update = MockUpdate()
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target_pct"]))
+    assert "Usage:" in update.message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_setconfig_command_unknown_field(monkeypatch):
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
+    update = MockUpdate()
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "nonsense", "1"]))
+    assert "Unknown field" in update.message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_setconfig_command_none_rejected_for_non_k_act(monkeypatch):
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
+    update = MockUpdate()
+    await polling.setconfig_command(update, MockContext(args=["XBTEUR", "target_pct", "none"]))
+    assert "Only k_act" in update.message.replies[0]
+
+
+@pytest.mark.asyncio
+async def test_config_command_rejects_unauthorized(monkeypatch):
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    update = MockUpdate(user_id=999)
+    await polling.config_command(update, MockContext())
+    assert update.message.replies == []
