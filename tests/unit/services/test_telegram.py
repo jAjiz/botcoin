@@ -285,8 +285,16 @@ def test_notify_rejects_when_no_token_and_no_opt_in(monkeypatch):
 # ============================================================================
 
 _CONFIG_ITEM = {
-    "pair": "XBTEUR", "target_pct": 30.0, "hodl_pct": 10.0, "k_act": 2.0, "min_margin": 0.0,
-    "stop_pct_ll": 0.9, "stop_pct_lv": 0.9, "stop_pct_mv": 0.9, "stop_pct_hv": 0.9, "stop_pct_hh": 0.9,
+    "pair": "XBTEUR",
+    "target_pct": 30.0,
+    "hodl_pct": 10.0,
+    "k_act": 2.0,
+    "min_margin": 0.0,
+    "stop_pct_ll": 0.9,
+    "stop_pct_lv": 0.9,
+    "stop_pct_mv": 0.9,
+    "stop_pct_hv": 0.9,
+    "stop_pct_hh": 0.9,
 }
 
 
@@ -308,7 +316,9 @@ async def test_setconfig_command_patches_single_field(monkeypatch):
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
     monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
     mock = _mock_client()
-    mock.patch = __import__("unittest").mock.AsyncMock(return_value=_mock_response({**_CONFIG_ITEM, "target_pct": 25.0}))
+    mock.patch = __import__("unittest").mock.AsyncMock(
+        return_value=_mock_response({**_CONFIG_ITEM, "target_pct": 25.0})
+    )
     monkeypatch.setattr(polling, "client", mock)
 
     update = MockUpdate()

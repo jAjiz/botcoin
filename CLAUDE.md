@@ -100,7 +100,7 @@ Offline analysis tools exposed as authenticated HTTP endpoints on the `botc` ser
 
 ### Database (`core/database.py`)
 
-Six ORM models: `OHLCData`, `TrailingState`, `ClosedPosition`, `BotControl`, `OptimizerJob`, `SessionRecord`. Direct SQLAlchemy (no async). All DAL functions are at module level (not a class). Migrations live in `scripts/migrations/versions/` managed by Alembic (`alembic.ini` points there).
+Seven ORM models: `OHLCData`, `TrailingState`, `ClosedPosition`, `BotControl`, `OptimizerJob`, `SessionRecord`, `PairConfig`. Direct SQLAlchemy (no async). All DAL functions are at module level (not a class). Migrations live in `scripts/migrations/versions/` managed by Alembic (`alembic.ini` points there).
 
 When changing an ORM model's table constraints, update **both** the model in `core/database.py` and the corresponding Alembic migration — they are not auto-synced, and CI builds the schema from migrations (a drift between the two recently allowed an invalid `mode` to pass the model but fail the migration's check constraint).
 
@@ -111,6 +111,8 @@ When changing an ORM model's table constraints, update **both** the model in `co
 `SessionRecord` is written once at the start of every `trading_session()` call (status `running`) and updated in the `finally` block with the final status, balance snapshot, per-pair market data, and captured log lines. It is the primary data source for the Grafana Sessions row.
 
 `OptimizerJob` backs the async optimizer (`optimizer_jobs` table). A row is inserted `running` by `JobStore.try_start` and updated to `completed` (with the JSONB result) or `failed`. A `ck_opt_jobs_mode_valid` check constraint restricts `mode` to `OPTIMIZE`/`CURRENT`/`AUTO`; `ck_opt_jobs_status_valid` restricts `status` to `running`/`completed`/`failed`.
+
+`PairConfig` (`pair_config` table) — DB-authoritative per-pair config, seeded once from `.env` on first boot. Holds `target_pct`, `hodl_pct`, `k_act`, `min_margin`, and the five `stop_pct_<level>` values per pair. Managed by `core/config_store.py`; editable at runtime via `PATCH /config/{pair}` and Telegram `/setconfig`.
 
 ### Exchange wrapper (`exchange/kraken.py`)
 
@@ -125,8 +127,8 @@ Rate-limited to 1 call/second via a module-level lock. `_safe_call` wraps every 
 Per-pair parameters are loaded from env vars by `core/config.py` into the `TRADING_PARAMS` dict. The key pattern:
 
 - `PAIR_TARGET_PCT` / `PAIR_HODL_PCT`: Portfolio allocation (inventory manager)
-- `PAIR_K_ACT` (or `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT`): Activation ATR multiplier; `0` = immediate activation
-- `PAIR_MIN_MARGIN`: Minimum price margin from entry, expressed as fraction of entry price
+- `PAIR_K_ACT`: Activation ATR multiplier; `0` = immediate activation (single per pair — per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` variants have been removed)
+- `PAIR_MIN_MARGIN`: Minimum price margin from entry, expressed as fraction of entry price (single per pair — per-side `PAIR_SELL_MIN_MARGIN` / `PAIR_BUY_MIN_MARGIN` variants have been removed)
 - `PAIR_STOP_PCT_LL` … `_HH`: K-stop percentile per volatility level
 
 ## Design choices
@@ -151,6 +153,9 @@ Non-obvious decisions a reviewer would otherwise question. Update this list when
 - **`telegram` runs as a separate service, not inside `botc`.** PTB's `Application.run_polling()` blocks its thread indefinitely. Co-locating it with the scheduler would risk a dropped Telegram connection stalling the trading loop. A separate service means the trading engine is entirely unaffected by Telegram's availability.
 - **`_SessionLogCollector` attaches to the root logger rather than threading a context object.** The alternative — passing a log buffer through the call graph (`trading_session` → `positions_manager` → `market_analyzer` → …) — would require modifying every function signature. The root-logger approach captures records from every module called during the session with zero changes to any call site.
 - **`sessions.log_messages` is `Text` (JSON string), not `JSONB`.** `balance` and `pair_data` use `JSONB` because Grafana queries them with SQL operators (`->>`, `jsonb_array_elements`). `log_messages` is always fetched as a whole array, never queried by individual entry — `Text` avoids `JSONB` parse overhead with no query trade-off at this access pattern.
+- **Dynamic pair config is DB-authoritative, seeded once from `.env`.** A dedicated typed `pair_config` table was chosen over the generic `BotControl` store because typed columns enable schema-level validation, clean ORM access, and straightforward `PATCH` semantics. `.env` remains the deployment-time seed for new installs; after first boot it is no longer read for these parameters. This lets an operator tune live via the API or Telegram without touching `.env` or restarting the container.
+- **`stop_pct` changes recalc `K_STOP` at the next session via a runtime dirty flag.** `apply_patch` in `core/config_store.py` sets a per-pair dirty flag in `core/runtime.py` when any `stop_pct` field changes. The scheduler checks the flag at the start of the next `trading_session()` and re-runs `calculate_trading_parameters` before the position block. This keeps heavy calibration (pivot detection, ATR percentiles) inside the scheduler thread and off the request path, avoiding any latency spike on the `PATCH` endpoint.
+- **`k_act`/`min_margin` are single per pair; `K_STOP` stays per-side.** The per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` and `PAIR_SELL_MIN_MARGIN` / `PAIR_BUY_MIN_MARGIN` env vars were removed because the optimizer already treated these as single values and per-side tuning added config complexity without observable benefit. `K_STOP` is kept per-side (buy/sell) because it is a *derived* structural parameter (computed from pivot analysis), not a directly configured one, and the buy/sell paths naturally produce different stop distances.
 
 ## Testing conventions
 

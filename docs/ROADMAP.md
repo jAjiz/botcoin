@@ -40,21 +40,21 @@ values.
 **Scope:** Full design at
 [`specs/dynamic-pair-config-design.md`](specs/dynamic-pair-config-design.md).
 
-- [ ] `pair_config` table (ORM model + Alembic migration); DB-authoritative,
+- [x] `pair_config` table (ORM model + Alembic migration); DB-authoritative,
       seeded once from `.env`
-- [ ] `core/config_store.py` — load/seed at startup, typed reads, atomic
+- [x] `core/config_store.py` — load/seed at startup, typed reads, atomic
       `apply_patch` that updates the live dicts
-- [ ] Per-pair dirty flag in `core/runtime.py`; `core/scheduler.py` recalcs
+- [x] Per-pair dirty flag in `core/runtime.py`; `core/scheduler.py` recalcs
       `K_STOP` at the next session when a `stop_pct` changes
-- [ ] `GET /config`, `GET /config/{pair}`, `PATCH /config/{pair}`
+- [x] `GET /config`, `GET /config/{pair}`, `PATCH /config/{pair}`
       (`api/routes/config.py` + schemas)
-- [ ] Telegram `/config [pair]` and `/setconfig <pair> <field> <value>`
-- [ ] Collapse `k_act`/`min_margin` to single per-pair across config, validation,
+- [x] Telegram `/config [pair]` and `/setconfig <pair> <field> <value>`
+- [x] Collapse `k_act`/`min_margin` to single per-pair across config, validation,
       `positions_manager`, `engine`, `optimizer`, `backtest`; drop
       `PAIR_SELL_/BUY_` env vars; update `.env.example` + `docs/configuration.md`
-- [ ] Reusable `normalize_pair_config` shared by startup validation and runtime
+- [x] Reusable `normalize_pair_config` shared by startup validation and runtime
       patches (incl. cross-pair `target_pct` sum check)
-- [ ] Unit tests across store, validation, API, Telegram, scheduler, and the
+- [x] Unit tests across store, validation, API, Telegram, scheduler, and the
       collapse regression (80% gate)
 
 **Success criteria:** An operator can query and modify any pair-specific
