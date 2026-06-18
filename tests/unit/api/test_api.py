@@ -95,7 +95,7 @@ def test_full_app_rejects_request_without_token(monkeypatch):
     """Routers mounted on api_app.app must enforce verify_token via _auth dep."""
     monkeypatch.setattr(api_app, "API_SECRET_TOKEN", "secret-xyz")
     client = TestClient(api_app.app)
-    for path in ("/balance", "/status", "/market", "/positions"):
+    for path in ("/balance", "/status", "/market", "/positions", "/config"):
         resp = client.get(path)
         assert resp.status_code == 401, f"{path} did not require auth"
     resp = client.post("/control/pause")
@@ -158,6 +158,7 @@ def test_lifespan_db_connection_fails(monkeypatch):
 def test_lifespan_success_starts_and_stops_scheduler(monkeypatch):
     monkeypatch.setattr(api_app, "validate_config", lambda: True)
     monkeypatch.setattr(api_app.db, "check_database_connection", lambda: True)
+    monkeypatch.setattr(api_app.config_store, "load_or_seed", lambda: None)
     monkeypatch.setattr(api_app, "scheduler", None)
 
     mock_scheduler = MagicMock()

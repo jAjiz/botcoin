@@ -10,9 +10,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.responses import JSONResponse
 from fastapi.security import APIKeyHeader
 
+import core.config_store as config_store
 import core.database as db
 from api.routes import backtest as backtest_route
-from api.routes import balance, control, market, positions, status
+from api.routes import balance, config, control, market, positions, status
 from api.routes import optimizer as optimizer_route
 from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, SLEEPING_INTERVAL
 from core.scheduler import trading_session
@@ -46,6 +47,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("Configuration validation failed — check logs for details")
     if not db.check_database_connection():
         raise RuntimeError("Cannot connect to PostgreSQL")
+    config_store.load_or_seed()
 
     scheduler = AsyncIOScheduler(
         executors={"default": ThreadPoolExecutor(max_workers=1)},
@@ -84,5 +86,5 @@ def health():
     return {"ok": True}
 
 
-for _r in (balance, control, market, positions, status, backtest_route, optimizer_route):
+for _r in (balance, config, control, market, positions, status, backtest_route, optimizer_route):
     app.include_router(_r.router, dependencies=_auth)
