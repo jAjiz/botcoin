@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 import api.app as api_app
+import core.config as config
 import core.database as db
 import core.runtime as runtime
 from api.app import health, lifespan, verify_token
@@ -192,6 +193,17 @@ def test_get_market_returns_all_pairs(monkeypatch):
     assert pairs["ETHEUR"]["volatility_level"] == "LV"
 
 
+def test_get_market_rounds_price_and_atr_to_pair_decimals(monkeypatch):
+    monkeypatch.setattr(market, "PAIRS", {"USDCEUR": {"base": "USDC"}})
+    monkeypatch.setitem(config.PAIRS, "USDCEUR", {"pair_decimals": 4})
+    monkeypatch.setattr(runtime, "get_pair_data", lambda pair: {"last_price": 0.99876543, "atr": 0.00081234})
+    app = FastAPI()
+    app.include_router(market.router)
+    item = TestClient(app).get("/market").json()[0]
+    assert item["last_price"] == 0.9988
+    assert item["atr"] == 0.0008
+
+
 def test_get_market_unknown_pair_returns_404(monkeypatch):
     monkeypatch.setattr(market, "PAIRS", _PAIRS)
     monkeypatch.setattr(runtime, "get_pair_data", lambda pair: {})
@@ -272,6 +284,47 @@ def test_get_position_unknown_pair_returns_404(monkeypatch):
     app = FastAPI()
     app.include_router(positions.router)
     assert TestClient(app).get("/positions/UNKNOWN").status_code == 404
+
+
+def test_get_position_rounds_prices_but_keeps_atr_full_precision(monkeypatch):
+    monkeypatch.setattr(positions, "PAIRS", {"USDCEUR": {}})
+    monkeypatch.setitem(config.PAIRS, "USDCEUR", {"pair_decimals": 4})
+    pos = {
+        "side": "buy",
+        "volume": 10.0,
+        "entry_price": 1.0001,
+        "activation_atr": 0.00081234,
+        "activation_price": 0.99876543,
+        "created_at": _TS,
+        "trailing_price": 1.005,
+        "stop_price": 0.99901234,
+    }
+    monkeypatch.setattr(db, "load_trailing_state", lambda pair: dict(pos))
+    app = FastAPI()
+    app.include_router(positions.router)
+    data = TestClient(app).get("/positions/USDCEUR").json()["position"]
+    assert data["activation_price"] == 0.9988
+    assert data["stop_price"] == 0.999
+    # ATR fields stay full precision — they drive drift detection, not display
+    assert data["activation_atr"] == 0.00081234
+
+
+def test_get_position_rounds_volume_to_lot_decimals(monkeypatch):
+    monkeypatch.setattr(positions, "PAIRS", {"SOLEUR": {}})
+    monkeypatch.setitem(config.PAIRS, "SOLEUR", {"lot_decimals": 2})
+    pos = {
+        "side": "buy",
+        "volume": 12.34567,
+        "entry_price": 130.0,
+        "activation_atr": 1.0,
+        "activation_price": 131.0,
+        "created_at": _TS,
+    }
+    monkeypatch.setattr(db, "load_trailing_state", lambda pair: dict(pos))
+    app = FastAPI()
+    app.include_router(positions.router)
+    data = TestClient(app).get("/positions/SOLEUR").json()["position"]
+    assert data["volume"] == 12.35
 
 
 # ============================================================================

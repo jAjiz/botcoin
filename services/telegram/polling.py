@@ -147,8 +147,8 @@ async def market_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             asset_value_eur = asset_balance * price if price else 0
             msg += (
                 f"━━━ {pair} ━━━\n"
-                f"Price: {price:,.2f}€\n"
-                f"ATR: {atr:,.2f}€ ({vol})\n"
+                f"Price: {price:,}€\n"
+                f"ATR: {atr:,}€ ({vol})\n"
                 f"Balance: {asset_balance:.8f} ({asset_value_eur:,.2f}€)\n\n"
             )
 
@@ -193,7 +193,7 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         msg = "📊 Open Positions:\n\n"
         for pair in pairs_to_show:
             last_price = price_by_pair.get(pair, 0)
-            msg += f"━━━ {pair} (Last price: {last_price:,.2f}€) ━━━\n"
+            msg += f"━━━ {pair} (Last price: {last_price:,}€) ━━━\n"
 
             pos = pos_by_pair.get(pair)
             if not pos:
@@ -204,9 +204,9 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             entry_price = pos["entry_price"]
             base_lines = [
                 f"{pos['side'].upper()}",
-                f"Volume: {pos['volume']:,.8f} ({pos['volume'] * last_price:,.2f}€)",
-                f"Entry: {entry_price:,.2f}€",
-                f"Activation: {pos['activation_price']:,.2f}€",
+                f"Volume: {pos['volume']:,} ({pos['volume'] * last_price:,.2f}€)",
+                f"Entry: {entry_price:,}€",
+                f"Activation: {pos['activation_price']:,}€",
             ]
 
             if trailing_active:
@@ -214,8 +214,8 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 pnl_symbol = "🟢" if pnl and pnl > 0 else "🔴"
                 base_lines.extend(
                     [
-                        f"Trailing: {pos['trailing_price']:,.2f}€",
-                        f"Stop: {pos['stop_price']:,.2f}€",
+                        f"Trailing: {pos['trailing_price']:,}€",
+                        f"Stop: {pos['stop_price']:,}€",
                         f"PnL: {pnl_symbol} {pnl:+.2f}%",
                     ]
                 )

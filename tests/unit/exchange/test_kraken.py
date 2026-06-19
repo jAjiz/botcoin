@@ -1,4 +1,41 @@
+import core.config as config
 import exchange.kraken as kraken
+
+# ============================================================================
+# Pairs map
+# ============================================================================
+
+
+def test_build_pairs_map_populates_metadata_and_decimals(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken,
+        "get_asset_pairs",
+        lambda: {
+            "XXBTZEUR": {
+                "altname": "XBTEUR",
+                "wsname": "XBT/EUR",
+                "base": "XXBT",
+                "quote": "ZEUR",
+                "pair_decimals": 1,
+                "lot_decimals": 8,
+                "cost_decimals": 5,
+            }
+        },
+    )
+    pairs_dict: dict[str, dict] = {"XBTEUR": {}}
+
+    kraken.build_pairs_map(pairs_dict)
+
+    assert pairs_dict["XBTEUR"] == {
+        "primary": "XXBTZEUR",
+        "wsname": "XBT/EUR",
+        "base": "XXBT",
+        "quote": "ZEUR",
+        "pair_decimals": 1,
+        "lot_decimals": 8,
+        "cost_decimals": 5,
+    }
+
 
 # ============================================================================
 # Balance
@@ -113,6 +150,38 @@ def test_place_limit_order_returns_order_id_on_success(monkeypatch) -> None:
     result = kraken.place_limit_order("XBTEUR", "buy", 80000.0, 0.001)
 
     assert result == "ORDER456"
+
+
+def test_place_limit_order_rounds_to_pair_precision(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None):
+        captured["data"] = data
+        return {"error": [], "result": {"txid": ["ORDER789"]}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+    monkeypatch.setitem(config.PAIRS, "USDCEUR", {"pair_decimals": 4, "lot_decimals": 8})
+
+    kraken.place_limit_order("USDCEUR", "sell", 1.031274, 12.123456789)
+
+    assert captured["data"]["price"] == "1.0313"
+    assert captured["data"]["volume"] == "12.12345679"
+
+
+def test_place_limit_order_without_known_decimals_sends_unrounded(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None):
+        captured["data"] = data
+        return {"error": [], "result": {"txid": ["ORDER000"]}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+    monkeypatch.delitem(config.PAIRS, "ZZZEUR", raising=False)
+
+    kraken.place_limit_order("ZZZEUR", "buy", 1.2345, 0.5)
+
+    assert captured["data"]["price"] == "1.2345"
+    assert captured["data"]["volume"] == "0.5"
 
 
 def test_place_limit_order_returns_none_on_api_error(monkeypatch) -> None:

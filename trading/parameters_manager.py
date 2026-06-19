@@ -9,6 +9,7 @@ import core.logging as logging
 import core.runtime as runtime
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
+from core.utils import round_price
 from trading.engine import PairCalibration
 from trading.market_analyzer import analyze_structural_noise
 
@@ -54,8 +55,11 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
 
     if infoLog:
         logging.info(
-            "ATR percentiles → P20:{:,.1f}€ | P50:{:,.1f}€ | P80:{:,.1f}€ | P95:{:,.1f}€".format(
-                PAIRS[pair]["atr_20pct"], PAIRS[pair]["atr_50pct"], PAIRS[pair]["atr_80pct"], PAIRS[pair]["atr_95pct"]
+            "ATR percentiles → P20:{:,}€ | P50:{:,}€ | P80:{:,}€ | P95:{:,}€".format(
+                round_price(pair, PAIRS[pair]["atr_20pct"]),
+                round_price(pair, PAIRS[pair]["atr_50pct"]),
+                round_price(pair, PAIRS[pair]["atr_80pct"]),
+                round_price(pair, PAIRS[pair]["atr_95pct"]),
             )
         )
 

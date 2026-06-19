@@ -123,6 +123,27 @@ async def test_market_command_shows_all_pairs(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_market_command_preserves_api_price_precision(monkeypatch) -> None:
+    """Telegram prints the (already API-rounded) price without coarsening it."""
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(polling, "PAIRS", {"USDCEUR": {"base": "USDC"}})
+    monkeypatch.setattr(polling, "FIAT_CODE", "ZEUR")
+    item = {"pair": "USDCEUR", "last_price": 1.0312, "atr": 0.0008, "volatility_level": "LV"}
+
+    async def _fake_get(url):
+        if url == "/market":
+            return _mock_response([item])
+        return _mock_response({"balance": {"USDC": 10.0, "ZEUR": 100.0}})
+
+    monkeypatch.setattr(polling, "client", _mock_client(get=_fake_get))
+    update = MockUpdate()
+    await polling.market_command(update, MockContext())
+    reply = update.message.replies[0]
+    assert "1.0312" in reply
+    assert "0.0008" in reply
+
+
+@pytest.mark.asyncio
 async def test_market_command_rejects_unknown_pair(monkeypatch) -> None:
     monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
     monkeypatch.setattr(polling, "PAIRS", {"XBTEUR": {}})
@@ -168,6 +189,40 @@ async def test_positions_command_shows_open_position(monkeypatch) -> None:
     await polling.positions_command(update, MockContext(args=["XBTEUR"]))
     msg = update.message.replies[0]
     assert "Trailing" in msg and "Stop" in msg
+
+
+@pytest.mark.asyncio
+async def test_positions_command_preserves_api_price_precision(monkeypatch) -> None:
+    """Telegram prints the (already API-rounded) position prices without coarsening."""
+    monkeypatch.setattr(polling, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(polling, "PAIRS", {"USDCEUR": {}})
+    market_item = {"pair": "USDCEUR", "last_price": 1.0312, "volatility_level": "LV"}
+
+    async def _fake_get(url):
+        if "/positions" in url:
+            return _mock_response(
+                {
+                    "pair": "USDCEUR",
+                    "position": {
+                        "side": "buy",
+                        "volume": 10.0,
+                        "entry_price": 1.0001,
+                        "activation_atr": 0.0008,
+                        "activation_price": 0.9987,
+                        "created_at": "2026-04-01T12:00:00Z",
+                        "trailing_price": 1.005,
+                        "stop_price": 0.9991,
+                    },
+                }
+            )
+        return _mock_response(market_item)
+
+    monkeypatch.setattr(polling, "client", _mock_client(get=_fake_get))
+    update = MockUpdate()
+    await polling.positions_command(update, MockContext(args=["USDCEUR"]))
+    msg = update.message.replies[0]
+    assert "0.9987" in msg
+    assert "0.9991" in msg
 
 
 @pytest.mark.asyncio
