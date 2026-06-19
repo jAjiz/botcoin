@@ -7,6 +7,7 @@ from typing import Any
 import krakenex
 import pandas as pd
 
+import core.config as config
 from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
 ## Kraken API rate limit: 1 call per second for public endpoints.
@@ -73,6 +74,9 @@ def build_pairs_map(pairs_dict: dict[str, dict[str, Any]]) -> None:
                 "wsname": info.get("wsname", ""),
                 "base": info.get("base", ""),
                 "quote": info.get("quote", ""),
+                "pair_decimals": info.get("pair_decimals"),
+                "lot_decimals": info.get("lot_decimals"),
+                "cost_decimals": info.get("cost_decimals"),
             }
     if not all(pairs_dict[pair] for pair in pairs_dict):
         missing = [pair for pair in pairs_dict if not pairs_dict[pair]]
@@ -107,11 +111,25 @@ def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] |
         return None
     prices = {}
     for pair, info in pairs_dict.items():
-        prices[pair] = round(float(result[info["primary"]]["c"][0]), 1)
+        prices[pair] = float(result[info["primary"]]["c"][0])
     return prices
 
 
+def _format_amount(value: float, decimals: int | None) -> str:
+    """Format a price or volume to the pair's Kraken precision.
+
+    When ``decimals`` is unknown (pair metadata not loaded) the value is sent
+    unrounded so we never silently coarsen it — better a possible Kraken reject
+    (handled by ``_safe_call``) than a corrupted order price."""
+    if decimals is None:
+        return str(value)
+    return f"{value:.{decimals}f}"
+
+
 def place_limit_order(pair: str, side: str, price: float, volume: float) -> str | None:
+    meta = config.PAIRS.get(pair, {})
+    price_str = _format_amount(price, meta.get("pair_decimals"))
+    volume_str = _format_amount(volume, meta.get("lot_decimals"))
     result = _safe_call(
         f"{side.upper()} limit order",
         lambda: api.query_private(
@@ -120,15 +138,15 @@ def place_limit_order(pair: str, side: str, price: float, volume: float) -> str 
                 "pair": pair,
                 "type": side,
                 "ordertype": "limit",
-                "price": str(round(price, 1)),
-                "volume": str(volume),
+                "price": price_str,
+                "volume": volume_str,
             },
         ),
     )
     if result is None:
         return None
     new_order = result.get("txid", [None])[0]
-    logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume:.8f} @ {price:,.1f}€)")
+    logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume_str} @ {price_str}€")
     return new_order
 
 

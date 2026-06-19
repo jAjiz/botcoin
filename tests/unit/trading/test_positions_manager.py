@@ -135,6 +135,66 @@ def test_create_position_builds_state_from_calculated_values(monkeypatch) -> Non
 
 
 # ============================================================================
+# Full precision (small-value pairs like USDCEUR)
+# ============================================================================
+
+
+def test_create_position_preserves_full_precision(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "MIN_VALUE", 1.0)
+    monkeypatch.setattr(
+        positions_manager,
+        "calculate_position",
+        lambda pair, balance, prices, state: ("sell", 100.0),
+    )
+    monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *args: 0.99876543)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, tzinfo=UTC))
+
+    trailing_state: dict[str, Any] = {}
+    positions_manager.create_position(
+        pair="USDCEUR",
+        balance={"ZEUR": 1000.0},
+        last_prices={"USDCEUR": 1.0001},
+        atr_val=0.00081234,
+        trailing_state=trailing_state,
+    )
+
+    assert trailing_state["USDCEUR"]["activation_atr"] == 0.00081234
+    assert trailing_state["USDCEUR"]["activation_price"] == 0.99876543
+
+
+def test_update_activation_price_preserves_full_precision(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_args: 1.0234567)
+
+    pos = {"side": "buy", "entry_price": 1.0001}
+    positions_manager.update_activation_price("USDCEUR", pos, atr_val=0.00081234)
+
+    assert pos["activation_price"] == 1.0234567
+    assert pos["activation_atr"] == 0.00081234
+
+
+def test_reanchor_activation_price_preserves_full_precision(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "calculate_activation_distance", lambda *_: 0.001)
+    monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_: 1.0234567)
+
+    pos: dict[str, Any] = {"side": "sell", "activation_price": 1.5, "entry_price": 1.0, "activation_atr": 0.0008}
+    result = positions_manager.reanchor_activation_price("USDCEUR", pos, current_price=1.0)
+
+    assert result is True
+    assert pos["activation_price"] == 1.0234567
+
+
+def test_update_stop_price_preserves_full_precision(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 0.5)
+
+    pos = {"side": "sell"}
+    positions_manager.update_stop_price("USDCEUR", pos, trailing_price=1.23456, atr_val=0.0008)
+
+    # stop = 1.23456 - 0.5 * 0.0008 = 1.23416
+    assert pos["stop_price"] == pytest.approx(1.23416)
+    assert pos["stop_atr"] == 0.0008
+
+
+# ============================================================================
 # refresh_position
 # ============================================================================
 

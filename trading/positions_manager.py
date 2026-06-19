@@ -2,7 +2,7 @@ from typing import Any
 
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
-from core.utils import now_utc
+from core.utils import now_utc, round_price
 from exchange.kraken import get_order_closing_price, place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
@@ -33,13 +33,13 @@ def create_position(
         "side": side,
         "volume": stored_volume,
         "entry_price": current_price,
-        "activation_atr": round(atr_val, 1),
-        "activation_price": round(activation_price, 1),
+        "activation_atr": atr_val,
+        "activation_price": activation_price,
         "created_at": now_utc(),
     }
 
     logging.info(
-        f"[{pair}] 🆕 New {side.upper()} position: {stored_volume:.8f} vol | {stored_volume * current_price:,.1f}€ cost | activation at {activation_price:,.1f}€",
+        f"[{pair}] 🆕 New {side.upper()} position: {stored_volume:.8f} vol | {stored_volume * current_price:,.2f}€ cost | activation at {round_price(pair, activation_price):,}€",
         to_telegram=True,
     )
 
@@ -68,7 +68,7 @@ def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float) -> N
     entry_price = pos["entry_price"]
     activation_price = calculate_activation_price(pair, side, entry_price, atr_val)
 
-    pos.update({"activation_price": round(activation_price, 1), "activation_atr": round(atr_val, 1)})
+    pos.update({"activation_price": activation_price, "activation_atr": atr_val})
 
 
 def reanchor_activation_price(pair: str, pos: dict[str, Any], current_price: float) -> bool:
@@ -79,7 +79,7 @@ def reanchor_activation_price(pair: str, pos: dict[str, Any], current_price: flo
     if gap <= expected_distance:
         return False
 
-    pos["activation_price"] = round(calculate_activation_price(pair, side, current_price, atr_val), 1)
+    pos["activation_price"] = calculate_activation_price(pair, side, current_price, atr_val)
     return True
 
 
@@ -95,7 +95,7 @@ def update_stop_price(pair: str, pos: dict[str, Any], trailing_price: float, atr
     side = pos["side"]
     stop_price = calculate_stop_price(pair, side, trailing_price, atr_val)
 
-    pos.update({"trailing_price": trailing_price, "stop_price": round(stop_price, 1), "stop_atr": round(atr_val, 1)})
+    pos.update({"trailing_price": trailing_price, "stop_price": stop_price, "stop_atr": atr_val})
 
 
 def refresh_position(
@@ -169,28 +169,34 @@ def tick_position(
     if not trailing_active:
         if pos["activation_atr"] < atr_limit_min or pos["activation_atr"] > atr_limit_max:
             update_activation_price(pair, pos, atr_val)
-            logging.info(f"♻️ Recalibrate {side.upper()} position: activation price to {pos['activation_price']:,}€.")
+            logging.info(
+                f"♻️ Recalibrate {side.upper()} position: activation price to {round_price(pair, pos['activation_price']):,}€."
+            )
 
         if reanchor_activation_price(pair, pos, current_price):
-            logging.info(f"🧭 Re-anchor {side.upper()} position: activation price to {pos['activation_price']:,}€.")
+            logging.info(
+                f"🧭 Re-anchor {side.upper()} position: activation price to {round_price(pair, pos['activation_price']):,}€."
+            )
 
         if (side == "sell" and current_price >= pos["activation_price"]) or (
             side == "buy" and current_price <= pos["activation_price"]
         ):
             pos["activated_at"] = now_utc()
             logging.info(
-                f"[{pair}] ⚡ Activation price {pos['activation_price']:,}€ reached for {side.upper()} position.",
+                f"[{pair}] ⚡ Activation price {round_price(pair, pos['activation_price']):,}€ reached for {side.upper()} position.",
                 to_telegram=True,
             )
             update_stop_price(pair, pos, current_price, atr_val)
             logging.info(
-                f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€"
+                f"📈 Update {side.upper()} position: new trailing price {round_price(pair, pos['trailing_price']):,}€ | stop {round_price(pair, pos['stop_price']):,}€"
             )
 
     else:
         if pos["stop_atr"] < atr_limit_min or pos["stop_atr"] > atr_limit_max:
             update_stop_price(pair, pos, pos["trailing_price"], atr_val)
-            logging.info(f"♻️ Recalibrate {side.upper()} position: stop price to {pos['stop_price']:,}€.")
+            logging.info(
+                f"♻️ Recalibrate {side.upper()} position: stop price to {round_price(pair, pos['stop_price']):,}€."
+            )
 
         if (side == "sell" and current_price <= pos["stop_price"]) or (
             side == "buy" and current_price >= pos["stop_price"]
@@ -203,7 +209,7 @@ def tick_position(
         ):
             update_stop_price(pair, pos, current_price, atr_val)
             logging.info(
-                f"📈 Update {side.upper()} position: new trailing price {pos['trailing_price']:,}€ | stop {pos['stop_price']:,}€"
+                f"📈 Update {side.upper()} position: new trailing price {round_price(pair, pos['trailing_price']):,}€ | stop {round_price(pair, pos['stop_price']):,}€"
             )
 
 
@@ -214,7 +220,7 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
         current_price = last_prices[pair]
         volume = float(pos.get("volume", 0.0))
         logging.info(
-            f"[{pair}] ⛔ Stop price {stop_price:,}€ hitted: placing LIMIT {side.upper()} order | {volume:.8f} @ {current_price:,.1f}€",
+            f"[{pair}] ⛔ Stop price {round_price(pair, stop_price):,}€ hitted: placing LIMIT {side.upper()} order | {volume:.8f} @ {round_price(pair, current_price):,}€",
             to_telegram=True,
         )
 

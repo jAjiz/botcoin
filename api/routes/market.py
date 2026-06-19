@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 import core.runtime as runtime
 from api.schemas import MarketItem
 from core.config import PAIRS
+from core.utils import round_price
 
 router = APIRouter(tags=["market"])
 
@@ -12,8 +13,8 @@ def _build_market_item(pair: str) -> MarketItem:
     return MarketItem(
         pair=pair,
         base_asset=PAIRS[pair].get("base"),
-        last_price=data.get("last_price"),
-        atr=data.get("atr"),
+        last_price=round_price(pair, data.get("last_price")),
+        atr=round_price(pair, data.get("atr")),
         volatility_level=data.get("volatility_level"),
     )
 

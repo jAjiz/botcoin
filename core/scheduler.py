@@ -8,7 +8,7 @@ import core.database as db
 import core.logging as logging
 import core.runtime as runtime
 from core.config import PAIRS, PARAM_SESSIONS, TRADING_ENABLED
-from core.utils import now_utc
+from core.utils import now_utc, round_price
 from exchange.kraken import get_balance, get_last_prices
 from trading.market_analyzer import get_current_atr
 from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
@@ -94,7 +94,9 @@ def trading_session() -> None:
                 calculate_trading_parameters(pair)
 
             vol_level = get_volatility_level(pair, current_atr)
-            logging.info(f"Market: {current_price:,.1f}€ | ATR: {current_atr:,.1f}€ ({vol_level})")
+            logging.info(
+                f"Market: {round_price(pair, current_price):,}€ | ATR: {round_price(pair, current_atr):,}€ ({vol_level})"
+            )
             runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
             pair_data[pair] = {
                 "price": current_price,
