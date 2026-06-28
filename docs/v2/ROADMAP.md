@@ -1,8 +1,6 @@
 # BoTCoin V2 – Roadmap (Closed)
 
-> **Status: Closed.** The V2 milestone is complete. Its goal — evolving BoTCoin into a production-grade backend service with professional persistence, observability, and testability — was achieved across Phases 0–10. This document is a frozen historical record. Active work continues in the V3 roadmap: [`../ROADMAP.md`](../ROADMAP.md).
->
-> Two items scoped under V2 but never built — the Trend/Chop regime filter (former Phase 11) and the Auto-Lookback K_STOP calibration (former deferred phase) — were carried forward to V3.
+> **Status: Closed.** The V2 milestone is complete. Its goal — evolving BoTCoin into a production-grade backend service with professional persistence, observability, and testability — was achieved across Phases 0–10. This document is a frozen historical record. Active work continues in the feature backlog: [`../BACKLOG.md`](../BACKLOG.md).
 
 This document outlined the improvement areas and phased plan for the V2 iteration of BoTCoin, with a focus on **modern backend engineering practices**.
 
@@ -25,7 +23,6 @@ This document outlined the improvement areas and phased plan for the V2 iteratio
   - [Phase 8 – Observability: Grafana Dashboard (Completed)](#phase-8--observability-grafana-dashboard-completed)
   - [Phase 9 – Project Documentation & Portfolio Framing (Completed)](#phase-9--project-documentation--portfolio-framing-completed)
   - [Phase 10 – Trading Tools Integration: Backtest + Optimizer (Completed)](#phase-10--trading-tools-integration-backtest--optimizer-completed)
-- [Carried Forward to V3](#-carried-forward-to-v3)
 - [Out of Scope](#-out-of-scope)
 
 ---
@@ -85,8 +82,6 @@ The README is the project's cover letter. It must lead with engineering decision
 
 ### 10. Trading Tools Integration: Backtest + Optimizer
 The V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) are CLI-only and mutate global trading config — a hazard the live bot is currently isolated from only because they are invoked out-of-process. Folding them into the API as JSON endpoints — sync `/backtest`, async `/optimizer/jobs` with Postgres persistence and a single-slot `multiprocessing` worker — turns one-off scripts into reusable services without risking the live bot's config state. A pure config-as-argument engine (`trading/engine.py`) decouples simulation from globals, and Optuna TPE search replaces the exhaustive grid. Numba JIT is held as an optional, benchmark-gated speedup rather than a baseline dependency.
-
-> A *Strategy Refinement: Trend/Chop Regime Filter* improvement area was originally scoped here as item 11; it was carried forward to V3 (see [Carried Forward to V3](#-carried-forward-to-v3)).
 
 ---
 
@@ -349,7 +344,7 @@ Detailed execution plan: [`plans/phase-9-project-documentation.md`](plans/phase-
 
 ### Phase 10 – Trading Tools Integration: Backtest + Optimizer (Completed)
 
-**Goal:** Fold the V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) into the FastAPI service as JSON endpoints, eliminating their global-state mutation hazard and making them reusable from any client. Introduce a pure config-as-argument engine, a calibration cache shared across consumers, an Optuna TPE search to replace the exhaustive grid, and a `multiprocessing.spawn` worker with a single-slot lock and Postgres-persisted job state for the long-running optimizer. This phase introduces **no change to live trading behavior** — calibration stays on full history; the auto-lookback window is deferred to Phase 11.
+**Goal:** Fold the V1 analysis scripts (`trading/backtest.py`, `trading/optimize_params.py`) into the FastAPI service as JSON endpoints, eliminating their global-state mutation hazard and making them reusable from any client. Introduce a pure config-as-argument engine, a calibration cache shared across consumers, an Optuna TPE search to replace the exhaustive grid, and a `multiprocessing.spawn` worker with a single-slot lock and Postgres-persisted job state for the long-running optimizer. This phase introduces **no change to live trading behavior**.
 
 **Scope:**
 
@@ -370,15 +365,6 @@ Detailed execution plan: [`plans/phase-10-trading-tools-integration.md`](plans/p
 
 ---
 
-## 🔜 Carried Forward to V3
-
-Two items were scoped during V2 but never built. They were extracted into the V3 roadmap when V2 closed — see [`../ROADMAP.md`](../ROADMAP.md) for their full, current specifications.
-
-- **Strategy Refinement: Trend/Chop Regime Filter** (former V2 *Phase 11*) → **V3 Phase 1**. A Choppiness Index–based regime classifier that gates new position entries during sideways markets while leaving the trailing-stop exit logic untouched.
-- **Auto-Lookback Window for K_STOP Calibration** (former V2 *deferred phase*) → **V3 deferred appendix**. Replaces full-history K_STOP calibration with a per-pair data-driven lookback window. Deferred pending ~60+ days of OHLC (~mid-July 2026).
-
----
-
 ## 🚫 Out of Scope
 
 The following were intentionally excluded from the V2 roadmap:
@@ -391,4 +377,4 @@ The following were intentionally excluded from the V2 roadmap:
 
 ---
 
-*V2 is closed. This document is frozen as a historical record; ongoing work is tracked in the V3 roadmap ([`../ROADMAP.md`](../ROADMAP.md)).*
+*V2 is closed. This document is frozen as a historical record; ongoing work is tracked in the feature backlog ([`../BACKLOG.md`](../BACKLOG.md)).*
