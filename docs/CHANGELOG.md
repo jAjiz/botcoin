@@ -8,6 +8,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+- Reframed the roadmap as a **feature backlog** at `docs/BACKLOG.md` (renamed from `docs/ROADMAP.md`): a status-grouped stock of independent features (Shipped / Planned / Deferred) instead of versioned, sequential phases. Each card is brief; detail lives in the linked spec and plan.
+- Repointed `README.md` and `docs/v2/ROADMAP.md` references to the backlog; removed the dangling "Phase 11" reference in the frozen V2 doc.
+- `.dockerignore` now excludes the whole `docs/` folder from the runtime image instead of listing individual files.
+
+---
+
+## [2.11.1] – Per-Pair Decimal Precision
+
+### Changed
+- Prices and ATR are now kept at full float precision internally and rounded **only at the order boundary**, using each pair's Kraken `pair_decimals`/`lot_decimals` (captured by `build_pairs_map` from `AssetPairs`). Replaces a hardcoded `round(x, 1)` that destroyed low-value pairs — USDCEUR's ATR (~0.0008) rounded to `0.0` and order prices (~1.03) rounded to `1.0`, collapsing the activation/stop distance.
+- Added `round_price`/`round_volume` helpers in `core/utils.py` (over a shared `_round_to_pair_decimals`) for log and API display; ATR fields are never rounded into state/DB.
+
+---
+
+## [2.11.0] – Dynamic Pair Configuration
+
+### Added
+- **DB-authoritative per-pair config:** new `pair_config` table (ORM model + Alembic migration), seeded once from `.env` on first boot, holding `target_pct`, `hodl_pct`, `k_act`, `min_margin`, and the five `stop_pct_<level>` values per pair.
+- `core/config_store.py` — owns load/seed at startup, typed reads, and an atomic `apply_patch` that updates the live config dicts.
+- Runtime editing via `GET /config`, `GET /config/{pair}`, `PATCH /config/{pair}` and Telegram `/config [pair]` + `/setconfig <pair> <field> <value>` — changes persist and take effect on the next session without a restart.
+- Per-pair dirty flag in `core/runtime.py`; a `stop_pct` change triggers a `K_STOP` recalc on the next scheduler session.
+
+### Changed
+- Collapsed `k_act`/`min_margin` from per-side to a single value per pair across config, validation, `positions_manager`, `engine`, optimizer, and backtest. (`K_STOP` stays per-side, as it is a derived structural parameter.)
+- `.env` now seeds these parameters only on first boot; the `pair_config` table is the authoritative source thereafter.
+
+### Removed
+- The per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` and `PAIR_SELL_MIN_MARGIN` / `PAIR_BUY_MIN_MARGIN` env vars.
+
 ---
 
 ## [2.10.1] – V2 Milestone Closed
