@@ -163,7 +163,7 @@ is_closing_complete()  — Kraken QueryOrders confirms fill
 
 BoTCoin reached its goal of a production-grade backend service and that milestone is now closed — see the archived [V2 roadmap](docs/v2/ROADMAP.md) for the full delivered scope.
 
-Active and planned work lives in [docs/ROADMAP.md](docs/ROADMAP.md). Next up: a Choppiness Index–based **trend/chop regime filter** that suppresses new entries in sideways markets, leaving the trailing-stop exit untouched.
+Active and planned work lives in the feature backlog at [docs/BACKLOG.md](docs/BACKLOG.md) — a stock of independent features grouped by status.
 
 ---
 
@@ -175,7 +175,7 @@ Active and planned work lives in [docs/ROADMAP.md](docs/ROADMAP.md). Next up: a 
 | [docs/trading-strategy.md](docs/trading-strategy.md) | ATR classification, K_STOP calibration, position lifecycle |
 | [docs/operations.md](docs/operations.md) | Local dev, production deploy, rollback, monitoring, troubleshooting |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | Phase-by-phase change history |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Active (V3) roadmap |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | Feature backlog — stock of planned, shipped, and deferred features |
 | [docs/v2/ROADMAP.md](docs/v2/ROADMAP.md) | Archived V2 roadmap (closed) and phase plans |
 
 ---

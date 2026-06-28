@@ -27,5 +27,4 @@ htmlcov/
 
 # Documentation and planning not needed in runtime image
 README.md
-ROADMAP.md
-plan/
+docs/
