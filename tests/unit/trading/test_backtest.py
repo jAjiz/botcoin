@@ -70,6 +70,24 @@ def test_run_backtest_recomputes_when_sliced(monkeypatch, sample_dataframe) -> N
     assert result.summary["source"] == "slice"
 
 
+def test_run_backtest_slice_calibrates_over_history_up_to_end_not_start(monkeypatch, sample_dataframe) -> None:
+    """A sliced run calibrates over [T0, end] (full history up to the window end),
+    independent of `start`, so K_STOP/ATR percentiles match the live bot and don't
+    swing with the slice boundary. The simulated window is still [start, end]."""
+    _setup_common(monkeypatch, sample_dataframe)
+    seen: list[int] = []
+    monkeypatch.setattr(backtest, "analyze_structural_noise", lambda df: (seen.append(len(df)) or ([], [])))
+
+    end = "2026-01-01 03:00:00"
+    run_backtest(BacktestRequest(pair=_PAIR, start="2026-01-01 00:00:00", end=end))
+    run_backtest(BacktestRequest(pair=_PAIR, start="2026-01-01 02:00:00", end=end))
+
+    # Same calibration window both times despite different `start`.
+    assert seen[0] == seen[1]
+    # And it spans all rows up to `end`, not just the (shorter) second slice.
+    assert seen[0] == int((sample_dataframe["dtime"] <= end).sum())
+
+
 def test_run_backtest_summary_shape(monkeypatch, sample_dataframe) -> None:
     _setup_common(monkeypatch, sample_dataframe)
     monkeypatch.setattr(backtest, "analyze_structural_noise", lambda _df: ([], []))

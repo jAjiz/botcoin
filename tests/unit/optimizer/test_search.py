@@ -171,6 +171,25 @@ def test_run_optimize_current_mode(monkeypatch) -> None:
     assert result.top_candidates[0]["min_margin"] == 0.005
 
 
+def test_build_eval_context_calibrates_over_history_up_to_end_not_start(monkeypatch) -> None:
+    """A sliced job calibrates over [T0, end] (full history up to the window end),
+    independent of `start`, matching the live bot. Otherwise K_STOP/ATR percentiles
+    are recomputed from the short slice and swing with the window boundary."""
+    df = _make_df(n=200)
+    monkeypatch.setattr(optimizer.db, "load_ohlc_data", lambda _p, _tf: df.copy())
+    monkeypatch.setattr(optimizer, "TRADING_PARAMS", {_PAIR: {"K_ACT": None, "MIN_MARGIN": 0.0}})
+    monkeypatch.setattr(optimizer, "STOP_PERCENTILES", {_PAIR: dict.fromkeys(_LEVELS, 0.9)})
+    seen: list[int] = []
+    monkeypatch.setattr(optimizer, "analyze_structural_noise", lambda d: (seen.append(len(d)) or ([], [])))
+
+    end = df["dtime"].iloc[120]
+    run_optimize(OptimizerRequest(pair=_PAIR, mode="CURRENT", start=df["dtime"].iloc[0], end=end), calibration=None)
+    run_optimize(OptimizerRequest(pair=_PAIR, mode="CURRENT", start=df["dtime"].iloc[80], end=end), calibration=None)
+
+    assert seen[0] == seen[1]  # calibration window independent of `start`
+    assert seen[0] == int((df["dtime"] <= end).sum())  # spans all history up to `end`
+
+
 def test_run_optimize_uses_passed_calibration(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.db, "load_ohlc_data", lambda _p, _tf: _make_df(n=80))
 

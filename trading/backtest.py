@@ -90,7 +90,13 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
     )
 
     if req.start or req.end:
-        # Date-sliced request: recompute events + ATR percentiles from the slice.
+        # Date-sliced request: simulate only the [start, end] window, but calibrate
+        # over the full history up to `end` (independent of `start`). The live bot
+        # always calibrates K_STOP/ATR percentiles over all available history;
+        # recomputing them from the short slice made them unstable (a one-day
+        # boundary shift could flip the sign of the result) and diverge from live.
+        # Calibration is capped at `end` so a sliced run never sees data from after
+        # its own window (no look-ahead beyond the window end).
         source = "slice"
         df = df_full
         if req.start:
@@ -98,8 +104,9 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
         if req.end:
             df = df[df["dtime"] <= req.end]
         df = df.reset_index(drop=True)
-        up_events, down_events = analyze_structural_noise(df)
-        atr_p20, atr_p50, atr_p80, atr_p95 = _atr_percentiles(df)
+        cal_df = df_full[df_full["dtime"] <= req.end].reset_index(drop=True) if req.end else df_full
+        up_events, down_events = analyze_structural_noise(cal_df)
+        atr_p20, atr_p50, atr_p80, atr_p95 = _atr_percentiles(cal_df)
     else:
         cached = runtime.get_pair_calibration(req.pair) if req.use_live_config else None
         if cached is not None:

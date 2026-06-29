@@ -579,7 +579,10 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
     calibration are never repeated across seeds or escalation levels."""
     fee_rate = float(req.fee_pct) / 100.0
 
-    df = db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME).dropna(subset=["atr"]).sort_values("time").reset_index(drop=True)
+    df_full = (
+        db.load_ohlc_data(req.pair, CANDLE_TIMEFRAME).dropna(subset=["atr"]).sort_values("time").reset_index(drop=True)
+    )
+    df = df_full
     if req.start:
         df = df[df["dtime"] >= req.start]
     if req.end:
@@ -603,8 +606,14 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
             calibration["atr_p95"],
         )
     else:
-        up_events, down_events = analyze_structural_noise(df)
-        atr_thresholds = _compute_atr_thresholds(df)
+        # Calibrate over the full history up to `end` (independent of `start`),
+        # mirroring the live bot, which always calibrates over all available
+        # history. Recomputing from the short slice made K_STOP/ATR percentiles
+        # unstable to the window boundary and diverge from live. Capping at `end`
+        # avoids any look-ahead beyond the window the candidate is scored on.
+        cal_df = df_full[df_full["dtime"] <= req.end].reset_index(drop=True) if req.end else df_full
+        up_events, down_events = analyze_structural_noise(cal_df)
+        atr_thresholds = _compute_atr_thresholds(cal_df)
 
     up_k = _k_values_by_level(up_events)
     down_k = _k_values_by_level(down_events)
