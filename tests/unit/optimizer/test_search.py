@@ -180,7 +180,7 @@ def test_build_eval_context_calibrates_over_history_up_to_end_not_start(monkeypa
     monkeypatch.setattr(optimizer, "TRADING_PARAMS", {_PAIR: {"K_ACT": None, "MIN_MARGIN": 0.0}})
     monkeypatch.setattr(optimizer, "STOP_PERCENTILES", {_PAIR: dict.fromkeys(_LEVELS, 0.9)})
     seen: list[int] = []
-    monkeypatch.setattr(optimizer, "analyze_structural_noise", lambda d: (seen.append(len(d)) or ([], [])))
+    monkeypatch.setattr(optimizer, "analyze_structural_noise", lambda d: seen.append(len(d)) or ([], []))
 
     end = df["dtime"].iloc[120]
     run_optimize(OptimizerRequest(pair=_PAIR, mode="CURRENT", start=df["dtime"].iloc[0], end=end), calibration=None)

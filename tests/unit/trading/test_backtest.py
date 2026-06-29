@@ -76,7 +76,7 @@ def test_run_backtest_slice_calibrates_over_history_up_to_end_not_start(monkeypa
     swing with the slice boundary. The simulated window is still [start, end]."""
     _setup_common(monkeypatch, sample_dataframe)
     seen: list[int] = []
-    monkeypatch.setattr(backtest, "analyze_structural_noise", lambda df: (seen.append(len(df)) or ([], [])))
+    monkeypatch.setattr(backtest, "analyze_structural_noise", lambda df: seen.append(len(df)) or ([], []))
 
     end = "2026-01-01 03:00:00"
     run_backtest(BacktestRequest(pair=_PAIR, start="2026-01-01 00:00:00", end=end))
