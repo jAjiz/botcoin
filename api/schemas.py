@@ -130,13 +130,13 @@ class AutoSettings(BaseModel):
 
     n_seeds: int = Field(default=4, ge=2, le=8)
     min_agree: int = Field(default=3, ge=2, le=8)
-    trial_step: int = Field(default=500, ge=100, le=2_000)
-    max_trials: int = Field(default=9_000, ge=500, le=20_000)
+    trial_step: int = Field(default=500, ge=100, le=1_000)
+    max_trials: int = Field(default=3_000, ge=500, le=10_000)
 
 
 class CurrentParams(BaseModel):
     """CURRENT-mode evaluation knobs (ignored by OPTIMIZE/AUTO). Each field set
-    replaces the value read from the live .env, allowing sensitivity runs against
+    replaces the value read from the configuration, allowing sensitivity runs against
     any config without touching the running bot."""
 
     stop_pcts: dict[str, float] | None = None
@@ -161,7 +161,7 @@ class OptimizerRequest(BaseModel):
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
-    train_split: float = Field(default=0.8, ge=0.5, le=1.0)
+    train_split: float = Field(default=0.67, ge=0.5, le=1.0)
     min_ops: int = 0
     min_test_ops: int = 0
     n_trials: int = Field(default=1_000, ge=1, le=10_000)
