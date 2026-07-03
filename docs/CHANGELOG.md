@@ -6,7 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased] – Session Resilience & Failure Alerting
+## [Unreleased]
+
+---
+
+## [2.12.0] – Session Resilience & Failure Alerting
 
 ### Added
 - **Session-failure alerting:** an edge-triggered Telegram alert fires once after `SESSION_FAILURE_ALERT_THRESHOLD` (default 3) consecutive failed sessions, with a single recovery message when sessions resume — one message per episode, never one per failed tick. Detection lives in `trading_session`'s `finally` block (`_notify_session_outcome`) and the streak state in `core/runtime.py`; it runs before `finalize_session` and outside the `session_id` guard, so the alert fires even when PostgreSQL is down (Telegram delivery is HTTP, DB-independent).
