@@ -6,7 +6,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [Unreleased]
+## [Unreleased] – Session Resilience & Failure Alerting
+
+### Added
+- **Session-failure alerting:** an edge-triggered Telegram alert fires once after `SESSION_FAILURE_ALERT_THRESHOLD` (default 3) consecutive failed sessions, with a single recovery message when sessions resume — one message per episode, never one per failed tick. Detection lives in `trading_session`'s `finally` block (`_notify_session_outcome`) and the streak state in `core/runtime.py`; it runs before `finalize_session` and outside the `session_id` guard, so the alert fires even when PostgreSQL is down (Telegram delivery is HTTP, DB-independent).
+- `cleanup_orphaned_sessions()` — startup reconciliation marking sessions left `running` by a past crash or hung tick as `failed`, mirroring the optimizer-jobs cleanup.
+- New tunable `SESSION_FAILURE_ALERT_THRESHOLD` (documented in `.env.example` and `docs/configuration.md`).
+
+### Fixed
+- **Bounded every blocking I/O call in the scheduler loop so a stall can no longer freeze the single worker thread.** A Kraken call inheriting krakenex's default `timeout=None` had frozen a tick indefinitely, leaving the session stuck `running` while every later tick was skipped ("max instances reached"). Kraken calls now pass `KRAKEN_HTTP_TIMEOUT` (`(connect, read)`); PostgreSQL uses `connect_timeout` + TCP keepalives + a server-side `statement_timeout` via `_build_connect_args()` in `core/database.py`. A stall now raises instead of hanging and is handled as a recoverable missed tick.
 
 ---
 
