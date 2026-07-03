@@ -109,9 +109,8 @@ def pop_config_dirty(pair: str) -> bool:
 
 
 def register_session_failure(threshold: int) -> int | None:
-    """Count a failed session. Return the streak count ONCE — on the tick it
-    first reaches ``threshold`` — and None otherwise, so the caller alerts
-    exactly once per degraded episode."""
+    """Count a failed session. Return the streak count once (the tick it first
+    reaches ``threshold``), else None, so the caller alerts only once."""
     with _lock:
         _shared_data["consecutive_session_failures"] += 1
         count = _shared_data["consecutive_session_failures"]
@@ -122,8 +121,8 @@ def register_session_failure(threshold: int) -> int | None:
 
 
 def register_session_success() -> bool:
-    """Reset the failure streak. Return True if we were in the alerted state, so
-    the caller sends a single recovery message."""
+    """Reset the failure streak. Return True if we had alerted, so the caller
+    sends one recovery message."""
     with _lock:
         was_alerted = _shared_data["session_failure_alerted"]
         _shared_data["consecutive_session_failures"] = 0

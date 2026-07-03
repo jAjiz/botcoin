@@ -46,10 +46,9 @@ def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
 
 
 def _notify_session_outcome(status: str, reason: str | None) -> None:
-    """Edge-triggered Telegram alerting: one message when the failure streak
-    reaches the threshold, one when sessions recover. ``paused`` is neutral.
-    Uses only in-memory runtime state and the (DB-independent, error-swallowing)
-    Telegram logger, so it never masks the session's own exception."""
+    """Edge-triggered Telegram alerting: one message when the failure streak hits
+    the threshold, one on recovery, ``paused`` neutral. Touches only runtime and
+    the DB-independent Telegram logger, so it never masks the session's exception."""
     if status == "completed":
         if runtime.register_session_success():
             logging.info("✅ Trading sessions recovered; data is updating again.", to_telegram=True)
