@@ -58,8 +58,7 @@ def _notify_session_outcome(status: str, reason: str | None) -> None:
         if count is not None:
             detail = f" Last error: {reason}." if reason else ""
             logging.error(
-                f"⚠️ {count} trading sessions have failed in a row.{detail} "
-                "Prices and positions are not being updated.",
+                f"⚠️ {count} trading sessions have failed in a row.{detail} Prices and positions are not being updated.",
                 to_telegram=True,
             )
 

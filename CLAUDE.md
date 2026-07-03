@@ -130,6 +130,7 @@ Per-pair parameters are loaded from env vars by `core/config.py` into the `TRADI
 - `PAIR_K_ACT`: Activation ATR multiplier; `0` = immediate activation (single per pair — per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` variants have been removed)
 - `PAIR_MIN_MARGIN`: Minimum price margin from entry, expressed as fraction of entry price (single per pair — per-side `PAIR_SELL_MIN_MARGIN` / `PAIR_BUY_MIN_MARGIN` variants have been removed)
 - `PAIR_STOP_PCT_LL` … `_HH`: K-stop percentile per volatility level
+- `SESSION_FAILURE_ALERT_THRESHOLD` (default 3): consecutive failed sessions before one edge-triggered Telegram alert fires; a single recovery message follows the next successful session.
 
 ## Design choices
 
