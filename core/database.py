@@ -811,6 +811,26 @@ def finalize_session(
             logger.error(f"Error saving latest_pair_data to bot_control: {e}")
 
 
+def cleanup_orphaned_sessions() -> int:
+    """Mark every status='running' session as 'failed', stamping ended_at=now().
+
+    Only ``finalize_session`` moves a row off 'running'; if the process is killed
+    or a tick hangs it never runs and the row lingers forever. Called at startup
+    to reconcile leftovers. Returns the affected row count.
+    """
+    try:
+        with get_session() as session:
+            result = session.execute(
+                update(SessionRecord)
+                .where(SessionRecord.status == "running")
+                .values(status="failed", ended_at=datetime.now(UTC))
+            )
+            return result.rowcount
+    except Exception as e:
+        logger.error(f"Error cleaning up orphaned sessions: {e}")
+        return 0
+
+
 # ============================================================================
 # Optimizer Job Operations
 # ============================================================================

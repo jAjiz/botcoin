@@ -2,6 +2,56 @@ import core.config as config
 import exchange.kraken as kraken
 
 # ============================================================================
+# HTTP timeout (guards against a stalled socket blocking the caller forever)
+# ============================================================================
+
+
+def test_get_balance_passes_http_timeout(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None, timeout=None):
+        captured["timeout"] = timeout
+        return {"error": [], "result": {}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    kraken.get_balance()
+
+    assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
+    assert captured["timeout"] is not None
+
+
+def test_query_public_limited_passes_http_timeout_with_data(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(kraken, "_wait_rate_limit", lambda: None)
+
+    def _mock(method, data=None, timeout=None):
+        captured["timeout"] = timeout
+        return {"error": [], "result": {}}
+
+    monkeypatch.setattr(kraken.api, "query_public", _mock)
+
+    kraken._query_public_limited("Ticker", {"pair": "XBTEUR"})
+
+    assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
+
+
+def test_query_public_limited_passes_http_timeout_without_data(monkeypatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(kraken, "_wait_rate_limit", lambda: None)
+
+    def _mock(method, data=None, timeout=None):
+        captured["timeout"] = timeout
+        return {"error": [], "result": {}}
+
+    monkeypatch.setattr(kraken.api, "query_public", _mock)
+
+    kraken._query_public_limited("AssetPairs")
+
+    assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
+
+
+# ============================================================================
 # Pairs map
 # ============================================================================
 
@@ -155,7 +205,7 @@ def test_place_limit_order_returns_order_id_on_success(monkeypatch) -> None:
 def test_place_limit_order_rounds_to_pair_precision(monkeypatch) -> None:
     captured: dict = {}
 
-    def _mock(method, data=None):
+    def _mock(method, data=None, timeout=None):
         captured["data"] = data
         return {"error": [], "result": {"txid": ["ORDER789"]}}
 
@@ -171,7 +221,7 @@ def test_place_limit_order_rounds_to_pair_precision(monkeypatch) -> None:
 def test_place_limit_order_without_known_decimals_sends_unrounded(monkeypatch) -> None:
     captured: dict = {}
 
-    def _mock(method, data=None):
+    def _mock(method, data=None, timeout=None):
         captured["data"] = data
         return {"error": [], "result": {"txid": ["ORDER000"]}}
 

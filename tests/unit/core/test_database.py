@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -75,6 +76,7 @@ class FakeSession:
         self.close_calls = 0
         self.executed_sql: list[str] = []
         self.commit_error: Exception | None = None
+        self.execute_rowcount = 0
 
     def query(self, _model: Any) -> FakeQuery:
         return self.query_obj
@@ -100,8 +102,9 @@ class FakeSession:
     def close(self) -> None:
         self.close_calls += 1
 
-    def execute(self, sql) -> None:
+    def execute(self, sql) -> SimpleNamespace:
         self.executed_sql.append(str(sql))
+        return SimpleNamespace(rowcount=self.execute_rowcount)
 
 
 class FakeSessionContextManager:
@@ -934,6 +937,41 @@ def test_finalize_session_skips_snapshots_when_none(monkeypatch):
     )
 
     assert session.merged_records == []
+
+
+# ============================================================================
+# cleanup_orphaned_sessions Tests
+# ============================================================================
+
+
+def test_cleanup_orphaned_sessions_marks_running_as_failed(monkeypatch):
+    """Running sessions left over from a crash/hang are updated in the sessions
+    table and the affected row count is returned."""
+    session = FakeSession()
+    session.execute_rowcount = 3
+    patch_get_session(monkeypatch, session)
+
+    count = database.cleanup_orphaned_sessions()
+
+    assert count == 3
+    assert len(session.executed_sql) == 1
+    assert "sessions" in session.executed_sql[0].lower()
+
+
+def test_cleanup_orphaned_sessions_returns_zero_when_none_running(monkeypatch):
+    """With no running sessions the UPDATE affects no rows and returns 0."""
+    session = FakeSession()
+    session.execute_rowcount = 0
+    patch_get_session(monkeypatch, session)
+
+    assert database.cleanup_orphaned_sessions() == 0
+
+
+def test_cleanup_orphaned_sessions_returns_zero_on_error(monkeypatch):
+    """A DB error is swallowed (startup must not crash) and 0 is returned."""
+    patch_get_session_error(monkeypatch)
+
+    assert database.cleanup_orphaned_sessions() == 0
 
 
 def test_finalize_session_swallows_snapshot_write_error(monkeypatch, caplog):

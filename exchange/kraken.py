@@ -16,6 +16,12 @@ KRAKEN_MIN_CALL_INTERVAL_SECONDS = 1.0
 _rate_limit_lock = threading.Lock()
 _last_public_call_ts = 0.0
 
+# (connect, read) HTTP timeout for every Kraken call. krakenex forwards it to
+# requests; its default timeout=None lets a stalled socket block forever, which
+# once froze the single scheduler thread indefinitely. A finite timeout raises
+# instead, and _safe_call turns that into a recoverable missed tick.
+KRAKEN_HTTP_TIMEOUT: tuple[float, float] = (10.0, 30.0)
+
 
 class KrakenAPIError(Exception):
     """Raised when the Kraken API returns a non-empty error field."""
@@ -38,8 +44,8 @@ def _wait_rate_limit() -> None:
 def _query_public_limited(method: str, data: dict[str, Any] | None = None) -> dict[str, Any]:
     _wait_rate_limit()
     if data is None:
-        return api.query_public(method)
-    return api.query_public(method, data)
+        return api.query_public(method, timeout=KRAKEN_HTTP_TIMEOUT)
+    return api.query_public(method, data, timeout=KRAKEN_HTTP_TIMEOUT)
 
 
 def _safe_call(label: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any] | None:
@@ -85,12 +91,15 @@ def build_pairs_map(pairs_dict: dict[str, dict[str, Any]]) -> None:
 
 
 def get_balance() -> dict[str, str] | None:
-    return _safe_call("balance", lambda: api.query_private("Balance"))
+    return _safe_call("balance", lambda: api.query_private("Balance", timeout=KRAKEN_HTTP_TIMEOUT))
 
 
 def get_order_closing_price(order_id: str) -> float | None:
     """Return the average execution price of a filled order, or None if still pending/open."""
-    result = _safe_call("order closing price", lambda: api.query_private("QueryOrders", {"txid": order_id}))
+    result = _safe_call(
+        "order closing price",
+        lambda: api.query_private("QueryOrders", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
+    )
     if result is None:
         return None
     order = result.get(order_id, {})
@@ -141,6 +150,7 @@ def place_limit_order(pair: str, side: str, price: float, volume: float) -> str 
                 "price": price_str,
                 "volume": volume_str,
             },
+            timeout=KRAKEN_HTTP_TIMEOUT,
         ),
     )
     if result is None:
