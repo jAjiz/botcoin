@@ -974,6 +974,33 @@ def test_cleanup_orphaned_sessions_returns_zero_on_error(monkeypatch):
     assert database.cleanup_orphaned_sessions() == 0
 
 
+# ============================================================================
+# Engine connect_args (bound every DB phase so a stall can't freeze the loop)
+# ============================================================================
+
+
+def test_build_connect_args_bounds_connect_query_and_liveness():
+    """connect_args must cap connecting, cap queries, and enable keepalives —
+    the three protections against a DB stall hanging the scheduler thread."""
+    args = database._build_connect_args()
+
+    assert args["connect_timeout"] == 10
+    assert args["options"] == "-c statement_timeout=30000"
+    assert args["keepalives"] == 1
+    assert args["keepalives_idle"] > 0
+    assert args["keepalives_interval"] > 0
+    assert args["keepalives_count"] > 0
+
+
+def test_build_connect_args_are_valid_libpq_params():
+    """make_conninfo rejects unknown keys, so this catches a typo against the
+    real psycopg driver (unlike asserting the literal dict)."""
+    import psycopg.conninfo
+
+    # Must not raise.
+    psycopg.conninfo.make_conninfo(**database._build_connect_args())
+
+
 def test_finalize_session_swallows_snapshot_write_error(monkeypatch, caplog):
     """A bot_control write failure must not propagate out of finalize_session."""
     call_count = 0

@@ -53,6 +53,25 @@ DATABASE_URL = URL.create(
     database=POSTGRES_DB,
 )
 
+DB_CONNECT_TIMEOUT_SECONDS = 10
+DB_STATEMENT_TIMEOUT_MS = 30_000
+
+
+def _build_connect_args() -> dict[str, Any]:
+    """libpq params so a DB stall can't hang the single scheduler thread:
+    connect_timeout caps connecting, TCP keepalives catch a peer that dies
+    mid-query, statement_timeout caps a slow/locked query. Each raises instead
+    of blocking, so the tick fails and the next one runs."""
+    return {
+        "connect_timeout": DB_CONNECT_TIMEOUT_SECONDS,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 10,
+        "keepalives_count": 3,
+        "options": f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
+    }
+
+
 # Create engine with connection pooling
 engine = create_engine(
     DATABASE_URL,
@@ -62,6 +81,7 @@ engine = create_engine(
     pool_pre_ping=True,  # Verify connections before using
     pool_recycle=3600,  # Recycle connections after 1 hour
     echo=False,  # Set to True for SQL debugging
+    connect_args=_build_connect_args(),
 )
 
 # Session factory
@@ -812,12 +832,10 @@ def finalize_session(
 
 
 def cleanup_orphaned_sessions() -> int:
-    """Mark every status='running' session as 'failed', stamping ended_at=now().
+    """Mark every status='running' session 'failed' (ended_at=now()) at startup.
 
-    Only ``finalize_session`` moves a row off 'running'; if the process is killed
-    or a tick hangs it never runs and the row lingers forever. Called at startup
-    to reconcile leftovers. Returns the affected row count.
-    """
+    Only finalize_session clears 'running', so a killed or hung process leaves
+    the row stuck forever. Returns the affected row count."""
     try:
         with get_session() as session:
             result = session.execute(
