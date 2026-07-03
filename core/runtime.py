@@ -18,6 +18,8 @@ _shared_data = {
     # }}
     # Phase 11 extends this entry with "window_days" + "window_sweep".
     "config_dirty": set(),  # pairs whose config changed since the last scheduler check
+    "consecutive_session_failures": 0,
+    "session_failure_alerted": False,
 }
 
 
@@ -104,3 +106,26 @@ def pop_config_dirty(pair: str) -> bool:
             _shared_data["config_dirty"].discard(pair)
             return True
         return False
+
+
+def register_session_failure(threshold: int) -> int | None:
+    """Count a failed session. Return the streak count ONCE — on the tick it
+    first reaches ``threshold`` — and None otherwise, so the caller alerts
+    exactly once per degraded episode."""
+    with _lock:
+        _shared_data["consecutive_session_failures"] += 1
+        count = _shared_data["consecutive_session_failures"]
+        if count >= threshold and not _shared_data["session_failure_alerted"]:
+            _shared_data["session_failure_alerted"] = True
+            return count
+        return None
+
+
+def register_session_success() -> bool:
+    """Reset the failure streak. Return True if we were in the alerted state, so
+    the caller sends a single recovery message."""
+    with _lock:
+        was_alerted = _shared_data["session_failure_alerted"]
+        _shared_data["consecutive_session_failures"] = 0
+        _shared_data["session_failure_alerted"] = False
+        return was_alerted
