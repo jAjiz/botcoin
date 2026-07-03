@@ -7,7 +7,7 @@ from typing import Any
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-from core.config import PAIRS, PARAM_SESSIONS, TRADING_ENABLED
+from core.config import PAIRS, PARAM_SESSIONS, SESSION_FAILURE_ALERT_THRESHOLD, TRADING_ENABLED
 from core.utils import now_utc, round_price
 from exchange.kraken import get_balance, get_last_prices
 from trading.market_analyzer import get_current_atr
@@ -45,6 +45,25 @@ def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
     return None
 
 
+def _notify_session_outcome(status: str, reason: str | None) -> None:
+    """Edge-triggered Telegram alerting: one message when the failure streak
+    reaches the threshold, one when sessions recover. ``paused`` is neutral.
+    Uses only in-memory runtime state and the (DB-independent, error-swallowing)
+    Telegram logger, so it never masks the session's own exception."""
+    if status == "completed":
+        if runtime.register_session_success():
+            logging.info("✅ Trading sessions recovered; data is updating again.", to_telegram=True)
+    elif status == "failed":
+        count = runtime.register_session_failure(SESSION_FAILURE_ALERT_THRESHOLD)
+        if count is not None:
+            detail = f" Last error: {reason}." if reason else ""
+            logging.error(
+                f"⚠️ {count} trading sessions have failed in a row.{detail} "
+                "Prices and positions are not being updated.",
+                to_telegram=True,
+            )
+
+
 def trading_session() -> None:
     global _session_count
 
@@ -54,6 +73,7 @@ def trading_session() -> None:
 
     session_id: int | None = None
     status = "failed"  # overwritten on success / paused
+    failure_reason: str | None = None
     current_balance: dict | None = None
     pair_data: dict[str, dict] = {}
 
@@ -70,12 +90,14 @@ def trading_session() -> None:
 
         current_balance = call_with_retry(get_balance)
         if current_balance is None:
+            failure_reason = "could not fetch balance"
             logging.error("Could not fetch balance. Skipping session.\n")
             return
         runtime.update_balance(current_balance)
 
         last_prices = call_with_retry(get_last_prices, PAIRS)
         if last_prices is None:
+            failure_reason = "could not fetch prices"
             logging.error("Could not fetch prices. Skipping session.\n")
             return
 
@@ -142,12 +164,14 @@ def trading_session() -> None:
         runtime.update_last_run_at(now_utc())
         logging.info("======== SESSION COMPLETE ========")
         status = "completed"
-    except Exception:
+    except Exception as exc:
         logging.exception("Unhandled exception in trading_session")
         status = "failed"
+        failure_reason = failure_reason or f"unhandled exception: {exc}"
         raise
     finally:
         app_logger.removeHandler(collector)
+        _notify_session_outcome(status, failure_reason)
         if session_id is not None:
             db.finalize_session(
                 session_id=session_id,
