@@ -11,6 +11,20 @@ and plan.
 
 ## ✅ Shipped
 
+### Session Resilience & Failure Alerting
+
+Closed the scheduler-hang class by time-bounding every blocking I/O call in the
+trading loop (Kraken HTTP timeout; PostgreSQL connect/keepalive/statement
+timeouts), so a stalled socket can no longer freeze the single worker thread —
+it raises and becomes a recoverable missed tick. Sessions left `running` by a
+past crash or hang are reconciled at startup (`cleanup_orphaned_sessions`). On
+top of that, edge-triggered Telegram alerting warns once after a configurable
+streak of consecutive failed sessions and once again on recovery — one message
+per episode, not per failed tick.
+
+- Spec: [`specs/2026-07-03-session-failure-alerts-design.md`](specs/2026-07-03-session-failure-alerts-design.md)
+- Plan: [`plans/session-failure-alerts-plan.md`](plans/session-failure-alerts-plan.md)
+
 ### Dynamic Pair Configuration
 
 Per-pair trading parameters (`target_pct`, `hodl_pct`, `k_act`, `min_margin`,

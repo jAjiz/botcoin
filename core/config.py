@@ -32,6 +32,7 @@ ALLOW_NO_AUTH = os.getenv("ALLOW_NO_AUTH", "false").lower() == "true"
 # all slots are busy). On a resource-constrained host (e.g. a free-tier micro VM)
 # set to 0 to prevent the CPU-bound search from starving the trading engine.
 MAX_CONCURRENT_JOBS = max(0, int(os.getenv("MAX_CONCURRENT_JOBS", "1")))
+SESSION_FAILURE_ALERT_THRESHOLD = max(1, int(os.getenv("SESSION_FAILURE_ALERT_THRESHOLD", "3")))
 
 # Bot Settings
 SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))  # 1 minute

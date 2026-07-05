@@ -166,3 +166,51 @@ def test_trading_session_no_recalc_when_not_dirty_and_off_cycle(monkeypatch):
     scheduler.trading_session()
 
     assert recalcs == []
+
+
+def test_notify_session_outcome_alerts_once_on_failure_streak(monkeypatch):
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 3)
+    runtime._shared_data["consecutive_session_failures"] = 0
+    runtime._shared_data["session_failure_alerted"] = False
+    sent: list[tuple[str, bool]] = []
+    monkeypatch.setattr(scheduler.logging, "error", lambda msg, to_telegram=False: sent.append((msg, to_telegram)))
+    monkeypatch.setattr(scheduler.logging, "info", lambda msg, to_telegram=False: sent.append((msg, to_telegram)))
+
+    for _ in range(5):
+        scheduler._notify_session_outcome("failed", "could not fetch balance")
+
+    telegram_msgs = [m for m, tg in sent if tg]
+    assert len(telegram_msgs) == 1
+    assert "3" in telegram_msgs[0]
+    assert "could not fetch balance" in telegram_msgs[0]
+
+
+def test_notify_session_outcome_sends_single_recovery(monkeypatch):
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
+    runtime._shared_data["consecutive_session_failures"] = 0
+    runtime._shared_data["session_failure_alerted"] = False
+    sent: list[tuple[str, bool]] = []
+    monkeypatch.setattr(scheduler.logging, "error", lambda msg, to_telegram=False: sent.append((msg, to_telegram)))
+    monkeypatch.setattr(scheduler.logging, "info", lambda msg, to_telegram=False: sent.append((msg, to_telegram)))
+
+    scheduler._notify_session_outcome("failed", "boom")  # alert
+    scheduler._notify_session_outcome("completed", None)  # recovery
+    scheduler._notify_session_outcome("completed", None)  # no repeat
+
+    telegram_msgs = [m for m, tg in sent if tg]
+    assert len(telegram_msgs) == 2
+    assert "recovered" in telegram_msgs[1].lower()
+
+
+def test_notify_session_outcome_paused_is_neutral(monkeypatch):
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
+    runtime._shared_data["consecutive_session_failures"] = 0
+    runtime._shared_data["session_failure_alerted"] = False
+    sent: list[tuple[str, bool]] = []
+    monkeypatch.setattr(scheduler.logging, "error", lambda msg, to_telegram=False: sent.append((msg, to_telegram)))
+    monkeypatch.setattr(scheduler.logging, "info", lambda msg, to_telegram=False: sent.append((msg, to_telegram)))
+
+    scheduler._notify_session_outcome("paused", None)
+
+    assert sent == []
+    assert runtime._shared_data["consecutive_session_failures"] == 0
