@@ -40,6 +40,22 @@ effect on the next session without a restart. Shipped with a cleanup collapsing
 
 ## 📋 Planned
 
+### Code-Review Hardening
+
+Fixes for the defects found in the 2026-07-06 full code review. Phase 1 removes
+three failure modes that leave the bot permanently inoperative without an alert
+(pivot-detection infinite loop on flat candles; canceled/expired closing orders
+corrupting state; non-transactional close persistence wedging the session loop)
+and adds the agreed reprice-to-market behaviour for closing orders that never
+fill. Phase 2 hardens process boundaries and secret scoping (event-loop blocking
+in the optimizer routes, per-service env allowlists, migration quoting). Phase 3
+collects the smaller refactors (engine dedup + `itertuples`, database module
+split, doc-drift corrections). No strategy changes — the trailing stop remains
+the only exit.
+
+- Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
+- Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
+
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates
