@@ -10,16 +10,13 @@ import pandas as pd
 import core.config as config
 from core.config import KRAKEN_API_KEY, KRAKEN_API_SECRET
 
-## Kraken API rate limit: 1 call per second for public endpoints.
-# We implement a simple locking mechanism to ensure we respect this limit across all threads.
+# Kraken allows 1 call/second on public endpoints; the lock enforces it across threads.
 KRAKEN_MIN_CALL_INTERVAL_SECONDS = 1.0
 _rate_limit_lock = threading.Lock()
 _last_public_call_ts = 0.0
 
-# (connect, read) HTTP timeout for every Kraken call. krakenex forwards it to
-# requests; its default timeout=None lets a stalled socket block forever, which
-# once froze the single scheduler thread indefinitely. A finite timeout raises
-# instead, and _safe_call turns that into a recoverable missed tick.
+# (connect, read) timeout for every call. Must stay finite: krakenex's default of None
+# lets a stalled socket block the single scheduler thread forever (it once did).
 KRAKEN_HTTP_TIMEOUT: tuple[float, float] = (10.0, 30.0)
 
 

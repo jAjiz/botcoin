@@ -18,8 +18,8 @@ from core.scheduler import trading_session
 from core.validation import validate_config
 from trading.optimizer.jobs import JOB_STORE
 
-# Dedicated logger kept outside the "botc" tree so API records are not folded
-# into per-session telemetry by the scheduler's log collector.
+# Outside the "botc" tree so the scheduler's log collector does not fold API records
+# into per-session telemetry.
 logger = logging.getLogger("api")
 
 scheduler: AsyncIOScheduler | None = None
@@ -31,8 +31,7 @@ def verify_token(x_api_token: str | None = Security(_api_key_header)) -> None:
     if not API_SECRET_TOKEN:
         if ALLOW_NO_AUTH:
             return
-        # Defense-in-depth: validate_config should have already failed startup,
-        # but if the app somehow boots without a token, refuse every request.
+        # Defense-in-depth: validate_config already refuses to start without a token.
         raise HTTPException(status_code=401, detail="API auth not configured")
     if x_api_token is None or not secrets.compare_digest(x_api_token, API_SECRET_TOKEN):
         raise HTTPException(status_code=401, detail="Invalid or missing API token")

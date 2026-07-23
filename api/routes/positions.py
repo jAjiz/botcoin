@@ -9,9 +9,8 @@ from core.utils import round_price, round_volume
 
 router = APIRouter(tags=["positions"])
 
-# Price-scale fields rounded to the pair's precision for display. ATR fields
-# (activation_atr, stop_atr) are deliberately excluded — they drive ATR-drift
-# detection and must stay full precision.
+# Rounded to the pair's precision for display. ATR fields are deliberately excluded:
+# they drive ATR-drift detection and must stay at full precision.
 _PRICE_FIELDS = ("entry_price", "activation_price", "stop_price", "trailing_price", "closing_price")
 
 

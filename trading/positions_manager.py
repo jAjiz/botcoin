@@ -48,10 +48,8 @@ def calculate_activation_distance(pair: str, side: str, reference_price: float, 
     k_act = TRADING_PARAMS[pair]["K_ACT"]
 
     if k_act is not None:
-        # Use K_ACT if defined, K_ACT = 0 means immediate activation
-        return float(k_act) * atr_val
+        return float(k_act) * atr_val  # K_ACT = 0 means immediate activation
 
-    # Use K_STOP and MIN_MARGIN if K_ACT is not defined
     k_stop = get_k_stop(pair, side, atr_val)
     min_margin = float(TRADING_PARAMS[pair]["MIN_MARGIN"])
     return k_stop * atr_val + min_margin * reference_price

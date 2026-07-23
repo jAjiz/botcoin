@@ -10,7 +10,6 @@ def get_fiat_balance(balance: dict[str, Any]) -> float:
 def get_portfolio_value(balance: dict[str, Any], last_prices: dict[str, float]) -> float:
     total_value = 0.0
 
-    # Convert crypto assets with last prices
     for pair in PAIRS:
         asset = PAIRS[pair]["base"]
 
@@ -23,7 +22,6 @@ def get_portfolio_value(balance: dict[str, Any], last_prices: dict[str, float]) 
             asset_value = amount * price
             total_value += asset_value
 
-    # Add fiat balance
     total_value += get_fiat_balance(balance)
 
     return total_value

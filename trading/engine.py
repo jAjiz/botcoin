@@ -10,8 +10,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# Fixed, ordered volatility levels. Kept local (not imported from core.config)
-# so this module stays a leaf with no project dependencies.
 LEVELS = ("LL", "LV", "MV", "HV", "HH")
 
 
@@ -61,15 +59,15 @@ def _vol_level_from_atr(atr_val: float, atr_20: float, atr_50: float, atr_80: fl
 
 
 def _pnl_abs(prev_side: str, prev_price: float, curr_price: float) -> float:
-    # P&L is computed vs previous executed operation price
     if prev_side == "buy":
         return curr_price - prev_price
     return prev_price - curr_price
 
 
 def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float) -> float | None:
-    """Resolve K_STOP for a side/ATR, reproducing parameters_manager.get_k_stop's
-    fallback logic but reading from cfg.calibration instead of TRADING_PARAMS."""
+    """Resolve K_STOP for a side/ATR: same side, then opposite side, then the nearest
+    neighbouring levels on the same side. Reproduces parameters_manager.get_k_stop's
+    fallback logic but reads cfg.calibration instead of TRADING_PARAMS."""
     cal = cfg.calibration
     vol = _vol_level_from_atr(atr_val, cal.atr_p20, cal.atr_p50, cal.atr_p80, cal.atr_p95)
 
@@ -80,12 +78,10 @@ def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float) -> float | None:
     if k_stop is not None:
         return k_stop
 
-    # Try opposite side K_STOP as fallback
     k_stop = opp.get(vol)
     if k_stop is not None:
         return k_stop
 
-    # Search neighboring levels (same side only)
     idx = LEVELS.index(vol)
     for offset in range(1, len(LEVELS)):
         for neighbor in (idx - offset, idx + offset):
@@ -130,10 +126,9 @@ def simulate_operations(
     atr_20, atr_50, atr_80, atr_95 = cal.atr_p20, cal.atr_p50, cal.atr_p80, cal.atr_p95
 
     ops: list[Operation] = []
-    # Track cumulative return in percent (compounded). Start at 0%.
-    cum_pnl = 0.0
+    cum_pnl = 0.0  # cumulative return in percent, compounded
 
-    # Start always with a BUY operation at first valid close
+    # The simulation always opens with a BUY at the first bar with a valid ATR.
     first_row = None
     for _, row in df.iterrows():
         atr = float(row["atr"])
@@ -154,8 +149,7 @@ def simulate_operations(
     first_vol = _vol_level_from_atr(first_atr, atr_20, atr_50, atr_80, atr_95)
     first_k = lookup_k_stop(cfg, "buy", first_atr) or 0.0
     first_fee = float(first_price) * float(fee_rate)
-    # Convert the entry fee to percent of entry price and apply to cumulative %
-    # Equivalent to an immediate negative return of fee_rate * 100.
+    # The entry fee is an immediate negative return of fee_rate * 100 percent.
     cum_pnl -= float(fee_rate) * 100.0
     ops.append(
         Operation(
@@ -205,20 +199,18 @@ def simulate_operations(
             activation_atr = atr
 
         if not active:
-            # Recalibrate activation
             if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
                 activation_px = activation_price(cfg, side, entry_price, atr)
                 activation_atr = atr
 
-            # Re-anchor activation toward current price if it has drifted too far
-            # (mirrors positions_manager.reanchor_activation_price; uses the stored
-            # activation_atr, not the current bar ATR).
+            # Re-anchor toward the current price when it has drifted too far. Mirrors
+            # positions_manager.reanchor_activation_price: uses the stored
+            # activation_atr, not the current bar ATR.
             exp_dist = activation_distance(cfg, side, price, activation_atr)
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
             if gap > exp_dist:
                 activation_px = activation_price(cfg, side, price, activation_atr)
 
-            # Activation check
             if side == "sell" and high >= activation_px:
                 active = True
                 trailing_price = high
@@ -232,7 +224,6 @@ def simulate_operations(
             else:
                 continue
 
-        # Recalibrate stop
         if (
             stop_px is not None
             and trailing_price is not None
@@ -242,7 +233,6 @@ def simulate_operations(
             stop_px = stop_price(cfg, side, trailing_price, atr)
             stop_atr = atr
 
-        # Stop hit check & trailing update
         if side == "sell":
             if high > trailing_price:
                 trailing_price = high
@@ -254,7 +244,6 @@ def simulate_operations(
                 fee = float(exec_price) * float(fee_rate)
                 pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
                 pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                # Compound cumulative percent: (1+cum%)*(1+op%)-1
                 if pnl_pct is not None:
                     cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
                     cum_pnl = (cum_factor - 1.0) * 100.0
@@ -296,7 +285,6 @@ def simulate_operations(
                 fee = float(exec_price) * float(fee_rate)
                 pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
                 pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                # Compound cumulative percent: (1+cum%)*(1+op%)-1
                 if pnl_pct is not None:
                     cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
                     cum_pnl = (cum_factor - 1.0) * 100.0
