@@ -7,7 +7,7 @@ from typing import Any
 import core.database as db
 import core.logging as logging
 import core.runtime as runtime
-from core.config import PAIRS, PARAM_SESSIONS, SESSION_FAILURE_ALERT_THRESHOLD, TRADING_ENABLED
+from core.config import PAIRS, PARAM_SESSIONS, SESSION_FAILURE_ALERT_THRESHOLD, SLEEPING_INTERVAL, TRADING_ENABLED
 from core.utils import now_utc, round_price
 from exchange.kraken import get_balance, get_last_prices
 from trading.market_analyzer import get_current_atr
@@ -45,13 +45,34 @@ def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
     return None
 
 
-def _notify_session_outcome(status: str, reason: str | None) -> None:
+def _notify_session_outcome(status: str, reason: str | None, elapsed_seconds: float) -> None:
     """Edge-triggered Telegram alerting: one message when the failure streak hits
     the threshold, one on recovery, ``paused`` neutral. Touches only runtime and
-    the DB-independent Telegram logger, so it never masks the session's exception."""
+    the DB-independent Telegram logger, so it never masks the session's exception.
+
+    On a completed session it also tracks an independent *overrun* streak: a session
+    whose wall-clock ``elapsed_seconds`` reached ``SLEEPING_INTERVAL`` ran long enough
+    to skip the next tick, so ≥ threshold in a row warns that the host is likely
+    resource-starved. The overrun-recovery message is suppressed when a failure
+    recovery fires the same tick (the latter already implies normal operation)."""
     if status == "completed":
-        if runtime.register_session_success():
+        failure_recovered = runtime.register_session_success()
+        if failure_recovered:
             logging.info("✅ Trading sessions recovered; data is updating again.", to_telegram=True)
+        if elapsed_seconds >= SLEEPING_INTERVAL:
+            count = runtime.register_session_overrun(SESSION_FAILURE_ALERT_THRESHOLD)
+            if count is not None:
+                logging.error(
+                    f"⚠️ {count} trading sessions in a row overran the {SLEEPING_INTERVAL}s interval "
+                    f"(last took {elapsed_seconds:.0f}s); ticks are being skipped and prices/positions "
+                    "may lag. The host is likely resource-starved.",
+                    to_telegram=True,
+                )
+        elif runtime.register_session_ontime() and not failure_recovered:
+            logging.info(
+                f"✅ Trading session timing back to normal (last took {elapsed_seconds:.0f}s).",
+                to_telegram=True,
+            )
     elif status == "failed":
         count = runtime.register_session_failure(SESSION_FAILURE_ALERT_THRESHOLD)
         if count is not None:
@@ -74,9 +95,10 @@ def trading_session() -> None:
     failure_reason: str | None = None
     current_balance: dict | None = None
     pair_data: dict[str, dict] = {}
+    started_at = now_utc()  # session start; reused for the DB row and the elapsed measure
 
     try:
-        session_id = db.create_session(now_utc())
+        session_id = db.create_session(started_at)
 
         if db.get_bot_paused():
             logging.info("Bot is paused. Skipping session.\n")
@@ -167,11 +189,13 @@ def trading_session() -> None:
         raise
     finally:
         app_logger.removeHandler(collector)
-        _notify_session_outcome(status, failure_reason)
+        ended_at = now_utc()
+        elapsed_seconds = (ended_at - started_at).total_seconds()
+        _notify_session_outcome(status, failure_reason, elapsed_seconds)
         if session_id is not None:
             db.finalize_session(
                 session_id=session_id,
-                ended_at=now_utc(),
+                ended_at=ended_at,
                 status=status,
                 balance=current_balance,
                 pair_data=pair_data,

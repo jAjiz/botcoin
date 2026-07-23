@@ -13,6 +13,8 @@ _shared_data = {
     "config_dirty": set(),  # pairs whose config changed since the last scheduler check
     "consecutive_session_failures": 0,
     "session_failure_alerted": False,
+    "consecutive_session_overruns": 0,
+    "session_overrun_alerted": False,
 }
 
 
@@ -120,4 +122,28 @@ def register_session_success() -> bool:
         was_alerted = _shared_data["session_failure_alerted"]
         _shared_data["consecutive_session_failures"] = 0
         _shared_data["session_failure_alerted"] = False
+        return was_alerted
+
+
+def register_session_overrun(threshold: int) -> int | None:
+    """Count a session that overran the scheduling interval (long enough to skip
+    the next tick). Return the streak count once (the tick it first reaches
+    ``threshold``), else None, so the caller alerts only once. Independent of the
+    failure streak."""
+    with _lock:
+        _shared_data["consecutive_session_overruns"] += 1
+        count = _shared_data["consecutive_session_overruns"]
+        if count >= threshold and not _shared_data["session_overrun_alerted"]:
+            _shared_data["session_overrun_alerted"] = True
+            return count
+        return None
+
+
+def register_session_ontime() -> bool:
+    """Reset the overrun streak (a session that finished within the interval).
+    Return True if we had alerted, so the caller sends one recovery message."""
+    with _lock:
+        was_alerted = _shared_data["session_overrun_alerted"]
+        _shared_data["consecutive_session_overruns"] = 0
+        _shared_data["session_overrun_alerted"] = False
         return was_alerted
