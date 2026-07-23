@@ -14,12 +14,19 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
+    # Each probe spawns a fresh CPython interpreter (~28 ms CPU measured on the
+    # prod e2-micro, which has a 0.25 vCPU sustained baseline). `start_interval`
+    # keeps probes frequent only while the container is starting, so `depends_on:
+    # service_healthy` still gates the deploy quickly, while the steady-state
+    # interval matches SLEEPING_INTERVAL — probing faster than the bot ticks
+    # tells us nothing new. Requires Engine >= 25.0 (prod runs 29.x).
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 15s
+      interval: 60s
       timeout: 5s
-      retries: 5
-      start_period: 20s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks:
       - botc_backend
     command: ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -55,12 +62,16 @@ services:
       - pg_data:/var/lib/postgresql/data
     ports:
       - "127.0.0.1:5432:5432"
+    # Same rationale as botc: CMD-SHELL forks a shell plus pg_isready on every
+    # probe. `start_interval` keeps first-boot gating fast (botc waits on this
+    # via depends_on) without paying for a probe every 10 s forever.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 10s
+      interval: 60s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
     networks:
       - botc_backend
 
