@@ -167,9 +167,8 @@ class OptimizerRequest(BaseModel):
     n_trials: int = Field(default=1_000, ge=1, le=10_000)
     seed: int = 42
     # Mode applicability of each group is documented on its class. search_space is
-    # required for OPTIMIZE/AUTO, but enforced at the route (not as a model
-    # validator) so this same model can echo a stored request back without
-    # re-failing historical jobs that predate the field.
+    # required for OPTIMIZE/AUTO, but enforced at the route so this model can still
+    # echo back historical jobs that predate the field.
     auto_settings: AutoSettings | None = None
     search_space: SearchSpace | None = None
     current_params: CurrentParams | None = None
@@ -180,9 +179,9 @@ class OptimizerJobAcceptedResponse(BaseModel):
     status: Literal["running"] = "running"
 
 
-# --- Optimizer job status (typed so the JSON output has a stable, grouped field
-# order; the underlying request/result columns are JSONB, which does not preserve
-# key order). All echo/result fields are optional so historical jobs still parse.
+# --- Optimizer job status. Typed so the JSON output has a stable, grouped field order
+# (the request/result columns are JSONB, which does not preserve key order). Echo and
+# result fields are all optional so historical jobs still parse.
 
 
 class CandidateResult(BaseModel):

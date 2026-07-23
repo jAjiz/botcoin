@@ -24,16 +24,14 @@ class BacktestRequest:
     start: str | None = None
     end: str | None = None
     max_ops: int | None = None
-    use_live_config: bool = False  # if True, read events + ATR percentiles from the calibration cache; skip recompute
+    use_live_config: bool = False  # read the calibration cache instead of recomputing
 
 
 @dataclass(frozen=True)
 class BacktestResult:
     pair: str
     fee_pct: float
-    summary: dict  # {ops_count, pnl_samples, win_rate_pct, total_pnl_eur, total_fees_eur,
-    #  best_op_pnl_eur, worst_op_pnl_eur, avg_op_pnl_eur, median_op_pnl_eur,
-    #  row_count, source: "cache" | "recompute" | "slice"}
+    summary: dict  # see _build_summary
     operations: list[Operation]
 
 
@@ -90,13 +88,10 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
     )
 
     if req.start or req.end:
-        # Date-sliced request: simulate only the [start, end] window, but calibrate
-        # over the full history up to `end` (independent of `start`). The live bot
-        # always calibrates K_STOP/ATR percentiles over all available history;
-        # recomputing them from the short slice made them unstable (a one-day
-        # boundary shift could flip the sign of the result) and diverge from live.
-        # Calibration is capped at `end` so a sliced run never sees data from after
-        # its own window (no look-ahead beyond the window end).
+        # Simulate only [start, end], but calibrate over the full history up to `end`,
+        # like the live bot does. Calibrating from the short slice made K_STOP/ATR
+        # percentiles unstable (a one-day boundary shift could flip the result's sign).
+        # Capping at `end` keeps the run from seeing data after its own window.
         source = "slice"
         df = df_full
         if req.start:
@@ -110,7 +105,6 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
     else:
         cached = runtime.get_pair_calibration(req.pair) if req.use_live_config else None
         if cached is not None:
-            # Reuse the live bot's calibration (full history) — no recompute.
             source = "cache"
             df = df_full
             up_events = cached["up_events"]
@@ -120,7 +114,6 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
             atr_p80 = cached["atr_p80"]
             atr_p95 = cached["atr_p95"]
         else:
-            # Recompute from full history (cold cache or use_live_config=False).
             source = "recompute"
             df = df_full
             up_events, down_events = analyze_structural_noise(df_full)

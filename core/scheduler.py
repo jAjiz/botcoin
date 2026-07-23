@@ -125,9 +125,7 @@ def trading_session() -> None:
             }
 
             if not TRADING_ENABLED:
-                # Non-trading replica: observe and persist market data only, never
-                # touch positions. A stored position would be left unmanaged (its
-                # trailing stop frozen), so warn loudly if one is found.
+                # Non-trading replica: record market data, never touch positions.
                 if trailing_state.get(pair):
                     logging.warning(
                         f"TRADING_ENABLED is false but {pair} has a stored position; "

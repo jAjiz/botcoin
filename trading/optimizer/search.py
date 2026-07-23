@@ -312,16 +312,15 @@ class OptimizerRequest:
     min_test_ops: int = 0
     n_trials: int = 1_000
     seed: int = 42
-    # AUTO-mode knobs, grouped (None => defaults). Accepts an AutoSettings or the
-    # plain dict from model_dump()/asdict round-trips.
+    # AUTO-mode knobs (None => defaults).
     auto_settings: AutoSettings | None = None
-    # Search grids (required for OPTIMIZE/AUTO, ignored by CURRENT). Accepts a
-    # SearchSpace or the plain dict produced by model_dump()/asdict round-trips.
+    # Search grids: required for OPTIMIZE/AUTO, ignored by CURRENT.
     search_space: SearchSpace | None = None
     # CURRENT-mode .env overrides; ignored by OPTIMIZE/AUTO.
     current_params: CurrentParams | None = None
 
     def __post_init__(self) -> None:
+        """Coerce the plain dicts produced by model_dump()/asdict round-trips."""
         if isinstance(self.search_space, dict):
             object.__setattr__(self, "search_space", _search_space_from_dict(self.search_space))
         if isinstance(self.auto_settings, dict):
@@ -337,9 +336,7 @@ class OptimizerResult:
     top_candidates: list[dict]  # top 5 unique; each has candidate params + scores
     suggested_env_lines: list[str]  # formatted .env lines for top_candidates[0]
     n_trials_run: int
-    # AUTO mode extra fields (False/[]/None for OPTIMIZE and CURRENT results).
-    # AUTO reports only the search outcome; comparing against the live config is a
-    # separate concern (use CURRENT mode).
+    # AUTO-only; left at their defaults by OPTIMIZE and CURRENT.
     converged: bool = False
     seeds_used: list = field(default_factory=list)
     n_seeds_agreed: int = 0
@@ -606,11 +603,8 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
             calibration["atr_p95"],
         )
     else:
-        # Calibrate over the full history up to `end` (independent of `start`),
-        # mirroring the live bot, which always calibrates over all available
-        # history. Recomputing from the short slice made K_STOP/ATR percentiles
-        # unstable to the window boundary and diverge from live. Capping at `end`
-        # avoids any look-ahead beyond the window the candidate is scored on.
+        # Calibrate over the full history up to `end`, not over the slice — see the
+        # note in backtest.run_backtest.
         cal_df = df_full[df_full["dtime"] <= req.end].reset_index(drop=True) if req.end else df_full
         up_events, down_events = analyze_structural_noise(cal_df)
         atr_thresholds = _compute_atr_thresholds(cal_df)
@@ -720,23 +714,21 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
         raise ValueError("search_space is required for OPTIMIZE/AUTO")
     auto = req.auto_settings or AutoSettings()
     seeds = random.sample(range(1, 9999), auto.n_seeds)
-    # Load OHLC + calibration once, and keep each seed's studies alive across
-    # escalation levels so adding trials *continues* the search (warm-start)
-    # instead of restarting it from scratch at every level.
+    # OHLC + calibration are loaded once, and each seed's studies stay alive across
+    # escalation levels so extra trials *continue* the search instead of restarting it.
     ctx = _build_eval_context(req, calibration)
     states = {seed: _new_seed_studies(seed, req.search_space) for seed in seeds}
 
     n_trials = req.n_trials
     last_results: list[OptimizerResult] = []
 
-    # One process pool for the whole search runs the kact/minmargin branches in
-    # parallel (reused across seeds and escalation levels).
+    # One pool for the whole search, reused across seeds and escalation levels.
     with _branch_executor(auto.max_trials) as executor:
         while n_trials <= auto.max_trials:
             last_results = []
             for seed in seeds:
-                # min_ops constraints not met → treat that seed as non-converging
-                # this round; its studies persist and may qualify at a higher budget.
+                # min_ops not met → the seed just doesn't converge this round; its
+                # studies persist and may qualify at a higher budget.
                 with contextlib.suppress(ValueError):
                     last_results.append(_seed_result(states[seed], n_trials, ctx, req, executor))
 
@@ -756,7 +748,6 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
 
             n_trials += auto.trial_step
 
-    # No convergence — return the best candidate from the last batch
     valid = [r for r in last_results if r.top_candidates]
     if not valid:
         raise ValueError("AUTO mode: no valid candidates found within the trial budget")

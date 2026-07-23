@@ -72,22 +72,19 @@ def _build_connect_args() -> dict[str, Any]:
     }
 
 
-# Create engine with connection pooling
 engine = create_engine(
     DATABASE_URL,
     poolclass=QueuePool,
     pool_size=10,
     max_overflow=20,
-    pool_pre_ping=True,  # Verify connections before using
-    pool_recycle=3600,  # Recycle connections after 1 hour
-    echo=False,  # Set to True for SQL debugging
+    pool_pre_ping=True,
+    pool_recycle=3600,
+    echo=False,
     connect_args=_build_connect_args(),
 )
 
-# Session factory
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
-# ORM Base
 Base = declarative_base()
 
 
@@ -134,7 +131,7 @@ class OHLCData(Base):
     )
 
     def to_dict(self) -> dict[str, Any]:
-        # Only return useful fields for DataFrame construction
+        """Only the fields needed to build the OHLC DataFrame."""
         return {
             "time": self.time,
             "open": float(self.open),

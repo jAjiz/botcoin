@@ -9,14 +9,7 @@ _shared_data = {
     "last_balance": {},
     "pairs_data": {},  # {pair: {"last_price": float, "atr": float}}
     "last_run_at": None,
-    "pair_calibration": {},  # {pair: {
-    #   "up_events": list[dict],
-    #   "down_events": list[dict],
-    #   "atr_p20": float, "atr_p50": float, "atr_p80": float, "atr_p95": float,
-    #   "row_count": int,        # rows in the df used to compute these
-    #   "computed_at": datetime,
-    # }}
-    # Phase 11 extends this entry with "window_days" + "window_sweep".
+    "pair_calibration": {},  # {pair: entry}; see update_pair_calibration for the shape
     "config_dirty": set(),  # pairs whose config changed since the last scheduler check
     "consecutive_session_failures": 0,
     "session_failure_alerted": False,
@@ -91,7 +84,7 @@ def update_pair_calibration(
 def get_pair_calibration(pair: str) -> dict[str, Any] | None:
     with _lock:
         entry = _shared_data["pair_calibration"].get(pair)
-        return None if entry is None else dict(entry)  # shallow copy, matches existing pattern
+        return None if entry is None else dict(entry)
 
 
 def mark_config_dirty(pair: str) -> None:

@@ -81,9 +81,8 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
         buy_msg = " | ".join(f"{lvl}:{fmt(buy_k_stops[lvl])}" for lvl in LEVELS)
         logging.info(f"K_STOP_BUY  → {buy_msg}")
 
-    # Dual-write: in addition to the globals above (the live-bot read path,
-    # unchanged), publish the calibration to the in-process cache so backtest can
-    # reuse the events + ATR percentiles without re-running analyze_structural_noise.
+    # Dual-write: the globals above stay the live-bot read path; the cache lets
+    # backtest reuse events + percentiles without re-running the structural analysis.
     runtime.update_pair_calibration(
         pair,
         up_events=uptrend_events,
@@ -123,19 +122,19 @@ def get_volatility_level(pair: str, atr_val: float) -> str:
 
 
 def get_k_stop(pair: str, side: str, atr_val: float) -> float | None:
+    """Resolve K_STOP for a side/ATR: same side, then opposite side, then the nearest
+    neighbouring levels on the same side."""
     vol = get_volatility_level(pair, atr_val)
 
     k_stop = TRADING_PARAMS[pair]["K_STOP"][side].get(vol)
     if k_stop is not None:
         return k_stop
 
-    # Try opposite side K_STOP as fallback
     op_side = "buy" if side == "sell" else "sell"
     k_stop = TRADING_PARAMS[pair]["K_STOP"][op_side].get(vol)
     if k_stop is not None:
         return k_stop
 
-    # Search neighboring levels
     idx = LEVELS.index(vol)
     for offset in range(1, len(LEVELS)):
         for neighbor in (idx - offset, idx + offset):
