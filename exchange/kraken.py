@@ -121,13 +121,17 @@ def get_order_state(order_id: str) -> OrderState | None:
 
 
 def cancel_order(order_id: str) -> bool:
-    """Cancel an open order. False on API error (including already-filled races —
-    the caller treats a failed cancel as 'do nothing this tick')."""
+    """Cancel an open order. False on API error, and also on a response that
+    doesn't confirm an immediate, definitive cancellation: ``count: 0`` (nothing
+    was actually canceled) or ``pending: true`` (cancellation queued but the order
+    can still fill). Either shape must be treated as 'still live' — the caller
+    (``reprice_closing_order``) only re-places a new order once the old one is
+    confirmed dead, to avoid two live exit orders for one position."""
     result = _safe_call(
         "cancel order",
         lambda: api.query_private("CancelOrder", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
     )
-    return result is not None
+    return bool(result) and int(result.get("count", 0)) > 0 and not result.get("pending")
 
 
 def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] | None:

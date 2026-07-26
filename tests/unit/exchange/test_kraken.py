@@ -240,6 +240,30 @@ def test_cancel_order_returns_false_on_api_error(monkeypatch) -> None:
     assert kraken.cancel_order("ORD001") is False
 
 
+def test_cancel_order_returns_false_when_nothing_was_canceled(monkeypatch) -> None:
+    # count: 0 means Kraken accepted the request but canceled nothing (e.g. the
+    # order already reached a terminal state) — must not be read as "canceled".
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"count": 0}},
+    )
+
+    assert kraken.cancel_order("ORD001") is False
+
+
+def test_cancel_order_returns_false_when_cancellation_is_pending(monkeypatch) -> None:
+    # pending: true means cancellation is queued but not yet definitive — the
+    # order can still fill, so the caller must not treat this as a dead order.
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"count": 1, "pending": True}},
+    )
+
+    assert kraken.cancel_order("ORD001") is False
+
+
 def test_cancel_order_passes_http_timeout(monkeypatch) -> None:
     captured: dict = {}
 
