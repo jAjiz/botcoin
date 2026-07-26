@@ -230,14 +230,24 @@ its tests to the new function).
 
 ```python
 def cancel_order(order_id: str) -> bool:
-    """Cancel an open order. False on API error (including already-filled races —
-    the caller treats a failed cancel as 'do nothing this tick')."""
+    """Cancel an open order. False on API error, and also on a response that
+    doesn't confirm an immediate, definitive cancellation: ``count: 0`` (nothing
+    was actually canceled) or ``pending: true`` (cancellation queued but the order
+    can still fill). Either shape must be treated as 'still live' — the caller
+    (``reprice_closing_order``) only re-places a new order once the old one is
+    confirmed dead, to avoid two live exit orders for one position."""
     result = _safe_call(
         "cancel order",
         lambda: api.query_private("CancelOrder", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
     )
-    return result is not None
+    return bool(result) and int(result.get("count", 0)) > 0 and not result.get("pending")
 ```
+
+(Amended post-review: the original `result is not None` check treated `count: 0`
+and `pending: true` as a confirmed cancel, which let `reprice_closing_order` place
+a second live exit order while the first was still open or unconfirmed-canceled.
+`count`/`pending` are checked because Kraken's `CancelOrder` reports acceptance,
+not necessarily completion.)
 
 - [ ] **Step 4.3: failing tests in `tests/unit/trading/test_positions_manager.py`**
   for `reprice_closing_order` (monkeypatch `get_order_state`, `cancel_order`,
@@ -292,13 +302,18 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
   `is_closing_complete` block, before the create/tick logic:
 
 ```python
-            elif trailing_state.get(pair, {}).get("closing_order_id"):
+            elif (trailing_state.get(pair) or {}).get("closing_order_id"):
                 reprice_closing_order(pair, trailing_state[pair], last_prices)
 ```
 
 (`elif` on the `is_closing_complete` check; the state diff at the end of the
-iteration persists any reprice.) Add scheduler tests: closing-order position →
-reprice called, tick not called; completed close → reprice not called.
+iteration persists any reprice. Amended post-review: `trailing_state.get(pair, {})`
+does not work here — the scheduler always assigns `trailing_state[pair]` a few
+lines above from `db.load_trailing_state(pair)`, whose return type is `dict | None`,
+so the key is never *missing* (the `{}` default never applies) but its value can
+be `None`, which crashes the following `.get(...)`. `or {}` covers the `None`
+case that dict's own default can't reach.) Add scheduler tests: closing-order
+position → reprice called, tick not called; completed close → reprice not called.
 
 - [ ] **Step 4.6: docs** — update the `closing_price` invariant in `CLAUDE.md`
   (the estimate may now be rewritten by each reprice before the final fill) and
