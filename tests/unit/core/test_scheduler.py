@@ -175,6 +175,7 @@ def test_trading_session_does_not_reprice_when_close_completed(monkeypatch):
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
     monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: True)
     monkeypatch.setattr(db, "record_position_closed", lambda *a, **k: None)
+    monkeypatch.setattr(db, "delete_trailing_state", lambda _p: True)
     monkeypatch.setattr(
         scheduler, "reprice_closing_order", lambda *a, **k: pytest.fail("must not reprice a completed close")
     )
