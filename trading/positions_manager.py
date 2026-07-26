@@ -155,7 +155,10 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
             pos.pop(key, None)
         return False
     if state.status != "closed" or not state.avg_price or state.avg_price <= 0:
-        logging.error(f"Closing order {closing_order} in unexpected state {state.status!r}; not finalizing.")
+        logging.error(
+            f"Closing order {closing_order} in unexpected state {state.status!r}; not finalizing.",
+            to_telegram=True,
+        )
         return False
     closing_price = state.avg_price
     entry = pos["entry_price"]
@@ -267,7 +270,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     except Exception as e:
         # Recoverable: a missed persist here is retried by the end-of-iteration
         # save; do not abort the tick over it.
-        logging.error(f"Failed to persist repriced closing state for {pair}: {e}")
+        logging.error(f"Failed to persist repriced closing state for {pair}: {e}", to_telegram=True)
     logging.info(
         f"[{pair}] 🔁 Repriced closing {side.upper()} order to {round_price(pair, current_price):,}€",
         to_telegram=True,

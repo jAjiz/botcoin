@@ -186,12 +186,13 @@ def trading_session() -> None:
 
         _session_count += 1
         runtime.update_last_run_at(now_utc())
-        logging.info("======== SESSION COMPLETE ========")
         if failed_pairs:
             status = "failed"
             failure_reason = f"pair errors: {', '.join(failed_pairs)}"
+            logging.error(f"======== SESSION COMPLETE WITH ERRORS ({failure_reason}) ========")
         else:
             status = "completed"
+            logging.info("======== SESSION COMPLETE ========")
     except Exception as exc:
         logging.exception("Unhandled exception in trading_session")
         status = "failed"

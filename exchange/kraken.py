@@ -148,7 +148,13 @@ def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] |
         if not ticker:
             logging.warning(f"Ticker response missing {pair} (primary={primary!r}); skipping this pair this session.")
             continue
-        prices[pair] = float(ticker["c"][0])
+        try:
+            prices[pair] = float(ticker["c"][0])
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            # Parsing runs after _safe_call returned and outside the scheduler's
+            # per-pair guard, so an unhandled raise here would kill pricing for
+            # every pair. A malformed entry is skipped like an absent one.
+            logging.warning(f"Ticker entry for {pair} is malformed ({e}); skipping this pair this session.")
     return prices or None
 
 

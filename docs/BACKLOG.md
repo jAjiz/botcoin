@@ -56,6 +56,34 @@ the only exit.
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
 - Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
 
+**Deliberately deferred out of Phase 1** (recorded by the final whole-branch
+review so they are not mistaken for work Phase 1 closed):
+
+- **`cl_ord_id`-based idempotent order placement.** The real fix for two related
+  exposures: (a) a fill landing in the ~1s window between `get_order_state` and
+  `cancel_order` in `reprice_closing_order` means the replacement is sized at the
+  full volume and over-sells by the executed amount; (b) an `AddOrder` whose
+  response is lost cannot be recognised on retry. A5 shipped the narrower
+  state-persistence mitigation only.
+- **`load_trailing_state` swallows DB errors and returns `None`**
+  (`core/database.py`), which the scheduler cannot distinguish from "no stored
+  position": it would open a fresh position and overwrite the real row, orphaning
+  a live `closing_order_id` on Kraken. Pre-existing, not introduced by Phase 1 —
+  but Phase 1's per-pair `try/except` is what now makes converting it to a raise
+  safe (the failure isolates to one pair instead of aborting the session).
+- **`record_position_closed`'s `on_conflict_do_nothing` is silent.** It cannot
+  distinguish an expected idempotent retry from a genuine collision; previously
+  an `IntegrityError` was loud. Fix: check `rowcount == 0` and log a warning.
+- **`closing_requested_at` now means "last reprice", not "close requested".** No
+  consumer computes a staleness timeout from it today, but an operator can no
+  longer see how long an exit has been chasing. Needs a separate
+  `closing_first_requested_at` if a staleness timeout is ever wanted.
+- **`pytest-timeout` is not installed.** A regression of the A1 infinite loop
+  would burn the full CI job timeout instead of failing fast.
+- **`get_order_state` is called twice per closing tick** (scheduler + inside
+  `reprice_closing_order`). Harmless today — private Kraken calls are not
+  rate-limited — but the `OrderState` could be passed down instead.
+
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates

@@ -155,7 +155,14 @@ repricing only chases the fill.
 **Design:**
 
 - New Kraken wrapper `cancel_order(order_id) -> bool` (`CancelOrder`, private,
-  same `_safe_call` + timeout conventions).
+  same `_safe_call` + timeout conventions). *(Amended post-review: returning
+  `result is not None` is NOT sufficient. Kraken's `CancelOrder` reports that the
+  request was **accepted**, not that the order is dead — `{"count": 0}` (nothing
+  was canceled) and `{"count": 1, "pending": true}` (queued; the order can still
+  fill) are both truthy. Treating either as success would let step 5 place a
+  second full-volume exit order against a still-live one. The wrapper therefore
+  returns `bool(result) and int(result.get("count", 0)) > 0 and not
+  result.get("pending")`, so an unconfirmed cancel counts as a failed cancel.)*
 - New `positions_manager.reprice_closing_order(pair, pos, last_prices)` called
   from the scheduler when a position has a `closing_order_id` and
   `is_closing_complete` returned `False`:
@@ -170,12 +177,16 @@ repricing only chases the fill.
   4. Skip if the current price, formatted to the pair's `pair_decimals`, equals
      the order's limit price (re-placing an identical order would only lose
      queue priority).
-  5. Otherwise: `cancel_order`; if the cancel fails (e.g. the order filled in
-     the race window) → do nothing, next tick resolves it. On success, place a
-     new limit at the current market price for the position's volume and update
-     `closing_order_id`, `closing_price` (estimate, as today) and
-     `closing_requested_at`. The state diff is persisted by the existing
-     end-of-pair-iteration save.
+  5. Otherwise: `cancel_order`; if the cancel is not confirmed definitive (an
+     API error, the order filled in the race window, or the amended `count`/
+     `pending` shapes above) → do nothing, next tick resolves it. On success,
+     place a new limit at the current market price for the position's volume and
+     update `closing_order_id`, `closing_price` (estimate, as today) and
+     `closing_requested_at`. *(Amended post-review: A5 now persists this state
+     immediately rather than relying on the end-of-pair-iteration save, so the
+     new `closing_order_id` cannot be lost to a crash. If the cancel succeeds but
+     the replacement fails, the dead `closing_order_id` is kept on purpose —
+     `is_open` stays `False`, and the A2 dead-status branch clears it next tick.)*
 - Ordering in the scheduler per pair: `is_closing_complete` → (if `False` and a
   closing order exists) `reprice_closing_order` → existing create/tick logic.
 - No new env tunable: repricing happens on the natural session cadence

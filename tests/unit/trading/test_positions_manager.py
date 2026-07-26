@@ -470,7 +470,10 @@ def test_is_closing_complete_returns_false_and_logs_error_when_closed_with_zero_
     msg, to_telegram = captured[0]
     assert "ORD001" in msg
     assert "closed" in msg
-    assert to_telegram is False
+    # Must reach Telegram: this state strands the position (is_closing_complete
+    # stays False, reprice returns on the terminal status, is_open stays False),
+    # so nothing exits and no other signal would tell the operator.
+    assert to_telegram is True
 
 
 # ============================================================================

@@ -1,3 +1,5 @@
+import pytest
+
 import core.config as config
 import exchange.kraken as kraken
 
@@ -337,6 +339,51 @@ def test_get_last_prices_returns_none_when_no_pair_resolves(monkeypatch) -> None
         lambda *args, **kwargs: {"error": [], "result": {}},
     )
     pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}, "ETHEUR": {"primary": "XETHZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
+
+    assert result is None
+
+
+@pytest.mark.parametrize(
+    "bad_entry",
+    [
+        {},  # present but no "c" key
+        {"c": []},  # "c" present but empty
+        {"c": ["not-a-number"]},  # unparseable price
+        {"c": [None]},
+    ],
+    ids=["missing_c", "empty_c", "non_numeric", "null_price"],
+)
+def test_get_last_prices_skips_pair_with_malformed_entry(monkeypatch, bad_entry) -> None:
+    # A pair PRESENT in the response but with an unusable payload must be skipped
+    # like an absent one. Parsing happens after _safe_call returned and outside the
+    # scheduler's per-pair try, so an unhandled raise here kills pricing for every
+    # pair and fails the whole session.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"XXBTZEUR": {"c": ["82500.0"]}, "XETHZEUR": bad_entry},
+        },
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}, "ETHEUR": {"primary": "XETHZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
+
+    assert result == {"XBTEUR": 82500.0}
+
+
+def test_get_last_prices_returns_none_when_every_entry_is_malformed(monkeypatch) -> None:
+    # Nothing resolved -> None, so call_with_retry retries and the session reports
+    # "could not fetch prices" rather than proceeding with an empty price map.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {"error": [], "result": {"XXBTZEUR": {"c": []}}},
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}}
 
     result = kraken.get_last_prices(pairs_dict)
 
