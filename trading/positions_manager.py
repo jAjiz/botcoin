@@ -1,5 +1,6 @@
 from typing import Any
 
+import core.database as db
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import now_utc, round_price
@@ -261,6 +262,12 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
             "closing_requested_at": now_utc(),
         }
     )
+    try:
+        db.save_trailing_state(pair, pos)
+    except Exception as e:
+        # Recoverable: a missed persist here is retried by the end-of-iteration
+        # save; do not abort the tick over it.
+        logging.error(f"Failed to persist repriced closing state for {pair}: {e}")
     logging.info(
         f"[{pair}] 🔁 Repriced closing {side.upper()} order to {round_price(pair, current_price):,}€",
         to_telegram=True,
@@ -291,6 +298,7 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
                 "closing_requested_at": now_utc(),
             }
         )
+        db.save_trailing_state(pair, pos)
     except Exception as e:
         # Recoverable: scheduler must keep ticking; surface failure via Telegram.
         logging.error(f"Failed to close trailing position: {e}", to_telegram=True)

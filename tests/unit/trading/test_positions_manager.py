@@ -255,6 +255,7 @@ def test_close_position_updates_position_on_success(monkeypatch) -> None:
     _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
     monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+    monkeypatch.setattr(positions_manager.db, "save_trailing_state", lambda _pair, _pos: None)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
     prices = {"XBTEUR": 90.0}
@@ -265,6 +266,68 @@ def test_close_position_updates_position_on_success(monkeypatch) -> None:
     assert pos["closing_requested_at"] == _now
     assert pos["closing_price"] == 90.0
     assert "pnl_percent" not in pos
+
+
+def test_close_position_saves_trailing_state_before_return(monkeypatch) -> None:
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+
+    saved: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        positions_manager.db,
+        "save_trailing_state",
+        lambda pair, pos: saved.append((pair, dict(pos))),
+    )
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+    prices = {"XBTEUR": 90.0}
+
+    positions_manager.close_position("XBTEUR", pos, prices)
+
+    assert len(saved) == 1
+    saved_pair, saved_pos = saved[0]
+    assert saved_pair == "XBTEUR"
+    # The saved snapshot must reflect the post-update state, not a pre-update copy.
+    assert saved_pos["closing_order_id"] == "ORDER123"
+    assert saved_pos["closing_price"] == 90.0
+    assert saved_pos["closing_requested_at"] == _now
+
+
+def test_close_position_does_not_save_when_place_order_fails(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
+    monkeypatch.setattr(
+        positions_manager.db,
+        "save_trailing_state",
+        lambda *_a, **_k: pytest.fail("must not save when the closing order failed to place"),
+    )
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+    prices = {"XBTEUR": 90.0}
+
+    positions_manager.close_position("XBTEUR", pos, prices)
+
+    assert "closing_order_id" not in pos
+
+
+def test_close_position_completes_when_save_fails(monkeypatch) -> None:
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+
+    def failing_save(_pair, _pos):
+        raise Exception("db unavailable")
+
+    monkeypatch.setattr(positions_manager.db, "save_trailing_state", failing_save)
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+    prices = {"XBTEUR": 90.0}
+
+    # Must not raise: the outer try/except in close_position swallows this.
+    positions_manager.close_position("XBTEUR", pos, prices)
+
+    assert pos["closing_order_id"] == "ORDER123"
+    assert pos["closing_price"] == 90.0
 
 
 # ============================================================================
@@ -431,6 +494,7 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
         "place_limit_order",
         lambda pair, side, price, volume: place_calls.append((pair, side, price, volume)) or "NEWORDER1",
     )
+    monkeypatch.setattr(positions_manager.db, "save_trailing_state", lambda _pair, _pos: None)
 
     pos = {
         "side": "sell",
@@ -446,6 +510,72 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
     assert pos["closing_order_id"] == "NEWORDER1"
     assert pos["closing_price"] == 105.0
     assert pos["closing_requested_at"] == _now
+
+
+def test_reprice_closing_order_saves_trailing_state_before_return(monkeypatch) -> None:
+    _now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="open", avg_price=None, vol_exec=0.0),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: "NEWORDER1")
+
+    saved: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        positions_manager.db,
+        "save_trailing_state",
+        lambda pair, pos: saved.append((pair, dict(pos))),
+    )
+
+    pos = {
+        "side": "sell",
+        "volume": 0.5,
+        "closing_order_id": "OLDORDER",
+        "closing_price": 100.0,
+        "closing_requested_at": datetime(2026, 1, 2, 11, 0, tzinfo=UTC),
+    }
+    positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
+
+    assert len(saved) == 1
+    saved_pair, saved_pos = saved[0]
+    assert saved_pair == "XBTEUR"
+    # The saved snapshot must reflect the post-update state, not a pre-update copy.
+    assert saved_pos["closing_order_id"] == "NEWORDER1"
+    assert saved_pos["closing_price"] == 105.0
+    assert saved_pos["closing_requested_at"] == _now
+
+
+def test_reprice_closing_order_completes_when_save_fails(monkeypatch) -> None:
+    _now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="open", avg_price=None, vol_exec=0.0),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: "NEWORDER1")
+
+    def failing_save(_pair, _pos):
+        raise Exception("db unavailable")
+
+    monkeypatch.setattr(positions_manager.db, "save_trailing_state", failing_save)
+
+    pos = {
+        "side": "sell",
+        "volume": 0.5,
+        "closing_order_id": "OLDORDER",
+        "closing_price": 100.0,
+        "closing_requested_at": datetime(2026, 1, 2, 11, 0, tzinfo=UTC),
+    }
+    # Must not raise: the failed save is caught and logged, not propagated.
+    positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
+
+    assert pos["closing_order_id"] == "NEWORDER1"
+    assert pos["closing_price"] == 105.0
 
 
 def test_reprice_closing_order_skips_when_partially_filled(monkeypatch) -> None:
