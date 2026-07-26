@@ -72,7 +72,7 @@ Steps 3–6 (the position block) run only when `TRADING_ENABLED` is true. When i
 **Invariants — do not break without explicit discussion:**
 
 - The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch in code. Adding one is a strategy change, not a refactor.
-- `closing_price` is written **twice**: first by `close_position` (approximate, at order placement) and then by `is_closing_complete` (real fill from Kraken). PnL is computed only after the second write. Any code that reads `closing_price` before `is_closing_complete` returns `True` is reading an estimate.
+- `closing_price` is an **estimate** until `is_closing_complete` confirms the fill: `close_position` writes it first (at order placement), and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. `is_closing_complete` performs the final write with the real fill from Kraken and computes `pnl_percent`. Any code that reads `closing_price` before `is_closing_complete` returns `True` is reading an estimate.
 - A position with `closing_order_id` set is **not** open — `tick_position` must not run on it. Step 3 of the loop checks this before step 5.
 - `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Callers that don't handle `None` will silently corrupt state.
 
@@ -81,7 +81,7 @@ Steps 3–6 (the position block) run only when `TRADING_ENABLED` is true. When i
 - **create_position**: Calculates `activation_price` using either `K_ACT × ATR` (if `K_ACT` is set) or `K_STOP × ATR + MIN_MARGIN × entry_price`. Stores an inactive position.
 - **tick_position**: Activates on price cross of `activation_price`, then tracks trailing price and updates stop. Recalibrates activation/stop when ATR drifts beyond `ATR_DESV_LIMIT`.
 - **close_position**: Places a limit order at current market price, records `closing_price` (approximate, at order placement) and `closing_order_id`. Does NOT compute PnL.
-- **is_closing_complete**: Calls `get_order_closing_price` (Kraken `QueryOrders` → `price` field). If filled, overwrites `closing_price` with the real fill and computes `pnl_percent`. Returns `True` only when the fill is confirmed.
+- **is_closing_complete**: Calls `get_order_state` (Kraken `QueryOrders`) and branches on `status` explicitly. A `closed` order with a positive average fill price is finalized: `closing_price` is overwritten with the real fill and `pnl_percent` is computed. A `canceled`/`expired` order clears `closing_order_id`/`closing_price`/`closing_requested_at` so the position resumes management next tick. Returns `True` only when the fill is confirmed.
 
 ### Volatility classification (`trading/market_analyzer.py` + `trading/parameters_manager.py`)
 
@@ -165,6 +165,6 @@ Non-obvious decisions a reviewer would otherwise question. Update this list when
 
 ## Testing conventions
 
-- Unit tests live in `tests/unit/` and never call external APIs. Kraken and DB calls are monkeypatched at the module level where the name is imported (e.g. `monkeypatch.setattr(positions_manager, "get_order_closing_price", ...)`).
+- Unit tests live in `tests/unit/` and never call external APIs. Kraken and DB calls are monkeypatched at the module level where the name is imported (e.g. `monkeypatch.setattr(positions_manager, "get_order_state", ...)`).
 - Integration tests in `tests/integration/` require `RUN_DB_INTEGRATION=true` and are skipped otherwise.
 - `pytest-asyncio` is used for async FastAPI route tests.

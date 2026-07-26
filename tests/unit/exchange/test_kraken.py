@@ -216,6 +216,45 @@ def test_get_order_state_passes_http_timeout(monkeypatch) -> None:
 
 
 # ============================================================================
+# Cancel order
+# ============================================================================
+
+
+def test_cancel_order_returns_true_on_success(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"count": 1}},
+    )
+
+    assert kraken.cancel_order("ORD001") is True
+
+
+def test_cancel_order_returns_false_on_api_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": ["EOrder:Unknown order"], "result": {}},
+    )
+
+    assert kraken.cancel_order("ORD001") is False
+
+
+def test_cancel_order_passes_http_timeout(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None, timeout=None):
+        captured["timeout"] = timeout
+        return {"error": [], "result": {"count": 1}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    kraken.cancel_order("ORD001")
+
+    assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
+
+
+# ============================================================================
 # Last prices
 # ============================================================================
 

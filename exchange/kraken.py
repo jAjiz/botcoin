@@ -120,6 +120,16 @@ def get_order_state(order_id: str) -> OrderState | None:
     )
 
 
+def cancel_order(order_id: str) -> bool:
+    """Cancel an open order. False on API error (including already-filled races —
+    the caller treats a failed cancel as 'do nothing this tick')."""
+    result = _safe_call(
+        "cancel order",
+        lambda: api.query_private("CancelOrder", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
+    )
+    return result is not None
+
+
 def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] | None:
     result = _safe_call(
         "current prices",

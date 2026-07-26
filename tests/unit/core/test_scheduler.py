@@ -147,6 +147,46 @@ def test_trading_session_opens_position_when_trading_enabled(monkeypatch):
     assert calls[0]["status"] == "completed"
 
 
+def test_trading_session_reprices_closing_order_and_does_not_tick(monkeypatch):
+    _setup_one_pair_loop(
+        monkeypatch,
+        trailing_state={"side": "sell", "entry_price": 50000.0, "closing_order_id": "ORD001"},
+    )
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
+    repriced: list = []
+    monkeypatch.setattr(scheduler, "reprice_closing_order", lambda *a, **k: repriced.append(a))
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a closing position"))
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("must not create a new position"))
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    assert len(repriced) == 1
+    assert repriced[0][0] == "XBTEUR"
+    assert calls[0]["status"] == "completed"
+
+
+def test_trading_session_does_not_reprice_when_close_completed(monkeypatch):
+    _setup_one_pair_loop(
+        monkeypatch,
+        trailing_state={"side": "sell", "entry_price": 50000.0, "closing_order_id": "ORD001"},
+    )
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: True)
+    monkeypatch.setattr(db, "record_position_closed", lambda *a, **k: None)
+    monkeypatch.setattr(
+        scheduler, "reprice_closing_order", lambda *a, **k: pytest.fail("must not reprice a completed close")
+    )
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "is_open", lambda _s: False)
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    assert calls[0]["status"] == "completed"
+
+
 def test_trading_session_recalcs_params_when_config_dirty(monkeypatch):
     _setup_one_pair_loop(monkeypatch)
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)

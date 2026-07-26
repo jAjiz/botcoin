@@ -16,6 +16,7 @@ from trading.positions_manager import (
     create_position,
     is_closing_complete,
     is_open,
+    reprice_closing_order,
     tick_position,
 )
 
@@ -159,6 +160,8 @@ def trading_session() -> None:
                 db.record_position_closed(pair, trailing_state[pair])
                 del trailing_state[pair]
                 logging.info(f"Trailing position removed for {pair}.")
+            elif (trailing_state.get(pair) or {}).get("closing_order_id"):
+                reprice_closing_order(pair, trailing_state[pair], last_prices)
 
             if not trailing_state.get(pair):
                 create_position(pair, current_balance, last_prices, current_atr, trailing_state)
