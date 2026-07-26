@@ -3,7 +3,7 @@ from typing import Any
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import now_utc, round_price
-from exchange.kraken import get_order_closing_price, place_limit_order
+from exchange.kraken import get_order_state, place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
 
@@ -128,16 +128,35 @@ def is_open(pos: dict[str, Any] | None) -> bool:
     return bool(pos) and not pos.get("closing_order_id")
 
 
+ORDER_DEAD_STATUSES = ("canceled", "expired")
+
+
 def is_closing_complete(pos: dict[str, Any] | None) -> bool:
-    """Check if the closing order is filled. If so, update pos with the real fill price and PnL."""
+    """Check if the closing order is filled. If so, update pos with the real fill
+    price and PnL. A canceled/expired order clears the closing fields so the
+    position is managed again next tick (a partial fill self-heals: the volume is
+    recomputed from the real balance by refresh_position)."""
     if not pos:
         return False
     closing_order = pos.get("closing_order_id")
     if not closing_order:
         return False
-    closing_price = get_order_closing_price(closing_order)
-    if closing_price is None:
+    state = get_order_state(closing_order)
+    if state is None or state.status in ("pending", "open"):
         return False
+    if state.status in ORDER_DEAD_STATUSES:
+        logging.warning(
+            f"Closing order {closing_order} is {state.status} "
+            f"(executed {state.vol_exec:.8f}); resuming position management.",
+            to_telegram=True,
+        )
+        for key in ("closing_order_id", "closing_price", "closing_requested_at"):
+            pos.pop(key, None)
+        return False
+    if state.status != "closed" or not state.avg_price or state.avg_price <= 0:
+        logging.error(f"Closing order {closing_order} in unexpected state {state.status!r}; not finalizing.")
+        return False
+    closing_price = state.avg_price
     entry = pos["entry_price"]
     side = pos["side"]
     pnl = (closing_price - entry) / entry * 100 if side == "sell" else (entry - closing_price) / entry * 100

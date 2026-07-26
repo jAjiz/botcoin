@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 
 import trading.positions_manager as positions_manager
+from exchange.kraken import OrderState
 
 # ============================================================================
 # Activation price
@@ -294,14 +295,31 @@ def test_is_closing_complete_returns_false_without_closing_order(pos) -> None:
     assert positions_manager.is_closing_complete(pos) is False
 
 
-def test_is_closing_complete_returns_false_while_order_in_flight(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "get_order_closing_price", lambda _: None)
+def test_is_closing_complete_returns_false_on_api_error(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "get_order_state", lambda _: None)
 
     assert positions_manager.is_closing_complete({"closing_order_id": "ORD001"}) is False
 
 
+@pytest.mark.parametrize("status", ["pending", "open"])
+def test_is_closing_complete_returns_false_while_order_in_flight(monkeypatch, status) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status=status, avg_price=None, vol_exec=0.0),
+    )
+
+    pos = {"closing_order_id": "ORD001"}
+    assert positions_manager.is_closing_complete(pos) is False
+    assert pos["closing_order_id"] == "ORD001"
+
+
 def test_is_closing_complete_returns_true_and_updates_pos_when_order_filled(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "get_order_closing_price", lambda _: 69099.7)
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="closed", avg_price=69099.7, vol_exec=0.01),
+    )
 
     pos = {"closing_order_id": "ORD001", "entry_price": 68000.0, "side": "sell"}
     assert positions_manager.is_closing_complete(pos) is True
@@ -310,11 +328,86 @@ def test_is_closing_complete_returns_true_and_updates_pos_when_order_filled(monk
 
 
 def test_is_closing_complete_pnl_for_buy_side(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "get_order_closing_price", lambda _: 67000.0)
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="closed", avg_price=67000.0, vol_exec=0.01),
+    )
 
     pos = {"closing_order_id": "ORD001", "entry_price": 68000.0, "side": "buy"}
     assert positions_manager.is_closing_complete(pos) is True
     assert pos["pnl_percent"] == round((68000.0 - 67000.0) / 68000.0 * 100, 4)
+
+
+@pytest.mark.parametrize("status", ["canceled", "expired"])
+def test_is_closing_complete_clears_fields_and_reopens_position_when_order_dead(monkeypatch, status) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status=status, avg_price=0.0, vol_exec=0.0),
+    )
+
+    pos = {
+        "side": "sell",
+        "entry_price": 68000.0,
+        "closing_order_id": "ORD001",
+        "closing_price": 68500.0,
+        "closing_requested_at": "2026-07-26T00:00:00+00:00",
+    }
+    assert positions_manager.is_closing_complete(pos) is False
+    assert "closing_order_id" not in pos
+    assert "closing_price" not in pos
+    assert "closing_requested_at" not in pos
+    assert positions_manager.is_open(pos) is True
+
+
+def test_is_closing_complete_dead_order_with_partial_fill_logs_executed_volume(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="canceled", avg_price=68200.0, vol_exec=0.00512345),
+    )
+    captured: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        positions_manager.logging, "warning", lambda msg, to_telegram=False: captured.append((msg, to_telegram))
+    )
+
+    pos = {"side": "sell", "entry_price": 68000.0, "closing_order_id": "ORD001", "closing_price": 68500.0}
+    assert positions_manager.is_closing_complete(pos) is False
+    assert len(captured) == 1
+    msg, to_telegram = captured[0]
+    assert "ORD001" in msg
+    assert "canceled" in msg
+    assert "0.00512345" in msg
+    assert to_telegram is True
+
+
+def test_is_closing_complete_returns_false_and_logs_error_when_closed_with_zero_price(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="closed", avg_price=0.0, vol_exec=0.0),
+    )
+    captured: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        positions_manager.logging, "error", lambda msg, to_telegram=False: captured.append((msg, to_telegram))
+    )
+
+    pos = {
+        "side": "sell",
+        "entry_price": 68000.0,
+        "closing_order_id": "ORD001",
+        "closing_price": 68500.0,
+    }
+    assert positions_manager.is_closing_complete(pos) is False
+    assert pos["closing_order_id"] == "ORD001"
+    assert pos["closing_price"] == 68500.0
+    assert "pnl_percent" not in pos
+    assert len(captured) == 1
+    msg, to_telegram = captured[0]
+    assert "ORD001" in msg
+    assert "closed" in msg
+    assert to_telegram is False
 
 
 # ============================================================================

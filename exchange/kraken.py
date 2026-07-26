@@ -2,6 +2,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import krakenex
@@ -91,21 +92,32 @@ def get_balance() -> dict[str, str] | None:
     return _safe_call("balance", lambda: api.query_private("Balance", timeout=KRAKEN_HTTP_TIMEOUT))
 
 
-def get_order_closing_price(order_id: str) -> float | None:
-    """Return the average execution price of a filled order, or None if still pending/open."""
+@dataclass(frozen=True)
+class OrderState:
+    status: str
+    avg_price: float | None
+    vol_exec: float
+
+
+def get_order_state(order_id: str) -> OrderState | None:
+    """Status + average fill price + executed volume of an order, or None on
+    API error / unknown order. Callers must branch on ``status`` explicitly —
+    never infer completion from a bare price (a canceled order reports 0.0)."""
     result = _safe_call(
-        "order closing price",
+        "order state",
         lambda: api.query_private("QueryOrders", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
     )
     if result is None:
         return None
-    order = result.get(order_id, {})
-    if order.get("status") in (None, "pending", "open"):
+    order = result.get(order_id)
+    if not order or not order.get("status"):
         return None
     price = order.get("price")
-    if price is None:
-        return None
-    return float(price)
+    return OrderState(
+        status=order["status"],
+        avg_price=float(price) if price is not None else None,
+        vol_exec=float(order.get("vol_exec") or 0.0),
+    )
 
 
 def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] | None:

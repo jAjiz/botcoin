@@ -128,28 +128,91 @@ def test_get_balance_returns_none_on_exception(monkeypatch) -> None:
 
 
 # ============================================================================
-# Closing price
+# Order state
 # ============================================================================
 
 
-def test_get_order_closing_price_returns_price_when_filled(monkeypatch) -> None:
+def test_get_order_state_returns_status_price_and_vol_exec_when_closed(monkeypatch) -> None:
     monkeypatch.setattr(
         kraken.api,
         "query_private",
-        lambda *args, **kwargs: {"error": [], "result": {"ORD001": {"status": "closed", "price": "69099.7"}}},
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"ORD001": {"status": "closed", "price": "69099.7", "vol_exec": "0.01000000"}},
+        },
     )
 
-    assert kraken.get_order_closing_price("ORD001") == 69099.7
+    result = kraken.get_order_state("ORD001")
+
+    assert result == kraken.OrderState(status="closed", avg_price=69099.7, vol_exec=0.01)
 
 
-def test_get_order_closing_price_returns_none_when_not_filled(monkeypatch) -> None:
+def test_get_order_state_returns_status_when_open_regardless_of_price(monkeypatch) -> None:
     monkeypatch.setattr(
         kraken.api,
         "query_private",
-        lambda *args, **kwargs: {"error": [], "result": {"ORD001": {"status": "open", "price": "0"}}},
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"ORD001": {"status": "open", "price": "0.00000", "vol_exec": "0.00000000"}},
+        },
     )
 
-    assert kraken.get_order_closing_price("ORD001") is None
+    result = kraken.get_order_state("ORD001")
+
+    # The function reports whatever Kraken sends; it never infers completion
+    # from the price itself. Callers must branch on status, not price.
+    assert result == kraken.OrderState(status="open", avg_price=0.0, vol_exec=0.0)
+
+
+def test_get_order_state_reports_zero_price_when_canceled(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"ORD001": {"status": "canceled", "price": "0.00000", "vol_exec": "0.00000000"}},
+        },
+    )
+
+    result = kraken.get_order_state("ORD001")
+
+    # This is exactly the case that used to be mistaken for a filled order at
+    # price 0.0 by the old price-only helper: a canceled order with no fill.
+    assert result == kraken.OrderState(status="canceled", avg_price=0.0, vol_exec=0.0)
+
+
+def test_get_order_state_returns_none_when_order_id_missing_from_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {}},
+    )
+
+    assert kraken.get_order_state("ORD001") is None
+
+
+def test_get_order_state_returns_none_on_api_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": ["EGeneral:Invalid"], "result": {}},
+    )
+
+    assert kraken.get_order_state("ORD001") is None
+
+
+def test_get_order_state_passes_http_timeout(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None, timeout=None):
+        captured["timeout"] = timeout
+        return {"error": [], "result": {"ORD001": {"status": "closed", "price": "1.0", "vol_exec": "1.0"}}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    kraken.get_order_state("ORD001")
+
+    assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
 
 
 # ============================================================================
