@@ -129,11 +129,13 @@ def detect_pivots(df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[in
                 del pivots[i + 1]
             else:
                 del pivots[i]
-        elif curr_price != next_price:
-            if abs(curr_price - next_price) / curr_price < MINIMUM_CHANGE_PCT:
-                del pivots[i + 1]
-            else:
-                i += 1
+        elif curr_price == next_price or abs(curr_price - next_price) / curr_price < MINIMUM_CHANGE_PCT:
+            # Equal prices (a zero-amplitude swing) or a change below the noise
+            # threshold: drop the second pivot. The equality case previously fell
+            # through both branches and looped forever on flat candles.
+            del pivots[i + 1]
+        else:
+            i += 1
 
     return pivots
 

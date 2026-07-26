@@ -223,3 +223,19 @@ def test_get_current_atr_returns_last_db_atr_when_fetch_returns_none(monkeypatch
     current_atr = get_current_atr("XBTEUR")
 
     assert current_atr == 1.9
+
+
+def test_detect_pivots_terminates_on_flat_data():
+    """Different-type pivots with exactly equal prices previously made the
+    false-pivot removal loop spin forever (no branch advanced `i`)."""
+    n = 60
+    df = pd.DataFrame(
+        {
+            "high": [100.0] * n,
+            "low": [100.0] * n,
+            "dtime": pd.date_range("2026-01-01", periods=n, freq="15min"),
+        }
+    )
+    pivots = market_analyzer.detect_pivots(df, order=5)
+    assert isinstance(pivots, list)
+    assert len(pivots) <= 1
