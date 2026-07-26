@@ -582,37 +582,34 @@ def save_ohlc_data(pair: str, timeframe: int, df: pd.DataFrame) -> None:
 # ============================================================================
 
 
-def save_closed_position(pair: str, position_data: dict[str, Any]) -> None:
-    """Persist a closed position to the database.
-
-    Args:
-        pair: Trading pair.
-        position_data: Dictionary containing closed position details.
-    """
-    try:
-        record = ClosedPosition(
-            pair=pair,
-            side=position_data["side"],
-            volume=_to_decimal_required(position_data["volume"]),
-            entry_price=_to_decimal_required(position_data["entry_price"]),
-            activation_atr=_to_decimal(position_data.get("activation_atr")),
-            activation_price=_to_decimal(position_data.get("activation_price")),
-            created_at=position_data["created_at"],
-            activated_at=position_data.get("activated_at"),
-            trailing_price=_to_decimal(position_data.get("trailing_price")),
-            stop_price=_to_decimal(position_data.get("stop_price")),
-            stop_atr=_to_decimal(position_data.get("stop_atr")),
-            closing_price=_to_decimal_required(position_data["closing_price"]),
-            closing_order_id=position_data["closing_order_id"],
-            closed_at=datetime.now(UTC),
-            pnl_percent=_to_decimal_required(position_data["pnl_percent"]),
+def record_position_closed(pair: str, position_data: dict[str, Any]) -> None:
+    """Persist a completed close atomically: insert into closed_positions and
+    delete the pair's trailing_state in ONE transaction. The insert is idempotent
+    on closing_order_id so a crash-retry converges instead of violating the
+    unique constraint (which previously wedged the session loop)."""
+    values = {
+        "pair": pair,
+        "side": position_data["side"],
+        "volume": _to_decimal_required(position_data["volume"]),
+        "entry_price": _to_decimal_required(position_data["entry_price"]),
+        "activation_atr": _to_decimal(position_data.get("activation_atr")),
+        "activation_price": _to_decimal(position_data.get("activation_price")),
+        "created_at": position_data["created_at"],
+        "activated_at": position_data.get("activated_at"),
+        "trailing_price": _to_decimal(position_data.get("trailing_price")),
+        "stop_price": _to_decimal(position_data.get("stop_price")),
+        "stop_atr": _to_decimal(position_data.get("stop_atr")),
+        "closing_price": _to_decimal_required(position_data["closing_price"]),
+        "closing_order_id": position_data["closing_order_id"],
+        "closed_at": datetime.now(UTC),
+        "pnl_percent": _to_decimal_required(position_data["pnl_percent"]),
+    }
+    with get_session() as session:
+        session.execute(
+            pg_insert(ClosedPosition).values(values).on_conflict_do_nothing(index_elements=["closing_order_id"])
         )
-        with get_session() as session:
-            session.add(record)
-        logger.debug(f"Saved closed position for {pair} order {position_data['closing_order_id']}")
-    except Exception as e:
-        logger.error(f"Error saving closed position: {e}")
-        raise
+        session.query(TrailingState).filter(TrailingState.pair == pair).delete()
+    logger.debug(f"Recorded closed position for {pair} order {position_data['closing_order_id']}")
 
 
 def load_closed_positions(pair: str | None = None, limit: int | None = None) -> list[dict[str, Any]]:

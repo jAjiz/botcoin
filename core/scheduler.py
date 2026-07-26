@@ -156,11 +156,7 @@ def trading_session() -> None:
                 continue
 
             if is_closing_complete(trailing_state.get(pair)):
-                # TODO: save_closed_position and delete_trailing_state are separate
-                # transactions; a crash between them re-detects the close next session
-                # and double-records it. Wrap both in one transaction for idempotency.
-                db.save_closed_position(pair, trailing_state[pair])
-                db.delete_trailing_state(pair)
+                db.record_position_closed(pair, trailing_state[pair])
                 del trailing_state[pair]
                 logging.info(f"Trailing position removed for {pair}.")
 
