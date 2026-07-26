@@ -155,6 +155,18 @@ detects the dead order, clears the closing fields, and resumes normal
 position management, and Telegram receives a `Failed to re-place closing
 order after cancel.` alert.
 
+### Per-pair failure isolation
+
+An exception while processing one pair (price/ATR fetch, parameter recalibration,
+position open/manage/close) no longer aborts the whole session. The failing pair is
+skipped for that tick — logged as `Error processing <PAIR>; skipping this pair for the
+rest of the session.` in `sessions.log_messages` — while the remaining pairs are still
+processed normally. If any pair failed, the session's status is `failed` (visible in
+the Grafana Sessions row) even though other pairs traded fine that tick; it still
+counts toward the consecutive-failure streak, so a pair that fails every session will
+eventually trigger the Telegram alert (`SESSION_FAILURE_ALERT_THRESHOLD`), whose message
+includes `pair errors: <PAIR1>, <PAIR2>` as the last error once the streak fires.
+
 ### Trading tools — backtest & optimizer
 
 The V1 CLI analysis scripts are now HTTP endpoints on the `botc` service: they run

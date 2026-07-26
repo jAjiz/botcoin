@@ -60,7 +60,7 @@ Pin all dependencies with `==` in `requirements.txt`. Resolve the exact version 
 
 1. Reload `trailing_state` from DB
 2. Recalculate trading parameters every `PARAM_SESSIONS` ticks (`calculate_trading_parameters`)
-3. **If closing order is filled** → `is_closing_complete` fetches real execution price from Kraken, writes `closing_price` and `pnl_percent` into the position dict, then `save_closed_position` + `delete_trailing_state`
+3. **If closing order is filled** → `is_closing_complete` fetches real execution price from Kraken, writes `closing_price` and `pnl_percent` into the position dict, then `record_position_closed` atomically inserts the closed position and deletes its `trailing_state` row in one transaction
 4. **If no active position** → `create_position`
 5. **If position is open** (no `closing_order_id`) → `tick_position` (recalibrate, check activation, update trailing stop, trigger close if stop is hit)
 6. Persist updated state → `save_trailing_state`

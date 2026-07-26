@@ -311,6 +311,38 @@ def test_get_last_prices_returns_none_on_api_error(monkeypatch) -> None:
     assert result is None
 
 
+def test_get_last_prices_skips_pair_missing_from_ticker_response(monkeypatch) -> None:
+    # ETHEUR's primary ("XETHZEUR") is absent from the Ticker result (e.g. Kraken
+    # dropped it, or the pair metadata is stale) — this must not take down XBTEUR.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"XXBTZEUR": {"c": ["82500.0"]}},
+        },
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}, "ETHEUR": {"primary": "XETHZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
+
+    assert result == {"XBTEUR": 82500.0}
+
+
+def test_get_last_prices_returns_none_when_no_pair_resolves(monkeypatch) -> None:
+    # Ticker responded successfully but with none of the requested pairs.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {"error": [], "result": {}},
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}, "ETHEUR": {"primary": "XETHZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
+
+    assert result is None
+
+
 # ============================================================================
 # Limit orders
 # ============================================================================

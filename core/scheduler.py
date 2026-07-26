@@ -122,65 +122,76 @@ def trading_session() -> None:
             logging.error("Could not fetch prices. Skipping session.\n")
             return
 
+        failed_pairs: list[str] = []
         for pair in PAIRS:
-            logging.info(f"--- Processing pair: [{pair}] ---")
-            trailing_state[pair] = db.load_trailing_state(pair)
-            previous_state = dict(trailing_state[pair]) if trailing_state.get(pair) else None
-            current_price = last_prices.get(pair, None)
-            current_atr = call_with_retry(get_current_atr, pair)
+            try:
+                logging.info(f"--- Processing pair: [{pair}] ---")
+                trailing_state[pair] = db.load_trailing_state(pair)
+                previous_state = dict(trailing_state[pair]) if trailing_state.get(pair) else None
+                current_price = last_prices.get(pair, None)
+                current_atr = call_with_retry(get_current_atr, pair)
 
-            if current_price is None or current_atr is None:
-                logging.error("Could not fetch price or ATR. Skipping this pair.")
+                if current_price is None or current_atr is None:
+                    logging.error("Could not fetch price or ATR. Skipping this pair.")
+                    continue
+
+                if _session_count % PARAM_SESSIONS == 0 or runtime.pop_config_dirty(pair):
+                    calculate_trading_parameters(pair)
+
+                vol_level = get_volatility_level(pair, current_atr)
+                logging.info(
+                    f"Market: {round_price(pair, current_price):,}€ | "
+                    f"ATR: {round_price(pair, current_atr):,}€ ({vol_level})"
+                )
+                runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
+                pair_data[pair] = {
+                    "price": current_price,
+                    "atr": current_atr,
+                    "volatility_level": vol_level,
+                }
+
+                if not TRADING_ENABLED:
+                    # Non-trading replica: record market data, never touch positions.
+                    if trailing_state.get(pair):
+                        logging.warning(
+                            f"TRADING_ENABLED is false but {pair} has a stored position; "
+                            "it is NOT being managed (trailing stop frozen)."
+                        )
+                    continue
+
+                if is_closing_complete(trailing_state.get(pair)):
+                    db.record_position_closed(pair, trailing_state[pair])
+                    del trailing_state[pair]
+                    logging.info(f"Trailing position removed for {pair}.")
+                elif (trailing_state.get(pair) or {}).get("closing_order_id"):
+                    reprice_closing_order(pair, trailing_state[pair], last_prices)
+
+                if not trailing_state.get(pair):
+                    create_position(pair, current_balance, last_prices, current_atr, trailing_state)
+
+                if is_open(trailing_state.get(pair)):
+                    tick_position(pair, trailing_state[pair], current_balance, last_prices, current_atr, trailing_state)
+
+                current_state = trailing_state.get(pair)
+                if current_state != previous_state:
+                    if current_state is None:
+                        # Position was dropped in-memory (e.g. _drop_position); remove the DB row.
+                        db.delete_trailing_state(pair)
+                    else:
+                        db.save_trailing_state(pair, current_state)
+            except Exception:
+                logging.exception(f"Error processing {pair}; skipping this pair for the rest of the session.")
+                failed_pairs.append(pair)
                 continue
-
-            if _session_count % PARAM_SESSIONS == 0 or runtime.pop_config_dirty(pair):
-                calculate_trading_parameters(pair)
-
-            vol_level = get_volatility_level(pair, current_atr)
-            logging.info(
-                f"Market: {round_price(pair, current_price):,}€ | ATR: {round_price(pair, current_atr):,}€ ({vol_level})"
-            )
-            runtime.update_pair_data(pair, price=current_price, atr=current_atr, volatility_level=vol_level)
-            pair_data[pair] = {
-                "price": current_price,
-                "atr": current_atr,
-                "volatility_level": vol_level,
-            }
-
-            if not TRADING_ENABLED:
-                # Non-trading replica: record market data, never touch positions.
-                if trailing_state.get(pair):
-                    logging.warning(
-                        f"TRADING_ENABLED is false but {pair} has a stored position; "
-                        "it is NOT being managed (trailing stop frozen)."
-                    )
-                continue
-
-            if is_closing_complete(trailing_state.get(pair)):
-                db.record_position_closed(pair, trailing_state[pair])
-                del trailing_state[pair]
-                logging.info(f"Trailing position removed for {pair}.")
-            elif (trailing_state.get(pair) or {}).get("closing_order_id"):
-                reprice_closing_order(pair, trailing_state[pair], last_prices)
-
-            if not trailing_state.get(pair):
-                create_position(pair, current_balance, last_prices, current_atr, trailing_state)
-
-            if is_open(trailing_state.get(pair)):
-                tick_position(pair, trailing_state[pair], current_balance, last_prices, current_atr, trailing_state)
-
-            current_state = trailing_state.get(pair)
-            if current_state != previous_state:
-                if current_state is None:
-                    # Position was dropped in-memory (e.g. _drop_position); remove the DB row.
-                    db.delete_trailing_state(pair)
-                else:
-                    db.save_trailing_state(pair, current_state)
 
         _session_count += 1
         runtime.update_last_run_at(now_utc())
         logging.info("======== SESSION COMPLETE ========")
-        status = "completed"
+        if failed_pairs:
+            status = "failed"
+            failure_reason = f"pair errors: {', '.join(failed_pairs)}"
+        else:
+            status = "completed"
     except Exception as exc:
         logging.exception("Unhandled exception in trading_session")
         status = "failed"

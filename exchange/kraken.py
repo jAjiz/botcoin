@@ -143,8 +143,13 @@ def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] |
         return None
     prices = {}
     for pair, info in pairs_dict.items():
-        prices[pair] = float(result[info["primary"]]["c"][0])
-    return prices
+        primary = info.get("primary")
+        ticker = result.get(primary) if primary else None
+        if not ticker:
+            logging.warning(f"Ticker response missing {pair} (primary={primary!r}); skipping this pair this session.")
+            continue
+        prices[pair] = float(ticker["c"][0])
+    return prices or None
 
 
 def _format_amount(value: float, decimals: int | None) -> str:

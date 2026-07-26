@@ -220,6 +220,72 @@ def test_trading_session_no_recalc_when_not_dirty_and_off_cycle(monkeypatch):
     assert recalcs == []
 
 
+def _setup_two_pair_loop(monkeypatch, *, failing_pair: str = "AAAEUR") -> None:
+    """Patch the per-pair loop collaborators for two pairs, one of which raises
+    inside the loop body (via get_volatility_level) while the other completes
+    normally. TRADING_ENABLED is left False so the failure/success is isolated
+    to the market-data recording portion of the loop body."""
+    monkeypatch.setattr(scheduler, "now_utc", lambda: datetime(2026, 5, 12, 10, 0, 0, tzinfo=UTC))
+    monkeypatch.setattr(db, "get_bot_paused", lambda: False)
+    monkeypatch.setattr(scheduler, "get_balance", lambda: {"ZEUR": "100"})
+    monkeypatch.setattr(scheduler, "get_last_prices", lambda _pairs: {"AAAEUR": 100.0, "BBBEUR": 200.0})
+    monkeypatch.setattr(scheduler, "get_current_atr", lambda _pair: 10.0)
+    monkeypatch.setattr(scheduler, "calculate_trading_parameters", lambda _pair: None)
+
+    def _vol_level(pair, _atr):
+        if pair == failing_pair:
+            raise RuntimeError("boom")
+        return "MV"
+
+    monkeypatch.setattr(scheduler, "get_volatility_level", _vol_level)
+    monkeypatch.setattr(runtime, "update_balance", lambda _b: None)
+    monkeypatch.setattr(runtime, "update_pair_data", lambda *a, **k: None)
+    monkeypatch.setattr(runtime, "update_last_run_at", lambda _ts: None)
+    monkeypatch.setattr(db, "load_trailing_state", lambda _pair: None)
+    monkeypatch.setattr(scheduler, "PAIRS", ["AAAEUR", "BBBEUR"])
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)
+
+
+def test_trading_session_isolates_a_failing_pair_and_still_processes_the_next(monkeypatch):
+    _setup_two_pair_loop(monkeypatch, failing_pair="AAAEUR")
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    final = calls[0]
+    assert final["status"] == "failed"
+    # The failing pair never reached the pair_data write; the healthy one did.
+    assert "AAAEUR" not in final["pair_data"]
+    assert final["pair_data"]["BBBEUR"]["volatility_level"] == "MV"
+    assert "Error processing AAAEUR" in final["log_messages"]
+
+
+def test_trading_session_reports_failed_status_with_reason_on_pair_error(monkeypatch):
+    _setup_two_pair_loop(monkeypatch, failing_pair="AAAEUR")
+    _patch_finalize(monkeypatch)
+    captured: list[tuple] = []
+    monkeypatch.setattr(
+        scheduler, "_notify_session_outcome", lambda status, reason, elapsed: captured.append((status, reason, elapsed))
+    )
+
+    scheduler.trading_session()
+
+    assert captured[0][0] == "failed"
+    assert captured[0][1] == "pair errors: AAAEUR"
+
+
+def test_trading_session_completes_when_no_pair_fails(monkeypatch):
+    # Sanity check that the new status logic doesn't regress the all-healthy path.
+    _setup_two_pair_loop(monkeypatch, failing_pair="__none__")
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    final = calls[0]
+    assert final["status"] == "completed"
+    assert set(final["pair_data"].keys()) == {"AAAEUR", "BBBEUR"}
+
+
 def _reset_alert_state() -> None:
     runtime._shared_data["consecutive_session_failures"] = 0
     runtime._shared_data["session_failure_alerted"] = False
