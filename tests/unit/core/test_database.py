@@ -37,6 +37,7 @@ class FakeQuery:
         self.order_by_calls = 0
         self.limit_value: int | None = None
         self.delete_calls = 0
+        self.delete_error: Exception | None = None
 
     def filter(self, *args: Any, **_kwargs: Any) -> "FakeQuery":
         self.filter_calls += 1
@@ -68,6 +69,8 @@ class FakeQuery:
     def delete(self) -> int:
         """Emulate Query.delete(): bulk-delete the currently filtered records."""
         self.delete_calls += 1
+        if self.delete_error:
+            raise self.delete_error
         count = len(self.records)
         self.records = []
         return count
@@ -537,6 +540,32 @@ def test_record_position_closed_inserts_and_deletes_in_one_session(monkeypatch):
     # Exactly one bulk delete against the trailing_state query, same session.
     assert session.query_obj.delete_calls == 1
     assert session.rollback_calls == 0
+
+
+def test_record_position_closed_rolls_back_when_delete_fails(monkeypatch):
+    """The crash-between-operations scenario the defect describes: if the
+    trailing_state delete raises after the insert was already dispatched to
+    the session, the whole transaction must roll back rather than committing
+    the insert alone. Uses the real get_session() (only SessionLocal is
+    patched, per test_get_session_rollback_on_error's pattern) so its actual
+    commit/rollback contract runs, instead of the fully-stubbed
+    FakeSessionContextManager used elsewhere in this file."""
+    session = FakeSession()
+    session.query_obj.delete_error = Exception("delete failed")
+    monkeypatch.setattr(database, "SessionLocal", lambda: session)
+
+    with pytest.raises(Exception, match="delete failed"):
+        record_position_closed("XBTEUR", _make_closed_position_data())
+
+    # The insert was dispatched to the session before the delete raised...
+    assert len(session.executed_sql) == 1
+    assert session.query_obj.delete_calls == 1
+    # ...but the delete's failure must roll back the whole block, so the
+    # insert's effect is never committed -- proving it doesn't survive a
+    # mid-block failure.
+    assert session.commit_calls == 0
+    assert session.rollback_calls == 1
+    assert session.close_calls == 1
 
 
 def test_record_position_closed(monkeypatch):
