@@ -62,6 +62,21 @@ now raises on DB errors instead of returning `None`;
 (`rowcount == 0`); `pytest-timeout` is installed and the A1 regression test
 (`test_detect_pivots_terminates_on_flat_data`) is bounded at 10s.
 
+**Phase 1 review follow-ups shipped**: `is_closing_complete` now clears the
+closing fields on *every* terminal outcome it cannot finalize, not just
+`canceled`/`expired` — the old "unexpected status" branch left them set, which
+froze the position forever (the status can never change again, `reprice` declines
+a non-`open` order, and `is_open` stays `False`) while alerting Telegram every
+tick. A pair skipped for a missing price or ATR now counts as a failed pair, so
+a frozen trailing stop can no longer hide behind a `completed` session.
+`reprice_closing_order` only touches an `open` order (a `pending` one is not on
+the book, so cancel/replace is churn). A5's persistence moved out of
+`positions_manager` into a single `_persist_pair_state` call in the scheduler's
+per-pair `finally`, which is strictly stronger than the original end-of-body
+save: an order placed just before an exception used to be swallowed by the
+per-pair `except` and never written. `trading/` no longer imports
+`core.database`.
+
 **Deliberately deferred out of Phase 1** (recorded by the final whole-branch
 review so they are not mistaken for work Phase 1 closed):
 

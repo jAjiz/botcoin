@@ -61,14 +61,16 @@ Pin all dependencies with `==` in `requirements.txt`. Resolve the exact version 
 1. Reload `trailing_state` from DB
 2. Recalculate trading parameters every `PARAM_SESSIONS` ticks (`calculate_trading_parameters`)
 3. **If closing order is filled** → `is_closing_complete` fetches real execution price from Kraken, writes `closing_price` and `pnl_percent` into the position dict, then `record_position_closed` atomically inserts the closed position and deletes its `trailing_state` row in one transaction
-4. **Else if a closing order is still outstanding** → `reprice_closing_order` cancels it and re-places the limit at the current market price (only when the order is untouched — a partial fill is left alone). This is an `elif` on purpose: a canceled/expired order has already had its closing fields cleared by step 3, so it is never repriced
+4. **Else if a closing order is still outstanding** → `reprice_closing_order` cancels it and re-places the limit at the current market price (only when the order is `open` and untouched — a partial fill is left alone). This is an `elif` on purpose: a terminated order has already had its closing fields cleared by step 3, so it is never repriced
 5. **If no active position** → `create_position`
 6. **If position is open** (no `closing_order_id`) → `tick_position` (recalibrate, check activation, update trailing stop, trigger close if stop is hit)
-7. Persist updated state → `save_trailing_state`
+7. Persist updated state → `save_trailing_state` (in a `finally`; see below)
 
 Steps 3–7 (the position block) run only when `TRADING_ENABLED` is true. When it is false the per-pair loop `continue`s after recording market data, so the instance ingests OHLC, calibrates and records sessions but never trades. Steps 1–2 and the runtime/`pair_data` updates always run.
 
-The whole per-pair body is wrapped in `try/except`: one pair's failure is logged, recorded in `failed_pairs`, and skipped, so the remaining pairs still trade. Any non-empty `failed_pairs` makes the session `failed` with reason `pair errors: <PAIRS>`, which feeds the consecutive-failure Telegram alert.
+The whole per-pair body is wrapped in `try/except/finally`: one pair's failure is logged, recorded in `failed_pairs`, and skipped, so the remaining pairs still trade. A pair skipped for a missing price or ATR is recorded the same way — an unpriced pair is an *unmanaged* pair (its trailing stop is frozen), so it must not pass as success. Any non-empty `failed_pairs` makes the session `failed` with reason `pair errors: <PAIRS>`, which feeds the consecutive-failure Telegram alert.
+
+Step 7 lives in the `finally`, and is the **only** place the position block writes state (`_persist_pair_state`): a closing order placed just before a failure must still reach the DB, or the order lives on at Kraken with its id lost (A5). That is also why `positions_manager` never touches `core.database` — persistence is the scheduler's job, and the strategy code only mutates the position dict.
 
 `core/runtime.py` holds thread-safe shared state so the FastAPI routes can read live prices/ATR without touching the DB.
 
@@ -83,9 +85,11 @@ The whole per-pair body is wrapped in `try/except`: one pair's failure is logged
 
 - **create_position**: Calculates `activation_price` using either `K_ACT × ATR` (if `K_ACT` is set) or `K_STOP × ATR + MIN_MARGIN × entry_price`. Stores an inactive position.
 - **tick_position**: Activates on price cross of `activation_price`, then tracks trailing price and updates stop. Recalibrates activation/stop when ATR drifts beyond `ATR_DESV_LIMIT`.
-- **close_position**: Places a limit order at current market price, records `closing_price` (approximate, at order placement) and `closing_order_id`, and persists the state immediately. Does NOT compute PnL.
-- **reprice_closing_order**: Chases the fill of a still-open closing order — cancels it and re-places the limit at the current market price, then persists immediately. Returns early (leaving the order alone) on an API error, a terminal status, any executed volume, an unchanged rounded price, or a cancel that Kraken did not confirm as definitive. If the cancel succeeds but the replacement fails, the dead `closing_order_id` is deliberately kept so `is_open` stays `False` and the next tick's dead-status branch clears it.
-- **is_closing_complete**: Calls `get_order_state` (Kraken `QueryOrders`) and branches on `status` explicitly. A `closed` order with a positive average fill price is finalized: `closing_price` is overwritten with the real fill and `pnl_percent` is computed. A `canceled`/`expired` order clears `closing_order_id`/`closing_price`/`closing_requested_at` so the position resumes management next tick. Returns `True` only when the fill is confirmed.
+- **close_position**: Places a limit order at current market price, records `closing_price` (approximate, at order placement) and `closing_order_id`. Does NOT compute PnL.
+- **reprice_closing_order**: Chases the fill of a still-`open` closing order — cancels it and re-places the limit at the current market price. Returns early (leaving the order alone) on an API error, any status other than `open` (a `pending` order is not on the book yet, so cancel/replace is pure churn), any executed volume, an unchanged rounded price, or a cancel that Kraken did not confirm as definitive. If the cancel succeeds but the replacement fails, the dead `closing_order_id` is deliberately kept so `is_open` stays `False` and the next tick's terminal-status branch clears it.
+- **is_closing_complete**: Calls `get_order_state` (Kraken `QueryOrders`) and branches on `status` explicitly. A `closed` order with a positive average fill price is finalized: `closing_price` is overwritten with the real fill and `pnl_percent` is computed. **Every** other terminal outcome — `canceled`, `expired`, or any status that cannot be finalized, including `closed` without a usable average price — clears `closing_order_id`/`closing_price`/`closing_requested_at` so the position resumes management on the same tick. There is deliberately no branch that leaves a terminal order's fields in place: the status can never change again, so the position would be frozen forever with `is_open` `False`. Returns `True` only when the fill is confirmed.
+
+  A partial fill is **not** reconciled. `refresh_position` resizes the position from the pair's target allocation against the current balance on the next tick, so the bot converges on a correct size rather than tracking the unfilled remainder; if what is left falls below `MIN_VALUE` the position is dropped and the residual base amount stays untracked.
 
 ### Volatility classification (`trading/market_analyzer.py` + `trading/parameters_manager.py`)
 

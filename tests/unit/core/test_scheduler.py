@@ -188,6 +188,92 @@ def test_trading_session_does_not_reprice_when_close_completed(monkeypatch):
     assert calls[0]["status"] == "completed"
 
 
+def test_trading_session_persists_a_closing_order_placed_before_a_failure(monkeypatch):
+    """A5: the persist lives in a `finally`, so an order placed just before the
+    pair blows up still reaches the DB — otherwise it lives on at Kraken and the
+    bot has lost its id."""
+    stored = {"side": "sell", "entry_price": 50000.0, "closing_order_id": "ORD001"}
+    _setup_one_pair_loop(monkeypatch, trailing_state=stored)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)
+
+    def _reprice(_pair, pos, _prices):
+        pos["closing_order_id"] = "ORD002"
+
+    def _explode(_s):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(scheduler, "reprice_closing_order", _reprice)
+    monkeypatch.setattr(scheduler, "is_open", _explode)
+    saved: list[tuple[str, dict]] = []
+    monkeypatch.setattr(db, "save_trailing_state", lambda pair, pos: saved.append((pair, dict(pos))))
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    assert saved == [("XBTEUR", {"side": "sell", "entry_price": 50000.0, "closing_order_id": "ORD002"})]
+    assert calls[0]["status"] == "failed"
+
+
+def test_trading_session_marks_the_pair_failed_when_the_persist_fails(monkeypatch):
+    stored = {"side": "sell", "entry_price": 50000.0, "closing_order_id": "ORD001"}
+    _setup_one_pair_loop(monkeypatch, trailing_state=stored)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
+    monkeypatch.setattr(scheduler, "is_open", lambda _s: False)
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)
+
+    def _reprice(_pair, pos, _prices):
+        pos["closing_order_id"] = "ORD002"
+
+    def _failing_save(_pair, _pos):
+        raise Exception("db unavailable")
+
+    monkeypatch.setattr(scheduler, "reprice_closing_order", _reprice)
+    monkeypatch.setattr(db, "save_trailing_state", _failing_save)
+    calls = _patch_finalize(monkeypatch)
+
+    # Must not escape the loop: the other pairs still need their tick.
+    scheduler.trading_session()
+
+    assert calls[0]["status"] == "failed"
+    assert "XBTEUR" in calls[0]["log_messages"]
+
+
+def test_trading_session_does_not_persist_an_unchanged_pair(monkeypatch):
+    stored = {"side": "sell", "entry_price": 50000.0}
+    _setup_one_pair_loop(monkeypatch, trailing_state=stored)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
+    monkeypatch.setattr(scheduler, "is_open", lambda _s: True)
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)
+    monkeypatch.setattr(db, "save_trailing_state", lambda *a, **k: pytest.fail("must not write an unchanged state"))
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    assert calls[0]["status"] == "completed"
+
+
+@pytest.mark.parametrize("missing", ["price", "atr"])
+def test_trading_session_fails_the_session_when_a_pair_has_no_price_or_atr(monkeypatch, missing):
+    """An unpriced pair is an unmanaged pair (its trailing stop is frozen), so it
+    must reach the consecutive-failure alert instead of passing as completed."""
+    _setup_one_pair_loop(monkeypatch)
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)
+    if missing == "price":
+        monkeypatch.setattr(scheduler, "get_last_prices", lambda _pairs: {"OTHEREUR": 1.0})
+    else:
+        monkeypatch.setattr(scheduler, "get_current_atr", lambda _pair: None)
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    assert calls[0]["status"] == "failed"
+
+
 def test_trading_session_recalcs_params_when_config_dirty(monkeypatch):
     _setup_one_pair_loop(monkeypatch)
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)

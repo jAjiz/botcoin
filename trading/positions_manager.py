@@ -1,6 +1,5 @@
 from typing import Any
 
-import core.database as db
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import now_utc, round_price
@@ -129,14 +128,11 @@ def is_open(pos: dict[str, Any] | None) -> bool:
     return bool(pos) and not pos.get("closing_order_id")
 
 
-ORDER_DEAD_STATUSES = ("canceled", "expired")
-
-
 def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     """Check if the closing order is filled. If so, update pos with the real fill
-    price and PnL. A canceled/expired order clears the closing fields so the
-    position is managed again next tick (a partial fill self-heals: the volume is
-    recomputed from the real balance by refresh_position)."""
+    price and PnL. Any terminal outcome that cannot be finalized instead clears the
+    closing fields: leaving them set would freeze the position forever, since the
+    status can never change again and ``is_open`` stays False."""
     if not pos:
         return False
     closing_order = pos.get("closing_order_id")
@@ -145,20 +141,14 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     state = get_order_state(closing_order)
     if state is None or state.status in ("pending", "open"):
         return False
-    if state.status in ORDER_DEAD_STATUSES:
+    if state.status != "closed" or not state.avg_price or state.avg_price <= 0:
         logging.warning(
-            f"Closing order {closing_order} is {state.status} "
-            f"(executed {state.vol_exec:.8f}); resuming position management.",
+            f"Closing order {closing_order} ended as {state.status} with no usable fill price; "
+            "resuming position management.",
             to_telegram=True,
         )
         for key in ("closing_order_id", "closing_price", "closing_requested_at"):
             pos.pop(key, None)
-        return False
-    if state.status != "closed" or not state.avg_price or state.avg_price <= 0:
-        logging.error(
-            f"Closing order {closing_order} in unexpected state {state.status!r}; not finalizing.",
-            to_telegram=True,
-        )
         return False
     closing_price = state.avg_price
     entry = pos["entry_price"]
@@ -236,15 +226,15 @@ def tick_position(
 
 def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> None:
     """Chase the fill of a still-open closing order: cancel it and re-place the
-    limit at the current market price. The exit decision was already made by the
-    trailing stop — this only updates the execution price (operator decision,
-    2026-07-06). Partial fills are left alone: the order is executing."""
+    limit at the current market price."""
     order_id = pos.get("closing_order_id")
     if not order_id:
         return
     state = get_order_state(order_id)
-    if state is None or state.status not in ("open", "pending"):
-        return  # error or terminal state: is_closing_complete handles it next tick
+    if state is None or state.status != "open":
+        # A pending order isn't on the book yet, so cancel/replace is pure churn;
+        # terminal states are is_closing_complete's job.
+        return
     if state.vol_exec > 0:
         return  # executing at its price; don't fragment the fill
     current_price = last_prices[pair]
@@ -265,12 +255,6 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
             "closing_requested_at": now_utc(),
         }
     )
-    try:
-        db.save_trailing_state(pair, pos)
-    except Exception as e:
-        # Recoverable: a missed persist here is retried by the end-of-iteration
-        # save; do not abort the tick over it.
-        logging.error(f"Failed to persist repriced closing state for {pair}: {e}", to_telegram=True)
     logging.info(
         f"[{pair}] 🔁 Repriced closing {side.upper()} order to {round_price(pair, current_price):,}€",
         to_telegram=True,
@@ -301,7 +285,6 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
                 "closing_requested_at": now_utc(),
             }
         )
-        db.save_trailing_state(pair, pos)
     except Exception as e:
         # Recoverable: scheduler must keep ticking; surface failure via Telegram.
         logging.error(f"Failed to close trailing position: {e}", to_telegram=True)

@@ -84,6 +84,24 @@ def _notify_session_outcome(status: str, reason: str | None, elapsed_seconds: fl
             )
 
 
+def _persist_pair_state(pair: str, current: dict | None, previous: dict | None) -> bool:
+    """Write a pair's state back if the session changed it. Returns False when the
+    write failed, so the caller can mark the pair failed instead of letting the
+    exception escape the loop."""
+    if current == previous:
+        return True
+    try:
+        if current is None:
+            # Position was dropped in-memory (e.g. _drop_position); remove the DB row.
+            db.delete_trailing_state(pair)
+        else:
+            db.save_trailing_state(pair, current)
+    except Exception:
+        logging.exception(f"Failed to persist state for {pair}.")
+        return False
+    return True
+
+
 def trading_session() -> None:
     global _session_count
 
@@ -124,6 +142,7 @@ def trading_session() -> None:
 
         failed_pairs: list[str] = []
         for pair in PAIRS:
+            previous_state: dict | None = None
             try:
                 logging.info(f"--- Processing pair: [{pair}] ---")
                 trailing_state[pair] = db.load_trailing_state(pair)
@@ -132,7 +151,9 @@ def trading_session() -> None:
                 current_atr = call_with_retry(get_current_atr, pair)
 
                 if current_price is None or current_atr is None:
+                    # Counted as failed: an unpriced pair is an unmanaged pair.
                     logging.error("Could not fetch price or ATR. Skipping this pair.")
+                    failed_pairs.append(pair)
                     continue
 
                 if _session_count % PARAM_SESSIONS == 0 or runtime.pop_config_dirty(pair):
@@ -171,18 +192,15 @@ def trading_session() -> None:
 
                 if is_open(trailing_state.get(pair)):
                     tick_position(pair, trailing_state[pair], current_balance, last_prices, current_atr, trailing_state)
-
-                current_state = trailing_state.get(pair)
-                if current_state != previous_state:
-                    if current_state is None:
-                        # Position was dropped in-memory (e.g. _drop_position); remove the DB row.
-                        db.delete_trailing_state(pair)
-                    else:
-                        db.save_trailing_state(pair, current_state)
             except Exception:
                 logging.exception(f"Error processing {pair}; skipping this pair for the rest of the session.")
                 failed_pairs.append(pair)
-                continue
+            finally:
+                # In `finally` so a closing order placed just before a failure still
+                # reaches the DB; otherwise it lives on at Kraken with its id lost.
+                persisted = _persist_pair_state(pair, trailing_state.get(pair), previous_state)
+                if not persisted and pair not in failed_pairs:
+                    failed_pairs.append(pair)
 
         _session_count += 1
         runtime.update_last_run_at(now_utc())

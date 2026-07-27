@@ -121,12 +121,11 @@ def get_order_state(order_id: str) -> OrderState | None:
 
 
 def cancel_order(order_id: str) -> bool:
-    """Cancel an open order. False on API error, and also on a response that
-    doesn't confirm an immediate, definitive cancellation: ``count: 0`` (nothing
-    was actually canceled) or ``pending: true`` (cancellation queued but the order
-    can still fill). Either shape must be treated as 'still live' — the caller
-    (``reprice_closing_order``) only re-places a new order once the old one is
-    confirmed dead, to avoid two live exit orders for one position."""
+    """Cancel an open order. False on API error, and also on a successful response
+    that doesn't confirm a definitive cancellation: ``count: 0`` (nothing was
+    canceled) or ``pending: true`` (queued, the order can still fill). Both mean
+    'still live' — re-placing on either would leave two live exits for one
+    position."""
     result = _safe_call(
         "cancel order",
         lambda: api.query_private("CancelOrder", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
@@ -151,9 +150,8 @@ def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] |
         try:
             prices[pair] = float(ticker["c"][0])
         except (KeyError, IndexError, TypeError, ValueError) as e:
-            # Parsing runs after _safe_call returned and outside the scheduler's
-            # per-pair guard, so an unhandled raise here would kill pricing for
-            # every pair. A malformed entry is skipped like an absent one.
+            # Parsing runs outside _safe_call and outside the scheduler's per-pair
+            # guard, so an unhandled raise here would kill pricing for every pair.
             logging.warning(f"Ticker entry for {pair} is malformed ({e}); skipping this pair this session.")
     return prices or None
 
