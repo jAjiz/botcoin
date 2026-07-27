@@ -225,6 +225,7 @@ def test_get_current_atr_returns_last_db_atr_when_fetch_returns_none(monkeypatch
     assert current_atr == 1.9
 
 
+@pytest.mark.timeout(10)
 def test_detect_pivots_terminates_on_flat_data():
     """Different-type pivots with exactly equal prices previously made the
     false-pivot removal loop spin forever (no branch advanced `i`)."""
