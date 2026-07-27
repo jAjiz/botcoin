@@ -60,20 +60,25 @@ Pin all dependencies with `==` in `requirements.txt`. Resolve the exact version 
 
 1. Reload `trailing_state` from DB
 2. Recalculate trading parameters every `PARAM_SESSIONS` ticks (`calculate_trading_parameters`)
-3. **If closing order is filled** → `is_closing_complete` fetches real execution price from Kraken, writes `closing_price` and `pnl_percent` into the position dict, then `save_closed_position` + `delete_trailing_state`
-4. **If no active position** → `create_position`
-5. **If position is open** (no `closing_order_id`) → `tick_position` (recalibrate, check activation, update trailing stop, trigger close if stop is hit)
-6. Persist updated state → `save_trailing_state`
+3. **If closing order is filled** → `is_closing_complete` fetches real execution price from Kraken, writes `closing_price` and `pnl_percent` into the position dict, then `record_position_closed` atomically inserts the closed position and deletes its `trailing_state` row in one transaction
+4. **Else if a closing order is still outstanding** → `reprice_closing_order` cancels it and re-places the limit at the current market price (only when the order is `open` and untouched — a partial fill is left alone). This is an `elif` on purpose: a terminated order has already had its closing fields cleared by step 3, so it is never repriced
+5. **If no active position** → `create_position`
+6. **If position is open** (no `closing_order_id`) → `tick_position` (recalibrate, check activation, update trailing stop, trigger close if stop is hit)
+7. Persist updated state → `save_trailing_state` (in a `finally`; see below)
 
-Steps 3–6 (the position block) run only when `TRADING_ENABLED` is true. When it is false the per-pair loop `continue`s after recording market data, so the instance ingests OHLC, calibrates and records sessions but never trades. Steps 1–2 and the runtime/`pair_data` updates always run.
+Steps 3–7 (the position block) run only when `TRADING_ENABLED` is true. When it is false the per-pair loop `continue`s after recording market data, so the instance ingests OHLC, calibrates and records sessions but never trades. Steps 1–2 and the runtime/`pair_data` updates always run.
+
+The whole per-pair body is wrapped in `try/except/finally`: one pair's failure is logged, recorded in `failed_pairs`, and skipped, so the remaining pairs still trade. A pair skipped for a missing price or ATR is recorded the same way — an unpriced pair is an *unmanaged* pair (its trailing stop is frozen), so it must not pass as success. Any non-empty `failed_pairs` makes the session `failed` with reason `pair errors: <PAIRS>`, which feeds the consecutive-failure Telegram alert.
+
+Step 7 lives in the `finally`, and is the **only** place the position block writes state (`_persist_pair_state`): a closing order placed just before a failure must still reach the DB, or the order lives on at Kraken with its id lost (A5). That is also why `positions_manager` never touches `core.database` — persistence is the scheduler's job, and the strategy code only mutates the position dict.
 
 `core/runtime.py` holds thread-safe shared state so the FastAPI routes can read live prices/ATR without touching the DB.
 
 **Invariants — do not break without explicit discussion:**
 
 - The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch in code. Adding one is a strategy change, not a refactor.
-- `closing_price` is written **twice**: first by `close_position` (approximate, at order placement) and then by `is_closing_complete` (real fill from Kraken). PnL is computed only after the second write. Any code that reads `closing_price` before `is_closing_complete` returns `True` is reading an estimate.
-- A position with `closing_order_id` set is **not** open — `tick_position` must not run on it. Step 3 of the loop checks this before step 5.
+- `closing_price` is an **estimate** until `is_closing_complete` confirms the fill: `close_position` writes it first (at order placement), and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. `is_closing_complete` performs the final write with the real fill from Kraken and computes `pnl_percent`. Any code that reads `closing_price` before `is_closing_complete` returns `True` is reading an estimate.
+- A position with `closing_order_id` set is **not** open — `tick_position` must not run on it. Steps 3–4 of the loop resolve the closing order before step 6 checks `is_open`.
 - `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Callers that don't handle `None` will silently corrupt state.
 
 ### Position lifecycle (`trading/positions_manager.py`)
@@ -81,7 +86,10 @@ Steps 3–6 (the position block) run only when `TRADING_ENABLED` is true. When i
 - **create_position**: Calculates `activation_price` using either `K_ACT × ATR` (if `K_ACT` is set) or `K_STOP × ATR + MIN_MARGIN × entry_price`. Stores an inactive position.
 - **tick_position**: Activates on price cross of `activation_price`, then tracks trailing price and updates stop. Recalibrates activation/stop when ATR drifts beyond `ATR_DESV_LIMIT`.
 - **close_position**: Places a limit order at current market price, records `closing_price` (approximate, at order placement) and `closing_order_id`. Does NOT compute PnL.
-- **is_closing_complete**: Calls `get_order_closing_price` (Kraken `QueryOrders` → `price` field). If filled, overwrites `closing_price` with the real fill and computes `pnl_percent`. Returns `True` only when the fill is confirmed.
+- **reprice_closing_order**: Chases the fill of a still-`open` closing order — cancels it and re-places the limit at the current market price. Returns early (leaving the order alone) on an API error, any status other than `open` (a `pending` order is not on the book yet, so cancel/replace is pure churn), any executed volume, an unchanged rounded price, or a cancel that Kraken did not confirm as definitive. If the cancel succeeds but the replacement fails, the dead `closing_order_id` is deliberately kept so `is_open` stays `False` and the next tick's terminal-status branch clears it.
+- **is_closing_complete**: Calls `get_order_state` (Kraken `QueryOrders`) and branches on `status` explicitly. A `closed` order with a positive average fill price is finalized: `closing_price` is overwritten with the real fill and `pnl_percent` is computed. **Every** other terminal outcome — `canceled`, `expired`, or any status that cannot be finalized, including `closed` without a usable average price — clears `closing_order_id`/`closing_price`/`closing_requested_at` so the position resumes management on the same tick. There is deliberately no branch that leaves a terminal order's fields in place: the status can never change again, so the position would be frozen forever with `is_open` `False`. Returns `True` only when the fill is confirmed.
+
+  A partial fill is **not** reconciled. `refresh_position` resizes the position from the pair's target allocation against the current balance on the next tick, so the bot converges on a correct size rather than tracking the unfilled remainder; if what is left falls below `MIN_VALUE` the position is dropped and the residual base amount stays untracked.
 
 ### Volatility classification (`trading/market_analyzer.py` + `trading/parameters_manager.py`)
 
@@ -106,9 +114,9 @@ When changing an ORM model's table constraints, update **both** the model in `co
 
 `TrailingState` captures the full active position dict. Fields are optional during the open phase (`trailing_price`, `stop_price`, `closing_order_id`, etc.) and populated progressively as the position advances.
 
-`BotControl` is a generic key/value table (`control_key` → `control_value`) accessed via `get_control_value` / `set_control_value`. Intended for runtime flags that should survive restarts and be toggled without redeploy; **currently has no production callers** — the table and DAL exist but no feature uses it yet.
+`BotControl` is a generic key/value table (`control_key` → `control_value`, both `Text`) accessed via `get_control_value` / `set_control_value`. It holds runtime state that must survive restarts without a redeploy or a schema change. Current keys: `bot_paused` (the pause flag), `latest_balance` and `latest_pair_data` (written by `finalize_session`, read by Grafana), and a per-pair OHLC backfill watermark written by `market_analyzer`.
 
-`SessionRecord` is written once at the start of every `trading_session()` call (status `running`) and updated in the `finally` block with the final status, balance snapshot, per-pair market data, and captured log lines. It is the primary data source for the Grafana Sessions row.
+`SessionRecord` is written once at the start of every `trading_session()` call (status `running`) and updated in the `finally` block with the final status and captured log lines. It is the primary data source for the Grafana Sessions row.
 
 `OptimizerJob` backs the async optimizer (`optimizer_jobs` table). A row is inserted `running` by `JobStore.try_start` and updated to `completed` (with the JSONB result) or `failed`. A `ck_opt_jobs_mode_valid` check constraint restricts `mode` to `OPTIMIZE`/`CURRENT`/`AUTO`; `ck_opt_jobs_status_valid` restricts `status` to `running`/`completed`/`failed`.
 
@@ -158,13 +166,13 @@ Non-obvious decisions a reviewer would otherwise question. Update this list when
 - **`TRADING_ENABLED` is a deploy-time mode flag, not a runtime risk control.** When false, the scheduler skips the entire position block (open/manage/close) but keeps ingesting OHLC, calibrating, recording sessions and serving the API/optimizer. It exists so the full stack can run as a non-trading replica (e.g. a beefy local box driving the optimizer with Telegram, cache and history intact) instead of a bespoke standalone script. This does **not** contradict the "no panic kill switch" invariant: that invariant forbids in-flight risk overrides on a *trading* instance; this flag decides up front whether an instance trades at all. It must stay `true` in production and must not be flipped on an instance holding open positions — their trailing stop would freeze (the loop warns loudly if it finds a stored position while disabled).
 - **`telegram` runs as a separate service, not inside `botc`.** PTB's `Application.run_polling()` blocks its thread indefinitely. Co-locating it with the scheduler would risk a dropped Telegram connection stalling the trading loop. A separate service means the trading engine is entirely unaffected by Telegram's availability.
 - **`_SessionLogCollector` attaches to the root logger rather than threading a context object.** The alternative — passing a log buffer through the call graph (`trading_session` → `positions_manager` → `market_analyzer` → …) — would require modifying every function signature. The root-logger approach captures records from every module called during the session with zero changes to any call site.
-- **`sessions.log_messages` is `Text` (JSON string), not `JSONB`.** `balance` and `pair_data` use `JSONB` because Grafana queries them with SQL operators (`->>`, `jsonb_array_elements`). `log_messages` is always fetched as a whole array, never queried by individual entry — `Text` avoids `JSONB` parse overhead with no query trade-off at this access pattern.
+- **`JSONB` is reserved for payloads the application reads back as structured data; everything else stores JSON as `Text`.** Only `optimizer_jobs.request`/`result` are `JSONB` — they are written and re-read as dicts by the optimizer itself. `sessions.log_messages` is `Text` because it is always fetched as a whole array, never queried by individual entry, so `JSONB` would add parse overhead with no query benefit. `bot_control.control_value` is `Text` too, even though Grafana *does* query into `latest_balance`/`latest_pair_data` structurally — it casts at read time (`control_value::jsonb ->> 'ZEUR'`), which keeps the key/value table generic enough to hold a plain flag like `bot_paused` in the same column.
 - **Dynamic pair config is DB-authoritative, seeded once from `.env`.** A dedicated typed `pair_config` table was chosen over the generic `BotControl` store because typed columns enable schema-level validation, clean ORM access, and straightforward `PATCH` semantics. `.env` remains the deployment-time seed for new installs; after first boot it is no longer read for these parameters. This lets an operator tune live via the API or Telegram without touching `.env` or restarting the container.
 - **`stop_pct` changes recalc `K_STOP` at the next session via a runtime dirty flag.** `apply_patch` in `core/config_store.py` sets a per-pair dirty flag in `core/runtime.py` when any `stop_pct` field changes. The scheduler checks the flag at the start of the next `trading_session()` and re-runs `calculate_trading_parameters` before the position block. This keeps heavy calibration (pivot detection, ATR percentiles) inside the scheduler thread and off the request path, avoiding any latency spike on the `PATCH` endpoint.
 - **`k_act`/`min_margin` are single per pair; `K_STOP` stays per-side.** The per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` and `PAIR_SELL_MIN_MARGIN` / `PAIR_BUY_MIN_MARGIN` env vars were removed because the optimizer already treated these as single values and per-side tuning added config complexity without observable benefit. `K_STOP` is kept per-side (buy/sell) because it is a *derived* structural parameter (computed from pivot analysis), not a directly configured one, and the buy/sell paths naturally produce different stop distances.
 
 ## Testing conventions
 
-- Unit tests live in `tests/unit/` and never call external APIs. Kraken and DB calls are monkeypatched at the module level where the name is imported (e.g. `monkeypatch.setattr(positions_manager, "get_order_closing_price", ...)`).
+- Unit tests live in `tests/unit/` and never call external APIs. Kraken and DB calls are monkeypatched at the module level where the name is imported (e.g. `monkeypatch.setattr(positions_manager, "get_order_state", ...)`).
 - Integration tests in `tests/integration/` require `RUN_DB_INTEGRATION=true` and are skipped otherwise.
 - `pytest-asyncio` is used for async FastAPI route tests.

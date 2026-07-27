@@ -22,7 +22,7 @@ from core.database import (
     load_closed_positions,
     load_ohlc_data,
     load_trailing_state,
-    save_closed_position,
+    record_position_closed,
     save_ohlc_data,
     save_trailing_state,
     set_bot_paused,
@@ -36,6 +36,8 @@ class FakeQuery:
         self.filter_calls = 0
         self.order_by_calls = 0
         self.limit_value: int | None = None
+        self.delete_calls = 0
+        self.delete_error: Exception | None = None
 
     def filter(self, *args: Any, **_kwargs: Any) -> "FakeQuery":
         self.filter_calls += 1
@@ -64,6 +66,15 @@ class FakeQuery:
     def one_or_none(self) -> Any | None:
         return self.records[0] if self.records else None
 
+    def delete(self) -> int:
+        """Emulate Query.delete(): bulk-delete the currently filtered records."""
+        self.delete_calls += 1
+        if self.delete_error:
+            raise self.delete_error
+        count = len(self.records)
+        self.records = []
+        return count
+
 
 class FakeSession:
     def __init__(self, records: list[Any] | None = None) -> None:
@@ -75,6 +86,7 @@ class FakeSession:
         self.rollback_calls = 0
         self.close_calls = 0
         self.executed_sql: list[str] = []
+        self.executed_statements: list[Any] = []
         self.commit_error: Exception | None = None
         self.execute_rowcount = 0
 
@@ -103,6 +115,7 @@ class FakeSession:
         self.close_calls += 1
 
     def execute(self, sql) -> SimpleNamespace:
+        self.executed_statements.append(sql)
         self.executed_sql.append(str(sql))
         return SimpleNamespace(rowcount=self.execute_rowcount)
 
@@ -499,38 +512,93 @@ def _make_trailing_state_entry(**overrides) -> dict:
     return data
 
 
-def test_save_closed_position(monkeypatch):
-    """Test saving a closed position to the database."""
+def test_record_position_closed_inserts_and_deletes_in_one_session(monkeypatch):
+    """record_position_closed must issue the insert and the trailing_state delete
+    inside a single `with get_session()` block, so both commit (or roll back)
+    together instead of as two independent transactions. The fixed bug was two
+    separate get_session() calls (save_closed_position, then delete_trailing_state);
+    asserting get_session() is entered exactly once is what catches a regression
+    back to that shape."""
+    session = FakeSession()
+    get_session_calls = 0
+
+    def _get_session() -> FakeSessionContextManager:
+        nonlocal get_session_calls
+        get_session_calls += 1
+        return FakeSessionContextManager(session)
+
+    monkeypatch.setattr(database, "get_session", _get_session)
+
+    record_position_closed("XBTEUR", _make_closed_position_data())
+
+    assert get_session_calls == 1
+    # Exactly one INSERT ... ON CONFLICT DO NOTHING against closed_positions,
+    # issued through that single session.
+    assert len(session.executed_sql) == 1
+    assert "closed_positions" in session.executed_sql[0].lower()
+    assert "on conflict" in session.executed_sql[0].lower()
+    # Exactly one bulk delete against the trailing_state query, same session.
+    assert session.query_obj.delete_calls == 1
+    assert session.rollback_calls == 0
+
+
+def test_record_position_closed_rolls_back_when_delete_fails(monkeypatch):
+    """The crash-between-operations scenario the defect describes: if the
+    trailing_state delete raises after the insert was already dispatched to
+    the session, the whole transaction must roll back rather than committing
+    the insert alone. Uses the real get_session() (only SessionLocal is
+    patched, per test_get_session_rollback_on_error's pattern) so its actual
+    commit/rollback contract runs, instead of the fully-stubbed
+    FakeSessionContextManager used elsewhere in this file."""
+    session = FakeSession()
+    session.query_obj.delete_error = Exception("delete failed")
+    monkeypatch.setattr(database, "SessionLocal", lambda: session)
+
+    with pytest.raises(Exception, match="delete failed"):
+        record_position_closed("XBTEUR", _make_closed_position_data())
+
+    # The insert was dispatched to the session before the delete raised...
+    assert len(session.executed_sql) == 1
+    assert session.query_obj.delete_calls == 1
+    # ...but the delete's failure must roll back the whole block, so the
+    # insert's effect is never committed -- proving it doesn't survive a
+    # mid-block failure.
+    assert session.commit_calls == 0
+    assert session.rollback_calls == 1
+    assert session.close_calls == 1
+
+
+def test_record_position_closed(monkeypatch):
+    """Test recording a closed position issues an insert with the mapped fields."""
     session = FakeSession()
     patch_get_session(monkeypatch, session)
 
-    save_closed_position("XBTEUR", _make_closed_position_data())
+    record_position_closed("XBTEUR", _make_closed_position_data())
 
-    assert len(session.added_records) == 1
-    saved = session.added_records[0]
-    assert isinstance(saved, ClosedPosition)
-    assert saved.pair == "XBTEUR"
-    assert saved.side == "buy"
-    assert saved.closing_order_id == "order_12345"
+    assert len(session.executed_statements) == 1
+    params = session.executed_statements[0].compile().params
+    assert params["pair"] == "XBTEUR"
+    assert params["side"] == "buy"
+    assert params["closing_order_id"] == "order_12345"
 
 
-def test_save_closed_position_optional_fields_none(monkeypatch):
-    """Test saving a closed position with all optional fields as None."""
+def test_record_position_closed_optional_fields_none(monkeypatch):
+    """Test recording a closed position with all optional fields as None."""
     session = FakeSession()
     patch_get_session(monkeypatch, session)
 
-    save_closed_position("XBTEUR", _make_closed_position_data())
+    record_position_closed("XBTEUR", _make_closed_position_data())
 
-    saved = session.added_records[0]
-    assert saved.activation_atr is None
-    assert saved.activated_at is None
-    assert saved.trailing_price is None
-    assert saved.stop_price is None
-    assert saved.stop_atr is None
+    params = session.executed_statements[0].compile().params
+    assert params["activation_atr"] is None
+    assert params["activated_at"] is None
+    assert params["trailing_price"] is None
+    assert params["stop_price"] is None
+    assert params["stop_atr"] is None
 
 
-def test_save_closed_position_optional_fields_populated(monkeypatch):
-    """Test saving a closed position with all optional fields populated."""
+def test_record_position_closed_optional_fields_populated(monkeypatch):
+    """Test recording a closed position with all optional fields populated."""
     session = FakeSession()
     patch_get_session(monkeypatch, session)
 
@@ -542,21 +610,46 @@ def test_save_closed_position_optional_fields_populated(monkeypatch):
         stop_price=Decimal("3020"),
         stop_atr=Decimal("40"),
     )
-    save_closed_position("ETHEUR", data)
+    record_position_closed("ETHEUR", data)
 
-    saved = session.added_records[0]
-    assert saved.pair == "ETHEUR"
-    assert saved.activated_at == datetime(2026, 4, 2, 10, 0, 0, tzinfo=UTC)
-    assert float(saved.trailing_price) == 2980.0
-    assert float(saved.stop_atr) == 40.0
+    params = session.executed_statements[0].compile().params
+    assert params["pair"] == "ETHEUR"
+    assert params["activated_at"] == datetime(2026, 4, 2, 10, 0, 0, tzinfo=UTC)
+    assert float(params["trailing_price"]) == 2980.0
+    assert float(params["stop_atr"]) == 40.0
 
 
-def test_save_closed_position_raises_on_db_error(monkeypatch):
-    """Test that save_closed_position re-raises on database error."""
+def test_record_position_closed_raises_on_db_error(monkeypatch):
+    """Test that record_position_closed re-raises on database error."""
     patch_get_session_error(monkeypatch)
 
     with pytest.raises(Exception, match="DB error"):
-        save_closed_position("XBTEUR", _make_closed_position_data())
+        record_position_closed("XBTEUR", _make_closed_position_data())
+
+
+def test_record_position_closed_warns_when_insert_is_a_noop(monkeypatch, caplog):
+    """rowcount == 0 (idempotent no-op) must still warn and delete trailing_state."""
+    session = FakeSession()
+    session.execute_rowcount = 0
+    patch_get_session(monkeypatch, session)
+
+    with caplog.at_level("WARNING"):
+        record_position_closed("XBTEUR", _make_closed_position_data())
+
+    assert any("XBTEUR" in r.message and "order_12345" in r.message for r in caplog.records)
+    assert session.query_obj.delete_calls == 1
+
+
+def test_record_position_closed_no_warning_when_insert_succeeds(monkeypatch, caplog):
+    """rowcount == 1 is the normal case -- no warning noise."""
+    session = FakeSession()
+    session.execute_rowcount = 1
+    patch_get_session(monkeypatch, session)
+
+    with caplog.at_level("WARNING"):
+        record_position_closed("XBTEUR", _make_closed_position_data())
+
+    assert caplog.records == []
 
 
 def test_load_closed_positions_with_records(monkeypatch, closed_position_record):
@@ -736,10 +829,11 @@ def test_load_trailing_state(monkeypatch, pair, records, expect_found):
     assert session.query_obj.filter_calls == 1
 
 
-def test_load_trailing_state_returns_none_on_error(monkeypatch):
-    """Test that load_trailing_state returns None on database error."""
+def test_load_trailing_state_raises_on_db_error(monkeypatch):
+    """A DB error must propagate, not be conflated with 'no stored position'."""
     patch_get_session_error(monkeypatch)
-    assert load_trailing_state("XBTEUR") is None
+    with pytest.raises(Exception, match="DB error"):
+        load_trailing_state("XBTEUR")
 
 
 def test_delete_trailing_state_success(monkeypatch, trailing_state_record):

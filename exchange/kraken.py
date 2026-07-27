@@ -2,6 +2,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import krakenex
@@ -91,21 +92,45 @@ def get_balance() -> dict[str, str] | None:
     return _safe_call("balance", lambda: api.query_private("Balance", timeout=KRAKEN_HTTP_TIMEOUT))
 
 
-def get_order_closing_price(order_id: str) -> float | None:
-    """Return the average execution price of a filled order, or None if still pending/open."""
+@dataclass(frozen=True)
+class OrderState:
+    status: str
+    avg_price: float | None
+    vol_exec: float
+
+
+def get_order_state(order_id: str) -> OrderState | None:
+    """Status + average fill price + executed volume of an order, or None on
+    API error / unknown order. Callers must branch on ``status`` explicitly —
+    never infer completion from a bare price (a canceled order reports 0.0)."""
     result = _safe_call(
-        "order closing price",
+        "order state",
         lambda: api.query_private("QueryOrders", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
     )
     if result is None:
         return None
-    order = result.get(order_id, {})
-    if order.get("status") in (None, "pending", "open"):
+    order = result.get(order_id)
+    if not order or not order.get("status"):
         return None
     price = order.get("price")
-    if price is None:
-        return None
-    return float(price)
+    return OrderState(
+        status=order["status"],
+        avg_price=float(price) if price is not None else None,
+        vol_exec=float(order.get("vol_exec") or 0.0),
+    )
+
+
+def cancel_order(order_id: str) -> bool:
+    """Cancel an open order. False on API error, and also on a successful response
+    that doesn't confirm a definitive cancellation: ``count: 0`` (nothing was
+    canceled) or ``pending: true`` (queued, the order can still fill). Both mean
+    'still live' — re-placing on either would leave two live exits for one
+    position."""
+    result = _safe_call(
+        "cancel order",
+        lambda: api.query_private("CancelOrder", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
+    )
+    return bool(result) and int(result.get("count", 0)) > 0 and not result.get("pending")
 
 
 def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] | None:
@@ -117,8 +142,18 @@ def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] |
         return None
     prices = {}
     for pair, info in pairs_dict.items():
-        prices[pair] = float(result[info["primary"]]["c"][0])
-    return prices
+        primary = info.get("primary")
+        ticker = result.get(primary) if primary else None
+        if not ticker:
+            logging.warning(f"Ticker response missing {pair} (primary={primary!r}); skipping this pair this session.")
+            continue
+        try:
+            prices[pair] = float(ticker["c"][0])
+        except (KeyError, IndexError, TypeError, ValueError) as e:
+            # Parsing runs outside _safe_call and outside the scheduler's per-pair
+            # guard, so an unhandled raise here would kill pricing for every pair.
+            logging.warning(f"Ticker entry for {pair} is malformed ({e}); skipping this pair this session.")
+    return prices or None
 
 
 def _format_amount(value: float, decimals: int | None) -> str:

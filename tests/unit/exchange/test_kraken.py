@@ -1,3 +1,5 @@
+import pytest
+
 import core.config as config
 import exchange.kraken as kraken
 
@@ -128,28 +130,154 @@ def test_get_balance_returns_none_on_exception(monkeypatch) -> None:
 
 
 # ============================================================================
-# Closing price
+# Order state
 # ============================================================================
 
 
-def test_get_order_closing_price_returns_price_when_filled(monkeypatch) -> None:
+def test_get_order_state_returns_status_price_and_vol_exec_when_closed(monkeypatch) -> None:
     monkeypatch.setattr(
         kraken.api,
         "query_private",
-        lambda *args, **kwargs: {"error": [], "result": {"ORD001": {"status": "closed", "price": "69099.7"}}},
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"ORD001": {"status": "closed", "price": "69099.7", "vol_exec": "0.01000000"}},
+        },
     )
 
-    assert kraken.get_order_closing_price("ORD001") == 69099.7
+    result = kraken.get_order_state("ORD001")
+
+    assert result == kraken.OrderState(status="closed", avg_price=69099.7, vol_exec=0.01)
 
 
-def test_get_order_closing_price_returns_none_when_not_filled(monkeypatch) -> None:
+def test_get_order_state_returns_status_when_open_regardless_of_price(monkeypatch) -> None:
     monkeypatch.setattr(
         kraken.api,
         "query_private",
-        lambda *args, **kwargs: {"error": [], "result": {"ORD001": {"status": "open", "price": "0"}}},
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"ORD001": {"status": "open", "price": "0.00000", "vol_exec": "0.00000000"}},
+        },
     )
 
-    assert kraken.get_order_closing_price("ORD001") is None
+    result = kraken.get_order_state("ORD001")
+
+    # The function reports whatever Kraken sends; it never infers completion
+    # from the price itself. Callers must branch on status, not price.
+    assert result == kraken.OrderState(status="open", avg_price=0.0, vol_exec=0.0)
+
+
+def test_get_order_state_reports_zero_price_when_canceled(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"ORD001": {"status": "canceled", "price": "0.00000", "vol_exec": "0.00000000"}},
+        },
+    )
+
+    result = kraken.get_order_state("ORD001")
+
+    # This is exactly the case that used to be mistaken for a filled order at
+    # price 0.0 by the old price-only helper: a canceled order with no fill.
+    assert result == kraken.OrderState(status="canceled", avg_price=0.0, vol_exec=0.0)
+
+
+def test_get_order_state_returns_none_when_order_id_missing_from_result(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {}},
+    )
+
+    assert kraken.get_order_state("ORD001") is None
+
+
+def test_get_order_state_returns_none_on_api_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": ["EGeneral:Invalid"], "result": {}},
+    )
+
+    assert kraken.get_order_state("ORD001") is None
+
+
+def test_get_order_state_passes_http_timeout(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None, timeout=None):
+        captured["timeout"] = timeout
+        return {"error": [], "result": {"ORD001": {"status": "closed", "price": "1.0", "vol_exec": "1.0"}}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    kraken.get_order_state("ORD001")
+
+    assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
+
+
+# ============================================================================
+# Cancel order
+# ============================================================================
+
+
+def test_cancel_order_returns_true_on_success(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"count": 1}},
+    )
+
+    assert kraken.cancel_order("ORD001") is True
+
+
+def test_cancel_order_returns_false_on_api_error(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": ["EOrder:Unknown order"], "result": {}},
+    )
+
+    assert kraken.cancel_order("ORD001") is False
+
+
+def test_cancel_order_returns_false_when_nothing_was_canceled(monkeypatch) -> None:
+    # count: 0 means Kraken accepted the request but canceled nothing (e.g. the
+    # order already reached a terminal state) — must not be read as "canceled".
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"count": 0}},
+    )
+
+    assert kraken.cancel_order("ORD001") is False
+
+
+def test_cancel_order_returns_false_when_cancellation_is_pending(monkeypatch) -> None:
+    # pending: true means cancellation is queued but not yet definitive — the
+    # order can still fill, so the caller must not treat this as a dead order.
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"count": 1, "pending": True}},
+    )
+
+    assert kraken.cancel_order("ORD001") is False
+
+
+def test_cancel_order_passes_http_timeout(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None, timeout=None):
+        captured["timeout"] = timeout
+        return {"error": [], "result": {"count": 1}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    kraken.cancel_order("ORD001")
+
+    assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
 
 
 # ============================================================================
@@ -181,6 +309,83 @@ def test_get_last_prices_returns_none_on_api_error(monkeypatch) -> None:
     )
 
     result = kraken.get_last_prices({"XBTEUR": {"primary": "XXBTZEUR"}})
+
+    assert result is None
+
+
+def test_get_last_prices_skips_pair_missing_from_ticker_response(monkeypatch) -> None:
+    # ETHEUR's primary ("XETHZEUR") is absent from the Ticker result (e.g. Kraken
+    # dropped it, or the pair metadata is stale) — this must not take down XBTEUR.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"XXBTZEUR": {"c": ["82500.0"]}},
+        },
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}, "ETHEUR": {"primary": "XETHZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
+
+    assert result == {"XBTEUR": 82500.0}
+
+
+def test_get_last_prices_returns_none_when_no_pair_resolves(monkeypatch) -> None:
+    # Ticker responded successfully but with none of the requested pairs.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {"error": [], "result": {}},
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}, "ETHEUR": {"primary": "XETHZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
+
+    assert result is None
+
+
+@pytest.mark.parametrize(
+    "bad_entry",
+    [
+        {},  # present but no "c" key
+        {"c": []},  # "c" present but empty
+        {"c": ["not-a-number"]},  # unparseable price
+        {"c": [None]},
+    ],
+    ids=["missing_c", "empty_c", "non_numeric", "null_price"],
+)
+def test_get_last_prices_skips_pair_with_malformed_entry(monkeypatch, bad_entry) -> None:
+    # A pair PRESENT in the response but with an unusable payload must be skipped
+    # like an absent one. Parsing happens after _safe_call returned and outside the
+    # scheduler's per-pair try, so an unhandled raise here kills pricing for every
+    # pair and fails the whole session.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"XXBTZEUR": {"c": ["82500.0"]}, "XETHZEUR": bad_entry},
+        },
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}, "ETHEUR": {"primary": "XETHZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
+
+    assert result == {"XBTEUR": 82500.0}
+
+
+def test_get_last_prices_returns_none_when_every_entry_is_malformed(monkeypatch) -> None:
+    # Nothing resolved -> None, so call_with_retry retries and the session reports
+    # "could not fetch prices" rather than proceeding with an empty price map.
+    monkeypatch.setattr(
+        kraken,
+        "_query_public_limited",
+        lambda *args, **kwargs: {"error": [], "result": {"XXBTZEUR": {"c": []}}},
+    )
+    pairs_dict = {"XBTEUR": {"primary": "XXBTZEUR"}}
+
+    result = kraken.get_last_prices(pairs_dict)
 
     assert result is None
 

@@ -133,6 +133,40 @@ To edit the dashboard: make changes in the UI, use `Share → Export → Save to
 | `GET /health` | `200 OK` when the service is up |
 | `GET /status` | JSON: `paused`, `last_run_at` |
 
+### Closing order repricing
+
+When the trailing stop triggers an exit, `close_position` places a LIMIT order
+at the current market price. If the market moves away before it fills, the
+next session tick cancels the stale order and re-places a new LIMIT order at
+the then-current market price — chasing the fill on the normal session
+cadence (`SLEEPING_INTERVAL`, no separate timeout). This only changes *how*
+the already-decided exit gets executed, never *when* to exit: the trailing
+stop remains the only exit mechanism.
+
+Each reprice sends a Telegram notification (`🔁 Repriced closing SELL/BUY
+order to <price>€`), so a position sitting in "closing" for several sessions
+without repricing is a sign the price has stopped moving relative to the
+order, not that the bot is stuck. A partially filled order is left alone
+(canceling mid-fill would fragment the position); repricing resumes once the
+partial fill either completes or the order is canceled/expired. If the
+cancel succeeds but the new order placement fails, the position keeps the
+old, now-canceled order id — the next tick's `is_closing_complete` check
+detects the dead order, clears the closing fields, and resumes normal
+position management, and Telegram receives a `Failed to re-place closing
+order after cancel.` alert.
+
+### Per-pair failure isolation
+
+An exception while processing one pair (price/ATR fetch, parameter recalibration,
+position open/manage/close) no longer aborts the whole session. The failing pair is
+skipped for that tick — logged as `Error processing <PAIR>; skipping this pair for the
+rest of the session.` in `sessions.log_messages` — while the remaining pairs are still
+processed normally. If any pair failed, the session's status is `failed` (visible in
+the Grafana Sessions row) even though other pairs traded fine that tick; it still
+counts toward the consecutive-failure streak, so a pair that fails every session will
+eventually trigger the Telegram alert (`SESSION_FAILURE_ALERT_THRESHOLD`), whose message
+includes `pair errors: <PAIR1>, <PAIR2>` as the last error once the streak fires.
+
 ### Trading tools — backtest & optimizer
 
 The V1 CLI analysis scripts are now HTTP endpoints on the `botc` service: they run
