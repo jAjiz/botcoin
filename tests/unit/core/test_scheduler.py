@@ -286,6 +286,29 @@ def test_trading_session_completes_when_no_pair_fails(monkeypatch):
     assert set(final["pair_data"].keys()) == {"AAAEUR", "BBBEUR"}
 
 
+def test_trading_session_isolates_pair_when_load_trailing_state_raises(monkeypatch):
+    """A DB error surfaced by load_trailing_state (raise, not None) must fail only
+    the pair that hit it -- the per-pair try/except still processes the rest --
+    and the session status must name the failing pair, feeding the
+    consecutive-failure Telegram alert."""
+    _setup_two_pair_loop(monkeypatch, failing_pair="__none__")
+
+    def _load_trailing_state(pair):
+        if pair == "AAAEUR":
+            raise Exception("DB error")
+        return None
+
+    monkeypatch.setattr(db, "load_trailing_state", _load_trailing_state)
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
+    final = calls[0]
+    assert final["status"] == "failed"
+    assert "AAAEUR" not in final["pair_data"]
+    assert final["pair_data"]["BBBEUR"]["volatility_level"] == "MV"
+
+
 def _reset_alert_state() -> None:
     runtime._shared_data["consecutive_session_failures"] = 0
     runtime._shared_data["session_failure_alerted"] = False

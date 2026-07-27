@@ -669,7 +669,10 @@ def load_trailing_state(pair: str) -> dict[str, Any] | None:
         pair: Trading pair.
 
     Returns:
-        Dictionary containing trailing state details, or None if not found.
+        Dictionary containing trailing state details, or None only if no row
+        exists for this pair. A DB error is NOT reported as None -- it is
+        logged and re-raised, since the caller treats None as "no stored
+        position" and would otherwise open a fresh position over a live one.
     """
     try:
         with get_session() as session:
@@ -681,7 +684,7 @@ def load_trailing_state(pair: str) -> dict[str, Any] | None:
             return state_entry
     except Exception as e:
         logger.error(f"Error loading trailing state for {pair}: {e}")
-        return None
+        raise
 
 
 def delete_trailing_state(pair: str) -> bool:

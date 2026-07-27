@@ -804,10 +804,14 @@ def test_load_trailing_state(monkeypatch, pair, records, expect_found):
     assert session.query_obj.filter_calls == 1
 
 
-def test_load_trailing_state_returns_none_on_error(monkeypatch):
-    """Test that load_trailing_state returns None on database error."""
+def test_load_trailing_state_raises_on_db_error(monkeypatch):
+    """A DB error must propagate, not be conflated with 'no stored position'.
+    The caller (scheduler) treats None as 'no position' and would open a fresh
+    one, orphaning a live closing_order_id on Kraken if a transient DB error
+    were swallowed here."""
     patch_get_session_error(monkeypatch)
-    assert load_trailing_state("XBTEUR") is None
+    with pytest.raises(Exception, match="DB error"):
+        load_trailing_state("XBTEUR")
 
 
 def test_delete_trailing_state_success(monkeypatch, trailing_state_record):
