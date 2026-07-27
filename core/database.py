@@ -605,9 +605,15 @@ def record_position_closed(pair: str, position_data: dict[str, Any]) -> None:
         "pnl_percent": _to_decimal_required(position_data["pnl_percent"]),
     }
     with get_session() as session:
-        session.execute(
+        result = session.execute(
             pg_insert(ClosedPosition).values(values).on_conflict_do_nothing(index_elements=["closing_order_id"])
         )
+        if result.rowcount == 0:
+            logger.warning(
+                f"Closed position insert for {pair} was a no-op (closing_order_id "
+                f"{position_data['closing_order_id']} already exists). Expected on a "
+                "crash-retry; investigate if this is unexpected."
+            )
         session.query(TrailingState).filter(TrailingState.pair == pair).delete()
     logger.debug(f"Recorded closed position for {pair} order {position_data['closing_order_id']}")
 

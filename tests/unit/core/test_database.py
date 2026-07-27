@@ -627,6 +627,34 @@ def test_record_position_closed_raises_on_db_error(monkeypatch):
         record_position_closed("XBTEUR", _make_closed_position_data())
 
 
+def test_record_position_closed_warns_when_insert_is_a_noop(monkeypatch, caplog):
+    """rowcount == 0 means the ON CONFLICT DO NOTHING suppressed the insert --
+    a genuine closing_order_id collision would otherwise be invisible. Must
+    still delete the trailing_state row in the same transaction (no early
+    return)."""
+    session = FakeSession()
+    session.execute_rowcount = 0
+    patch_get_session(monkeypatch, session)
+
+    with caplog.at_level("WARNING"):
+        record_position_closed("XBTEUR", _make_closed_position_data())
+
+    assert any("XBTEUR" in r.message and "order_12345" in r.message for r in caplog.records)
+    assert session.query_obj.delete_calls == 1
+
+
+def test_record_position_closed_no_warning_when_insert_succeeds(monkeypatch, caplog):
+    """rowcount == 1 is the normal case -- no warning noise."""
+    session = FakeSession()
+    session.execute_rowcount = 1
+    patch_get_session(monkeypatch, session)
+
+    with caplog.at_level("WARNING"):
+        record_position_closed("XBTEUR", _make_closed_position_data())
+
+    assert caplog.records == []
+
+
 def test_load_closed_positions_with_records(monkeypatch, closed_position_record):
     """Test loading all closed positions returns correct dicts."""
     session = FakeSession(records=[closed_position_record])
