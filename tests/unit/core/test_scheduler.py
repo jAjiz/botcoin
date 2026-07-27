@@ -287,10 +287,7 @@ def test_trading_session_completes_when_no_pair_fails(monkeypatch):
 
 
 def test_trading_session_isolates_pair_when_load_trailing_state_raises(monkeypatch):
-    """A DB error surfaced by load_trailing_state (raise, not None) must fail only
-    the pair that hit it -- the per-pair try/except still processes the rest --
-    and the session status must name the failing pair, feeding the
-    consecutive-failure Telegram alert."""
+    """A load_trailing_state error must fail only the pair that hit it."""
     _setup_two_pair_loop(monkeypatch, failing_pair="__none__")
 
     def _load_trailing_state(pair):

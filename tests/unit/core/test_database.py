@@ -628,10 +628,7 @@ def test_record_position_closed_raises_on_db_error(monkeypatch):
 
 
 def test_record_position_closed_warns_when_insert_is_a_noop(monkeypatch, caplog):
-    """rowcount == 0 means the ON CONFLICT DO NOTHING suppressed the insert --
-    a genuine closing_order_id collision would otherwise be invisible. Must
-    still delete the trailing_state row in the same transaction (no early
-    return)."""
+    """rowcount == 0 (idempotent no-op) must still warn and delete trailing_state."""
     session = FakeSession()
     session.execute_rowcount = 0
     patch_get_session(monkeypatch, session)
@@ -833,10 +830,7 @@ def test_load_trailing_state(monkeypatch, pair, records, expect_found):
 
 
 def test_load_trailing_state_raises_on_db_error(monkeypatch):
-    """A DB error must propagate, not be conflated with 'no stored position'.
-    The caller (scheduler) treats None as 'no position' and would open a fresh
-    one, orphaning a live closing_order_id on Kraken if a transient DB error
-    were swallowed here."""
+    """A DB error must propagate, not be conflated with 'no stored position'."""
     patch_get_session_error(monkeypatch)
     with pytest.raises(Exception, match="DB error"):
         load_trailing_state("XBTEUR")

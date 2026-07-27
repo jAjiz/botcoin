@@ -676,9 +676,7 @@ def load_trailing_state(pair: str) -> dict[str, Any] | None:
 
     Returns:
         Dictionary containing trailing state details, or None only if no row
-        exists for this pair. A DB error is NOT reported as None -- it is
-        logged and re-raised, since the caller treats None as "no stored
-        position" and would otherwise open a fresh position over a live one.
+        exists. DB errors are logged and re-raised, not returned as None.
     """
     try:
         with get_session() as session:
