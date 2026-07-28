@@ -57,7 +57,13 @@ def upgrade() -> None:
         else "CREATE ROLE grafana_reader LOGIN PASSWORD %L"
     )
     role_stmt = conn.execute(text("SELECT format(:verb, :pw)").bindparams(verb=verb, pw=password)).scalar()
-    conn.execute(text(role_stmt))
+    # no_parameters is required, not cosmetic: the finished statement carries the
+    # password as literal text, and psycopg only skips its own client-side
+    # placeholder scan when it is handed no parameters at all. Without this,
+    # SQLAlchemy passes an empty (but non-None) params container, psycopg parses
+    # the text, and a `%` in the password raises before the statement is ever
+    # sent ("only '%s', '%b', '%t' are allowed as placeholders").
+    conn.execution_options(no_parameters=True).execute(text(role_stmt))
 
     op.execute(f'GRANT CONNECT ON DATABASE "{database}" TO grafana_reader;')
     op.execute("GRANT USAGE ON SCHEMA public TO grafana_reader;")
