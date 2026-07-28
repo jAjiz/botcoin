@@ -95,6 +95,20 @@ review so they are not mistaken for work Phase 1 closed):
   rate-limited — but the `OrderState` could be passed down instead. Folded into
   Phase 3 rather than kept as a standalone item.
 
+### Strategy Review Follow-ups
+
+Actionable, non-strategy items from the 2026-07-06 trading-strategy review:
+record the real Kraken fee of each fill alongside `pnl_percent` and add a live
+"portfolio vs holding the target allocation" benchmark (Grafana); make
+`fee_pct` non-optional in the optimizer/backtest (default to the real fee tier,
+add a slippage term); capture Kraken's `ordermin` in the pairs map and enforce
+it when sizing/closing positions. The review's strategy-level recommendations
+(relative-ATR volatility classification, bounding the K_ACT↔K_STOP loss floor)
+stay in the spec as discussion items — they change trading behaviour and need
+an explicit decision first.
+
+- Spec: [`specs/trading-strategy-review.md`](specs/trading-strategy-review.md)
+
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates

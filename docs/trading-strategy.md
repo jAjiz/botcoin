@@ -45,7 +45,7 @@ BUY:  activation_price = entry_price − activation_distance
 activation_distance = K_STOP × ATR + MIN_MARGIN × entry_price
 ```
 
-`K_ACT` and `MIN_MARGIN` can each be configured per side (`PAIR_SELL_K_ACT`, `PAIR_BUY_K_ACT`, etc.) or as a shared value for both sides.
+`K_ACT` and `MIN_MARGIN` are single values per pair, shared by both sides (the earlier per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` variants were removed). `K_STOP` remains per-side because it is derived from pivot analysis, which naturally differs between uptrends and downtrends.
 
 ### Trailing-stop mechanics
 
@@ -124,3 +124,13 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 - A position with `closing_order_id` set is **not open** — `tick_position` must not run on it (the scheduler enforces this via step ordering).
 - `closing_price` is an estimate until fill confirmation: `close_position` writes it first at order placement, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. `is_closing_complete` performs the final write with the real fill price and computes `pnl_percent`.
 - `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Every caller that does not handle `None` will silently corrupt state.
+
+---
+
+## Strategy review (2026-07-06)
+
+A full review of the strategy's economic logic, edge assumptions and structural
+risks — including the real semantics of `pnl_percent` (timing alpha, not
+economic profit), the MIN_MARGIN profit-floor guarantee, the K_ACT↔K_STOP loss
+floor, fee sensitivity, and the absolute-ATR classification bias — lives in
+[`specs/trading-strategy-review.md`](specs/trading-strategy-review.md).
