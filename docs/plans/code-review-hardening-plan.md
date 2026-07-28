@@ -363,11 +363,11 @@ position → reprice called, tick not called; completed close → reprice not ca
 
 ## Task 7 — B3/B4/B5: optimizer job store off the event loop
 
-- [ ] `api/routes/optimizer.py::submit`: `job_id = await asyncio.to_thread(JOB_STORE.try_start, DTORequest(**req.model_dump()))`.
-- [ ] Retain supervise tasks: module-level `_supervise_tasks: set[asyncio.Task]`; `task = asyncio.create_task(...)`, `_supervise_tasks.add(task)`, `task.add_done_callback(_supervise_tasks.discard)`; drop the `# noqa: RUF006`.
-- [ ] `JobStore.supervise`: run `self._finalize(...)` via `await asyncio.to_thread(...)` (both branches).
-- [ ] `JobStore.try_start`: wrap `_EXECUTOR.submit` in `try/except` → `db.fail_optimizer_job(job_id, f"failed to submit: {exc}")`, re-raise.
-- [ ] Tests: submit-failure marks the row failed; route awaits `to_thread` (seam-mock); task set drains after completion.
+- [x] `api/routes/optimizer.py::submit`: `job_id = await asyncio.to_thread(JOB_STORE.try_start, DTORequest(**req.model_dump()))`.
+- [x] Retain supervise tasks: module-level `_supervise_tasks: set[asyncio.Task]`; `task = asyncio.create_task(...)`, `_supervise_tasks.add(task)`, `task.add_done_callback(_supervise_tasks.discard)`; drop the `# noqa: RUF006`.
+- [x] `JobStore.supervise`: run `self._finalize(...)` via `await asyncio.to_thread(...)` (both branches).
+- [x] `JobStore.try_start`: wrap `_EXECUTOR.submit` in `try/except` → `db.fail_optimizer_job(job_id, f"failed to submit: {exc}")`, re-raise.
+- [x] Tests: submit-failure marks the row failed; route awaits `to_thread` (seam-mock); task set drains after completion.
 
 **Commit:** `fix(optimizer): keep blocking job-store work off the event loop`
 

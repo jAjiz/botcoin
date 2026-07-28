@@ -57,7 +57,14 @@ class JobStore:
                 f"🔧 [Optimizer] Started for {req.pair} (job={job_id})\nMode: {req.mode}",
                 to_telegram=True,
             )
-            future = _EXECUTOR.submit(_worker_func, req_dict, calibration)
+            try:
+                future = _EXECUTOR.submit(_worker_func, req_dict, calibration)
+            except Exception as exc:
+                # The row is already inserted `running`; if submit itself blows up
+                # (e.g. a broken pool) it must not be left stuck until restart
+                # cleanup reconciles it (B5).
+                db.fail_optimizer_job(job_id, f"failed to submit: {exc}")
+                raise
             self._active[job_id] = _ActiveJob(job_id=job_id, future=future, pair=req.pair)
             return job_id
 
@@ -70,9 +77,9 @@ class JobStore:
             return
         try:
             result = await asyncio.wrap_future(active.future)
-            self._finalize(active, "ok", result)
+            await asyncio.to_thread(self._finalize, active, "ok", result)
         except Exception as exc:
-            self._finalize(active, "error", str(exc))
+            await asyncio.to_thread(self._finalize, active, "error", str(exc))
 
     def _finalize(self, active: _ActiveJob, kind: str, payload) -> None:
         try:
