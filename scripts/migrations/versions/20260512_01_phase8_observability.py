@@ -46,13 +46,10 @@ def upgrade() -> None:
     conn = op.get_bind()
     database = conn.engine.url.database
 
-    # No client-side string interpolation of the password: the CREATE/ALTER ROLE
-    # verb is chosen client-side (a bare identifier, not user input), but the
-    # statement itself is built server-side by Postgres' own format(%L, ...),
-    # which quotes the password safely — a password containing a literal `'` or
-    # `$$` cannot break out of the statement. This replaces a DO $$...$$ block
-    # that interpolated the password directly into the SQL text, which a `$$` in
-    # the password could have broken out of.
+    # The verb (CREATE/ALTER ROLE ... PASSWORD %L) is a bare identifier chosen
+    # client-side, not user input; the password itself is quoted server-side by
+    # Postgres' own format(%L, ...) via a bound parameter, so a literal `'` or
+    # `$$` in it cannot break out of the statement.
     role_exists = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'")).scalar() is not None
     verb = (
         "ALTER ROLE grafana_reader WITH LOGIN PASSWORD %L"

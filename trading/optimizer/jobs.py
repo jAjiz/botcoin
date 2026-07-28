@@ -62,7 +62,7 @@ class JobStore:
             except Exception as exc:
                 # The row is already inserted `running`; if submit itself blows up
                 # (e.g. a broken pool) it must not be left stuck until restart
-                # cleanup reconciles it (B5).
+                # cleanup reconciles it.
                 db.fail_optimizer_job(job_id, f"failed to submit: {exc}")
                 raise
             self._active[job_id] = _ActiveJob(job_id=job_id, future=future, pair=req.pair)

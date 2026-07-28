@@ -5,6 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import core.validation as validation_module
 import services.telegram.app as tg_module
 import services.telegram.polling as polling
 
@@ -430,49 +431,49 @@ async def test_config_command_rejects_unauthorized(monkeypatch):
 
 
 # ============================================================================
-# Startup config validation (C5)
+# Startup config validation
 # ============================================================================
+# _validate_telegram_config delegates its rules to
+# core.validation.validate_telegram_params (shared with validate_common_params),
+# so these patch validation_module's bindings, not tg_module's.
 
 
 def test_validate_telegram_config_skips_checks_when_disabled(monkeypatch) -> None:
-    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", False)
-    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", None)
-    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", None)
-    tg_module._validate_telegram_config()  # must not raise
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", False)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", None)
+    tg_module._validate_telegram_config()
 
 
 def test_validate_telegram_config_passes_with_valid_settings(monkeypatch) -> None:
-    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
-    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", "abc:123")
-    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
-    tg_module._validate_telegram_config()  # must not raise
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
+    tg_module._validate_telegram_config()
 
 
 def test_validate_telegram_config_raises_when_token_missing(monkeypatch) -> None:
-    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
-    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", None)
-    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
     with pytest.raises(RuntimeError, match="TELEGRAM_TOKEN"):
         tg_module._validate_telegram_config()
 
 
 @pytest.mark.parametrize("bad_user_id", [None, "", "abc", "-5", "0"])
 def test_validate_telegram_config_raises_when_user_id_invalid(monkeypatch, bad_user_id) -> None:
-    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
-    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", "abc:123")
-    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", bad_user_id)
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", bad_user_id)
     with pytest.raises(RuntimeError, match="TELEGRAM_USER_ID"):
         tg_module._validate_telegram_config()
 
 
 def test_validate_telegram_config_raises_when_poll_interval_negative(monkeypatch) -> None:
-    """validate_common_params also rejects a negative TELEGRAM_POLL_INTERVAL —
-    this service must mirror that rule too, since it's the one that actually
-    passes the value to Application.updater.start_polling()."""
-    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
-    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", "abc:123")
-    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
-    monkeypatch.setattr(tg_module, "TELEGRAM_POLL_INTERVAL", -1)
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(validation_module, "TELEGRAM_POLL_INTERVAL", -1)
     with pytest.raises(RuntimeError, match="TELEGRAM_POLL_INTERVAL"):
         tg_module._validate_telegram_config()
 
@@ -482,8 +483,9 @@ async def test_lifespan_raises_before_building_app_when_config_invalid(monkeypat
     """The validation gate must run before build_tg_app() — an invalid config
     must fail loudly at startup, not surface later as e.g. int(None)."""
     monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
-    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", None)
-    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
 
     def _boom():
         raise AssertionError("build_tg_app must not run when config is invalid")

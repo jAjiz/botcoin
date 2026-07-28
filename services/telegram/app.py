@@ -7,15 +7,9 @@ from typing import Literal
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from core.config import (
-    ALLOW_NO_AUTH,
-    API_SECRET_TOKEN,
-    TELEGRAM_ENABLED,
-    TELEGRAM_POLL_INTERVAL,
-    TELEGRAM_TOKEN,
-    TELEGRAM_USER_ID,
-)
+from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, TELEGRAM_ENABLED, TELEGRAM_POLL_INTERVAL, TELEGRAM_USER_ID
 from core.logging import configure_logging
+from core.validation import validate_telegram_params
 from services.telegram.polling import build_tg_app
 from telegram.ext import Application
 
@@ -32,20 +26,11 @@ class NotifyRequest(BaseModel):
 
 
 def _validate_telegram_config() -> None:
-    """Mirrors the Telegram checks in core.validation.validate_common_params,
-    which only ever run in the botc process — this service must not rely on
-    that having caught a misconfiguration. Without this, a missing/invalid
-    TELEGRAM_TOKEN or TELEGRAM_USER_ID would surface later and less clearly
-    (e.g. int(None) deep inside build_tg_app/send_message)."""
-    if not TELEGRAM_ENABLED:
-        return
-    errors = []
-    if not TELEGRAM_TOKEN:
-        errors.append("TELEGRAM_TOKEN is missing")
-    if not TELEGRAM_USER_ID or not TELEGRAM_USER_ID.isdigit() or int(TELEGRAM_USER_ID) <= 0:
-        errors.append("TELEGRAM_USER_ID must be a positive integer")
-    if TELEGRAM_POLL_INTERVAL < 0:
-        errors.append("TELEGRAM_POLL_INTERVAL must be a non-negative integer")
+    """core.validation.validate_common_params only ever runs in the botc
+    process — this service must not rely on that having caught a
+    misconfiguration of its own env."""
+    errors: list[str] = []
+    validate_telegram_params(errors)
     if errors:
         raise RuntimeError("Telegram service configuration invalid: " + "; ".join(errors))
 

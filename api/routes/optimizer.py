@@ -17,7 +17,7 @@ router = APIRouter(prefix="/optimizer", tags=["optimizer"])
 
 _HIDDEN_ROW_KEYS = ("id", "pair", "mode", "split_method")
 
-# Retains supervise() tasks so they can't be garbage-collected mid-flight (B4):
+# Retains supervise() tasks so they can't be garbage-collected mid-flight:
 # asyncio only holds a weak reference to a task created via create_task.
 _supervise_tasks: set[asyncio.Task] = set()
 
