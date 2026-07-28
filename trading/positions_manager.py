@@ -3,7 +3,7 @@ from typing import Any
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import now_utc, round_price
-from exchange.kraken import get_order_closing_price, place_limit_order
+from exchange.kraken import cancel_order, get_order_state, place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
 
@@ -48,10 +48,8 @@ def calculate_activation_distance(pair: str, side: str, reference_price: float, 
     k_act = TRADING_PARAMS[pair]["K_ACT"]
 
     if k_act is not None:
-        # Use K_ACT if defined, K_ACT = 0 means immediate activation
-        return float(k_act) * atr_val
+        return float(k_act) * atr_val  # K_ACT = 0 means immediate activation
 
-    # Use K_STOP and MIN_MARGIN if K_ACT is not defined
     k_stop = get_k_stop(pair, side, atr_val)
     min_margin = float(TRADING_PARAMS[pair]["MIN_MARGIN"])
     return k_stop * atr_val + min_margin * reference_price
@@ -131,15 +129,28 @@ def is_open(pos: dict[str, Any] | None) -> bool:
 
 
 def is_closing_complete(pos: dict[str, Any] | None) -> bool:
-    """Check if the closing order is filled. If so, update pos with the real fill price and PnL."""
+    """Check if the closing order is filled. If so, update pos with the real fill
+    price and PnL. Any terminal outcome that cannot be finalized instead clears the
+    closing fields: leaving them set would freeze the position forever, since the
+    status can never change again and ``is_open`` stays False."""
     if not pos:
         return False
     closing_order = pos.get("closing_order_id")
     if not closing_order:
         return False
-    closing_price = get_order_closing_price(closing_order)
-    if closing_price is None:
+    state = get_order_state(closing_order)
+    if state is None or state.status in ("pending", "open"):
         return False
+    if state.status != "closed" or not state.avg_price or state.avg_price <= 0:
+        logging.warning(
+            f"Closing order {closing_order} ended as {state.status} with no usable fill price; "
+            "resuming position management.",
+            to_telegram=True,
+        )
+        for key in ("closing_order_id", "closing_price", "closing_requested_at"):
+            pos.pop(key, None)
+        return False
+    closing_price = state.avg_price
     entry = pos["entry_price"]
     side = pos["side"]
     pnl = (closing_price - entry) / entry * 100 if side == "sell" else (entry - closing_price) / entry * 100
@@ -211,6 +222,43 @@ def tick_position(
             logging.info(
                 f"📈 Update {side.upper()} position: new trailing price {round_price(pair, pos['trailing_price']):,}€ | stop {round_price(pair, pos['stop_price']):,}€"
             )
+
+
+def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> None:
+    """Chase the fill of a still-open closing order: cancel it and re-place the
+    limit at the current market price."""
+    order_id = pos.get("closing_order_id")
+    if not order_id:
+        return
+    state = get_order_state(order_id)
+    if state is None or state.status != "open":
+        # A pending order isn't on the book yet, so cancel/replace is pure churn;
+        # terminal states are is_closing_complete's job.
+        return
+    if state.vol_exec > 0:
+        return  # executing at its price; don't fragment the fill
+    current_price = last_prices[pair]
+    if round_price(pair, current_price) == round_price(pair, pos.get("closing_price")):
+        return  # identical limit; re-placing would only lose queue priority
+    if not cancel_order(order_id):
+        return  # likely filled in the race window; next tick resolves it
+    side = pos["side"]
+    volume = float(pos.get("volume", 0.0))
+    new_order = place_limit_order(pair, side, current_price, volume)
+    if not new_order:
+        logging.error("Failed to re-place closing order after cancel.", to_telegram=True)
+        return
+    pos.update(
+        {
+            "closing_price": current_price,
+            "closing_order_id": new_order,
+            "closing_requested_at": now_utc(),
+        }
+    )
+    logging.info(
+        f"[{pair}] 🔁 Repriced closing {side.upper()} order to {round_price(pair, current_price):,}€",
+        to_telegram=True,
+    )
 
 
 def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> None:

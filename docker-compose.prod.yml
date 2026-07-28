@@ -29,3 +29,13 @@ services:
         limits:
           cpus: "0.5"
           memory: 256M
+
+  grafana:
+    profiles: ["dashboards"]
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M

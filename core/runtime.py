@@ -9,17 +9,12 @@ _shared_data = {
     "last_balance": {},
     "pairs_data": {},  # {pair: {"last_price": float, "atr": float}}
     "last_run_at": None,
-    "pair_calibration": {},  # {pair: {
-    #   "up_events": list[dict],
-    #   "down_events": list[dict],
-    #   "atr_p20": float, "atr_p50": float, "atr_p80": float, "atr_p95": float,
-    #   "row_count": int,        # rows in the df used to compute these
-    #   "computed_at": datetime,
-    # }}
-    # Phase 11 extends this entry with "window_days" + "window_sweep".
+    "pair_calibration": {},  # {pair: entry}; see update_pair_calibration for the shape
     "config_dirty": set(),  # pairs whose config changed since the last scheduler check
     "consecutive_session_failures": 0,
     "session_failure_alerted": False,
+    "consecutive_session_overruns": 0,
+    "session_overrun_alerted": False,
 }
 
 
@@ -91,7 +86,7 @@ def update_pair_calibration(
 def get_pair_calibration(pair: str) -> dict[str, Any] | None:
     with _lock:
         entry = _shared_data["pair_calibration"].get(pair)
-        return None if entry is None else dict(entry)  # shallow copy, matches existing pattern
+        return None if entry is None else dict(entry)
 
 
 def mark_config_dirty(pair: str) -> None:
@@ -127,4 +122,28 @@ def register_session_success() -> bool:
         was_alerted = _shared_data["session_failure_alerted"]
         _shared_data["consecutive_session_failures"] = 0
         _shared_data["session_failure_alerted"] = False
+        return was_alerted
+
+
+def register_session_overrun(threshold: int) -> int | None:
+    """Count a session that overran the scheduling interval (long enough to skip
+    the next tick). Return the streak count once (the tick it first reaches
+    ``threshold``), else None, so the caller alerts only once. Independent of the
+    failure streak."""
+    with _lock:
+        _shared_data["consecutive_session_overruns"] += 1
+        count = _shared_data["consecutive_session_overruns"]
+        if count >= threshold and not _shared_data["session_overrun_alerted"]:
+            _shared_data["session_overrun_alerted"] = True
+            return count
+        return None
+
+
+def register_session_ontime() -> bool:
+    """Reset the overrun streak (a session that finished within the interval).
+    Return True if we had alerted, so the caller sends one recovery message."""
+    with _lock:
+        was_alerted = _shared_data["session_overrun_alerted"]
+        _shared_data["consecutive_session_overruns"] = 0
+        _shared_data["session_overrun_alerted"] = False
         return was_alerted

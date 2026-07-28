@@ -21,21 +21,16 @@ BoTCoin is a production-grade backend service built using modern Python engineer
 graph BT
     subgraph stack["Docker Compose stack"]
         direction TB
-        botc["botc :8000\nFastAPI + APScheduler\nTrading engine + REST API"]
+        botc["botc :8000\nFastAPI + APScheduler\nTrading engine"]
         telegram["telegram :8001\nFastAPI + PTB polling\nTelegram interface"]
         postgres[("postgres :5432\nPostgreSQL 16\nAll state + history")]
         grafana["grafana :3000\nGrafana 11\nObservability dashboard"]
     end
 
-    kraken["Kraken API"]
-    tg["Telegram"]
-
-    kraken -->|"OHLC · prices · orders"| botc
-    botc -->|"SQLAlchemy r/w"| postgres
-    grafana -->|"grafana_reader r/o"| postgres
-    telegram -->|"GET /market · POST /control"| botc
-    tg <-->|"PTB long-poll"| telegram
-    botc -->|"POST /notify"| telegram
+    botc -->|"SQLAlchemy"| postgres
+    grafana -->|"grafana_reader"| postgres
+    telegram -->|"commands"| botc
+    botc -->|"notifications"| telegram
 ```
 
 Two application containers share one network. `botc` is the sole writer to every table. `telegram` is a thin API client — it reads and controls the bot exclusively through `botc`'s REST endpoints. Grafana reads the same database through a least-privilege `grafana_reader` role created by an Alembic migration.

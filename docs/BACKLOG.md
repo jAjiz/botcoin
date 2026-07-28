@@ -40,6 +40,61 @@ effect on the next session without a restart. Shipped with a cleanup collapsing
 
 ## 📋 Planned
 
+### Code-Review Hardening
+
+Fixes for the defects found in the 2026-07-06 full code review. Phase 1 removes
+three failure modes that leave the bot permanently inoperative without an alert
+(pivot-detection infinite loop on flat candles; canceled/expired closing orders
+corrupting state; non-transactional close persistence wedging the session loop)
+and adds the agreed reprice-to-market behaviour for closing orders that never
+fill. Phase 2 hardens process boundaries and secret scoping (event-loop blocking
+in the optimizer routes, per-service env allowlists, migration quoting). Phase 3
+collects the smaller refactors (engine dedup + `itertuples`, database module
+split, doc-drift corrections). No strategy changes — the trailing stop remains
+the only exit.
+
+- Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
+- Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
+
+**Phase 1 follow-ups shipped** (`fix/phase1-followups`): `load_trailing_state`
+now raises on DB errors instead of returning `None`;
+`record_position_closed` logs a warning when the idempotent insert is a no-op
+(`rowcount == 0`); `pytest-timeout` is installed and the A1 regression test
+(`test_detect_pivots_terminates_on_flat_data`) is bounded at 10s.
+
+**Phase 1 review follow-ups shipped**: `is_closing_complete` now clears the
+closing fields on *every* terminal outcome it cannot finalize, not just
+`canceled`/`expired` — the old "unexpected status" branch left them set, which
+froze the position forever (the status can never change again, `reprice` declines
+a non-`open` order, and `is_open` stays `False`) while alerting Telegram every
+tick. A pair skipped for a missing price or ATR now counts as a failed pair, so
+a frozen trailing stop can no longer hide behind a `completed` session.
+`reprice_closing_order` only touches an `open` order (a `pending` one is not on
+the book, so cancel/replace is churn). A5's persistence moved out of
+`positions_manager` into a single `_persist_pair_state` call in the scheduler's
+per-pair `finally`, which is strictly stronger than the original end-of-body
+save: an order placed just before an exception used to be swallowed by the
+per-pair `except` and never written. `trading/` no longer imports
+`core.database`.
+
+**Deliberately deferred out of Phase 1** (recorded by the final whole-branch
+review so they are not mistaken for work Phase 1 closed):
+
+- **`cl_ord_id`-based idempotent order placement.** The real fix for two related
+  exposures: (a) a fill landing in the ~1s window between `get_order_state` and
+  `cancel_order` in `reprice_closing_order` means the replacement is sized at the
+  full volume and over-sells by the executed amount; (b) an `AddOrder` whose
+  response is lost cannot be recognised on retry. A5 shipped the narrower
+  state-persistence mitigation only.
+- **`closing_requested_at` now means "last reprice", not "close requested".** No
+  consumer computes a staleness timeout from it today, but an operator can no
+  longer see how long an exit has been chasing. Needs a separate
+  `closing_first_requested_at` if a staleness timeout is ever wanted.
+- **`get_order_state` is called twice per closing tick** (scheduler + inside
+  `reprice_closing_order`). Harmless today — private Kraken calls are not
+  rate-limited — but the `OrderState` could be passed down instead. Folded into
+  Phase 3 rather than kept as a standalone item.
+
 ### Strategy Review Follow-ups
 
 Actionable, non-strategy items from the 2026-07-06 trading-strategy review:

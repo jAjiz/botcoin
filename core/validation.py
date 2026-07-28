@@ -24,13 +24,11 @@ from exchange.kraken import build_pairs_map
 
 
 def validate_common_params(errors: list[str]) -> None:
-    # Kraken API credentials
     if not KRAKEN_API_KEY:
         errors.append("KRAKEN_API_KEY is missing")
     if not KRAKEN_API_SECRET:
         errors.append("KRAKEN_API_SECRET is missing")
 
-    # Telegram Bot configuration (only when Telegram is enabled)
     if TELEGRAM_ENABLED:
         if not TELEGRAM_TOKEN:
             errors.append("TELEGRAM_TOKEN is missing")
@@ -39,14 +37,12 @@ def validate_common_params(errors: list[str]) -> None:
         if TELEGRAM_POLL_INTERVAL < 0:
             errors.append("TELEGRAM_POLL_INTERVAL must be a non-negative integer")
 
-    # API auth: refuse to start with no token unless explicit opt-in.
     if not API_SECRET_TOKEN and not ALLOW_NO_AUTH:
         errors.append(
             "API_SECRET_TOKEN is missing. Set it, or set ALLOW_NO_AUTH=true "
             "to explicitly run the API without authentication."
         )
 
-    # Bot settings
     if SLEEPING_INTERVAL <= 0:
         errors.append("SLEEPING_INTERVAL must be a positive integer")
     if PARAM_SESSIONS <= 0:
@@ -58,7 +54,6 @@ def validate_common_params(errors: list[str]) -> None:
     if ATR_DESV_LIMIT < 0:
         errors.append("ATR_DESV_LIMIT must be a non-negative float")
 
-    # Pairs configuration
     if not PAIRS or not any(PAIRS.keys()):
         errors.append("PAIRS is missing or empty")
 
@@ -181,14 +176,12 @@ def log_configuration_summary() -> None:
 def validate_config() -> bool:
     errors = []
 
-    # Common validations
     validate_common_params(errors)
 
     if not errors:
         build_and_validate_pairs(errors)
         validate_pair_params(errors)
 
-    # Log all errors at the end
     if errors:
         logging.error("=" * 60)
         logging.error("❌ CONFIGURATION VALIDATION FAILED")
@@ -198,6 +191,5 @@ def validate_config() -> bool:
         logging.error("=" * 60)
         return False
 
-    # If all validations passed, log configuration summary
     log_configuration_summary()
     return True

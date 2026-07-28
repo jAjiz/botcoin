@@ -15,12 +15,10 @@ def now_utc() -> datetime:
 def _round_to_pair_decimals(pair: str, value: float | None, key: str, fallback: int) -> float | None:
     """Round ``value`` to a pair's Kraken precision (``key`` in ``config.PAIRS``).
 
-    The rounding helpers below format the result with a thousands separator at the
-    call site (``f"{round_price(pair, x):,}€"``). Rounding happens only at
-    boundaries (these, plus order submission in ``exchange/kraken.py``); internal
-    state and the DB stay full precision. Reads ``config.PAIRS``, so it only works
-    in a process that loaded the pair metadata (the trading engine), not the
-    Telegram process — that one relies on the API pre-rounding."""
+    Rounding happens only at boundaries (here and order submission in
+    ``exchange/kraken.py``); internal state and the DB stay full precision. Reads
+    ``config.PAIRS``, so it only works in a process that loaded the pair metadata —
+    not the Telegram process, which relies on the API pre-rounding."""
     if value is None:
         return None
     decimals = config.PAIRS.get(pair, {}).get(key)

@@ -122,7 +122,7 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 
 - The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch. Adding one is a strategy change and must be discussed explicitly.
 - A position with `closing_order_id` set is **not open** — `tick_position` must not run on it (the scheduler enforces this via step ordering).
-- `closing_price` is written twice: first at order placement (approximate) and then at fill confirmation (real). PnL is computed only from the second write.
+- `closing_price` is an estimate until fill confirmation: `close_position` writes it first at order placement, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. `is_closing_complete` performs the final write with the real fill price and computes `pnl_percent`.
 - `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Every caller that does not handle `None` will silently corrupt state.
 
 ---

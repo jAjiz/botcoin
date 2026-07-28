@@ -58,7 +58,7 @@ Set automatically by Docker Compose via `docker-compose.yml`. Override only when
 | `ATR_DESV_LIMIT` | no | `0.2` | Fractional ATR drift that triggers position recalibration (0.2 = 20 %) |
 | `MIN_VALUE` | no | `10` | Minimum operation value in EUR; positions below this threshold are skipped |
 | `MINIMUM_CHANGE_PCT` | no | `0.02` | Minimum relative price change for a local extremum to count as a pivot (2 %) |
-| `SESSION_FAILURE_ALERT_THRESHOLD` | no | `3` | Consecutive failed sessions before one Telegram alert is sent; a single recovery message follows the next successful session. Floors at 1. |
+| `SESSION_FAILURE_ALERT_THRESHOLD` | no | `3` | Consecutive failed sessions before one Telegram alert is sent; a single recovery message follows the next successful session. Also gates the session-overrun early-warning: the same count of consecutive sessions whose duration reached `SLEEPING_INTERVAL` (long enough to skip the next tick) triggers one "host may be resource-starved" alert, with a recovery message on the next on-time session. Floors at 1. |
 
 ---
 

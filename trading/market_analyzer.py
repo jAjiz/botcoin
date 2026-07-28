@@ -129,11 +129,12 @@ def detect_pivots(df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[in
                 del pivots[i + 1]
             else:
                 del pivots[i]
-        elif curr_price != next_price:
-            if abs(curr_price - next_price) / curr_price < MINIMUM_CHANGE_PCT:
-                del pivots[i + 1]
-            else:
-                i += 1
+        elif curr_price == next_price or abs(curr_price - next_price) / curr_price < MINIMUM_CHANGE_PCT:
+            # Equal prices must delete too, not fall through: with no branch left
+            # to advance `i`, flat candles looped here forever.
+            del pivots[i + 1]
+        else:
+            i += 1
 
     return pivots
 
@@ -153,13 +154,13 @@ def calculate_noise_between_pivots(
         return {}
 
     if start_type == "min" and end_type == "max":
-        # Uptrend: calculate drawdown and find maximum K (drawdown / ATR)
+        # Uptrend: max K = drawdown / ATR
         rolling_max = segment["high"].expanding().max()
         drawdowns = rolling_max - segment["low"]
         segment_copy = segment.copy()
         segment_copy["k_values"] = drawdowns / segment_copy["atr"].replace(0, np.nan)
     elif start_type == "max" and end_type == "min":
-        # Downtrend: calculate bounce and find maximum K (bounce / ATR)
+        # Downtrend: max K = bounce / ATR
         rolling_min = segment["low"].expanding().min()
         bounces = segment["high"] - rolling_min
         segment_copy = segment.copy()
@@ -167,7 +168,6 @@ def calculate_noise_between_pivots(
     else:
         return {}
 
-    # Now find max K for each volatility level
     volatility_levels = {}
     vol_ranges = {
         "LL": (0, atr_percentiles["p20"]),
@@ -212,7 +212,6 @@ def analyze_structural_noise(
 ) -> tuple[list[dict], list[dict]]:
     pivots = detect_pivots(df, order)
 
-    # Calculate ATR percentiles
     atr_percentiles = {
         "p20": np.percentile(df["atr"], 20),
         "p50": np.percentile(df["atr"], 50),
@@ -220,7 +219,6 @@ def analyze_structural_noise(
         "p95": np.percentile(df["atr"], 95),
     }
 
-    # Calculate noise (events) for each pivot pair
     uptrend_events = []
     downtrend_events = []
     for i in range(1, len(pivots)):
