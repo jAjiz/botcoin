@@ -37,7 +37,7 @@ MIN_VALUE = float(os.getenv("MIN_VALUE", 10))
 
 TRADING_ENABLED = os.getenv("TRADING_ENABLED", "true").lower() == "true"
 
-PAIRS = {pair: {} for pair in os.getenv("PAIRS", "").split(",")}
+PAIRS = {p: {} for p in (s.strip() for s in os.getenv("PAIRS", "").split(",")) if p}
 
 FIAT_CODE = "ZEUR"
 VOLATILITY_LEVELS = ("LL", "LV", "MV", "HV", "HH")

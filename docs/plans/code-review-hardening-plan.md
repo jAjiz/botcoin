@@ -373,8 +373,8 @@ position → reprice called, tick not called; completed close → reprice not ca
 
 ## Task 8 — B6/B7: config parsing + reproducible AUTO
 
-- [ ] `core/config.py`: `PAIRS = {p: {} for p in (s.strip() for s in os.getenv("PAIRS", "").split(",")) if p}` + test (`"XBTEUR, ETHEUR"` → both keys clean).
-- [ ] `trading/optimizer/search.py::run_auto_optimize`: `seeds = random.Random(req.seed).sample(range(1, 9999), auto.n_seeds)` + determinism test (same seed → same `seeds_used`).
+- [x] `core/config.py`: `PAIRS = {p: {} for p in (s.strip() for s in os.getenv("PAIRS", "").split(",")) if p}` + test (`"XBTEUR, ETHEUR"` → both keys clean).
+- [x] `trading/optimizer/search.py::run_auto_optimize`: `seeds = random.Random(req.seed).sample(range(1, 9999), auto.n_seeds)` + determinism test (same seed → same `seeds_used`).
 
 **Commit:** `fix(config,optimizer): strip PAIRS entries; seed AUTO seed selection`
 
