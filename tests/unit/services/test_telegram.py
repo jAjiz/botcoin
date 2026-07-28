@@ -427,3 +427,57 @@ async def test_config_command_rejects_unauthorized(monkeypatch):
     update = MockUpdate(user_id=999)
     await polling.config_command(update, MockContext())
     assert update.message.replies == []
+
+
+# ============================================================================
+# Startup config validation (C5)
+# ============================================================================
+
+
+def test_validate_telegram_config_skips_checks_when_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", False)
+    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", None)
+    tg_module._validate_telegram_config()  # must not raise
+
+
+def test_validate_telegram_config_passes_with_valid_settings(monkeypatch) -> None:
+    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
+    tg_module._validate_telegram_config()  # must not raise
+
+
+def test_validate_telegram_config_raises_when_token_missing(monkeypatch) -> None:
+    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
+    with pytest.raises(RuntimeError, match="TELEGRAM_TOKEN"):
+        tg_module._validate_telegram_config()
+
+
+@pytest.mark.parametrize("bad_user_id", [None, "", "abc", "-5", "0"])
+def test_validate_telegram_config_raises_when_user_id_invalid(monkeypatch, bad_user_id) -> None:
+    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", bad_user_id)
+    with pytest.raises(RuntimeError, match="TELEGRAM_USER_ID"):
+        tg_module._validate_telegram_config()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_raises_before_building_app_when_config_invalid(monkeypatch) -> None:
+    """The validation gate must run before build_tg_app() — an invalid config
+    must fail loudly at startup, not surface later as e.g. int(None)."""
+    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
+
+    def _boom():
+        raise AssertionError("build_tg_app must not run when config is invalid")
+
+    monkeypatch.setattr(tg_module, "build_tg_app", _boom)
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_TOKEN"):
+        async with tg_module.lifespan(FastAPI()):
+            pass

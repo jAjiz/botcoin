@@ -395,15 +395,15 @@ position → reprice called, tick not called; completed close → reprice not ca
 
 ## Task 11 — C5: telegram service validates its own config
 
-- [ ] Failing test in `tests/unit/services/test_telegram.py`: lifespan raises `RuntimeError` when `TELEGRAM_ENABLED` and token/user-id missing or non-numeric.
-- [ ] Implement a small `_validate_telegram_config()` called at the top of the lifespan (mirror the rules of `validate_common_params`).
+- [x] Failing test in `tests/unit/services/test_telegram.py`: lifespan raises `RuntimeError` when `TELEGRAM_ENABLED` and token/user-id missing or non-numeric.
+- [x] Implement a small `_validate_telegram_config()` called at the top of the lifespan (mirror the rules of `validate_common_params`).
 
 **Commit:** `fix(telegram): validate own config at startup`
 
 ### Phase 2 acceptance checklist
 
-- [ ] Unit suite + ruff green; compose smoke test per Task 9.
-- [ ] `docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"` — empty.
+- [x] Unit suite + ruff green; compose smoke test per Task 9.
+- [x] `docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"` — empty (verified against a disposable local stack; see Task 9).
 
 ---
 
