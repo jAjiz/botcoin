@@ -388,8 +388,8 @@ position → reprice called, tick not called; completed close → reprice not ca
 
 ## Task 10 — C2: remove the DO-block interpolation in the Grafana-role migration
 
-- [ ] `scripts/migrations/versions/20260512_01_phase8_observability.py`: check `pg_roles` client-side (`SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'`); build the statement server-side with `SELECT format('CREATE ROLE grafana_reader LOGIN PASSWORD %L', :pw)` (or `ALTER ROLE ... WITH LOGIN PASSWORD %L`) using a bound parameter, then execute the returned string. Remove `_escape_literal` if now unused. No schema change; already-applied databases unaffected.
-- [ ] Verify on a fresh DB: `docker compose -f docker-compose.test.yml run --rm test alembic upgrade head` with a password containing `'` and `$$`.
+- [x] `scripts/migrations/versions/20260512_01_phase8_observability.py`: check `pg_roles` client-side (`SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'`); build the statement server-side with `SELECT format('CREATE ROLE grafana_reader LOGIN PASSWORD %L', :pw)` (or `ALTER ROLE ... WITH LOGIN PASSWORD %L`) using a bound parameter, then execute the returned string. Remove `_escape_literal` if now unused. No schema change; already-applied databases unaffected.
+- [x] Verify on a fresh DB: `docker compose -f docker-compose.test.yml run --rm test alembic upgrade head` with a password containing `'` and `$$` (confirmed migration succeeds and `grafana_reader` can log in with that exact password; `tests/integration/test_grafana_role.py` also passes against it).
 
 **Commit:** `sec(migrations): parameterize grafana_reader password quoting`
 

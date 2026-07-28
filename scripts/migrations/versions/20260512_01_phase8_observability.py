@@ -11,6 +11,7 @@ import os
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "20260512_01"
@@ -19,10 +20,6 @@ branch_labels = None
 depends_on = None
 
 GRAFANA_TABLES = ("ohlc_data", "closed_positions", "trailing_state", "bot_control", "sessions")
-
-
-def _escape_literal(value: str) -> str:
-    return value.replace("'", "''")
 
 
 def upgrade() -> None:
@@ -46,22 +43,24 @@ def upgrade() -> None:
             "GRAFANA_DB_PASSWORD must be set in the environment for migration 20260512_01. "
             "Set it in .env (it is also consumed by the grafana service)."
         )
-    password_sql = _escape_literal(password)
-    database = op.get_bind().engine.url.database
+    conn = op.get_bind()
+    database = conn.engine.url.database
 
-    op.execute(
-        f"""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader') THEN
-                CREATE ROLE grafana_reader LOGIN PASSWORD '{password_sql}';
-            ELSE
-                ALTER ROLE grafana_reader WITH LOGIN PASSWORD '{password_sql}';
-            END IF;
-        END
-        $$;
-        """
+    # No client-side string interpolation of the password: the CREATE/ALTER ROLE
+    # verb is chosen client-side (a bare identifier, not user input), but the
+    # statement itself is built server-side by Postgres' own format(%L, ...),
+    # which quotes the password safely — a password containing a literal `'` or
+    # `$$` cannot break out of the statement. This replaces a DO $$...$$ block
+    # that interpolated the password directly into the SQL text, which a `$$` in
+    # the password could have broken out of.
+    role_exists = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'")).scalar() is not None
+    verb = (
+        "ALTER ROLE grafana_reader WITH LOGIN PASSWORD %L"
+        if role_exists
+        else "CREATE ROLE grafana_reader LOGIN PASSWORD %L"
     )
+    role_stmt = conn.execute(text("SELECT format(:verb, :pw)").bindparams(verb=verb, pw=password)).scalar()
+    conn.execute(text(role_stmt))
 
     op.execute(f'GRANT CONNECT ON DATABASE "{database}" TO grafana_reader;')
     op.execute("GRANT USAGE ON SCHEMA public TO grafana_reader;")
