@@ -43,7 +43,14 @@ gives it an explicit `environment:` allowlist (`API_BASE_URL`,
 of `env_file: .env`. It also overrides `entrypoint: []` so it never runs
 `alembic upgrade head` — migrations are `botc`'s job alone. A compromise of the
 internet-polling Telegram bot therefore cannot expose `KRAKEN_API_KEY`,
-`KRAKEN_API_SECRET`, or `POSTGRES_PASSWORD`. Verify with:
+`KRAKEN_API_SECRET`, or `POSTGRES_PASSWORD`.
+
+Each entry in that allowlist is written `${VAR:-<default>}`, repeating the
+default `core/config.py` would have applied. This is required, not decorative:
+unlike `env_file`, an unset `${VAR}` is passed into the container as an *empty
+string*, which is present enough to shadow the `os.getenv` default — an omitted
+`TELEGRAM_ENABLED` would read as "disabled" and start the service with no bot.
+Verify with:
 
 ```bash
 docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"   # empty
