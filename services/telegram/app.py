@@ -44,6 +44,8 @@ def _validate_telegram_config() -> None:
         errors.append("TELEGRAM_TOKEN is missing")
     if not TELEGRAM_USER_ID or not TELEGRAM_USER_ID.isdigit() or int(TELEGRAM_USER_ID) <= 0:
         errors.append("TELEGRAM_USER_ID must be a positive integer")
+    if TELEGRAM_POLL_INTERVAL < 0:
+        errors.append("TELEGRAM_POLL_INTERVAL must be a non-negative integer")
     if errors:
         raise RuntimeError("Telegram service configuration invalid: " + "; ".join(errors))
 

@@ -465,6 +465,18 @@ def test_validate_telegram_config_raises_when_user_id_invalid(monkeypatch, bad_u
         tg_module._validate_telegram_config()
 
 
+def test_validate_telegram_config_raises_when_poll_interval_negative(monkeypatch) -> None:
+    """validate_common_params also rejects a negative TELEGRAM_POLL_INTERVAL —
+    this service must mirror that rule too, since it's the one that actually
+    passes the value to Application.updater.start_polling()."""
+    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(tg_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(tg_module, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(tg_module, "TELEGRAM_POLL_INTERVAL", -1)
+    with pytest.raises(RuntimeError, match="TELEGRAM_POLL_INTERVAL"):
+        tg_module._validate_telegram_config()
+
+
 @pytest.mark.asyncio
 async def test_lifespan_raises_before_building_app_when_config_invalid(monkeypatch) -> None:
     """The validation gate must run before build_tg_app() — an invalid config
