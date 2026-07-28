@@ -32,6 +32,23 @@ Watch logs: `docker compose logs -f botc`
 
 Stop: `docker compose down`
 
+### Secret scoping between services
+
+The `telegram` container talks to `botc` only over HTTP
+(`services/telegram/client.py` → `http://botc:8000`) and never touches the
+database directly, so it does not receive `.env` wholesale: `docker-compose.yml`
+gives it an explicit `environment:` allowlist (`API_BASE_URL`,
+`TELEGRAM_ENABLED`, `TELEGRAM_TOKEN`, `TELEGRAM_USER_ID`,
+`TELEGRAM_POLL_INTERVAL`, `API_SECRET_TOKEN`, `ALLOW_NO_AUTH`, `PAIRS`) instead
+of `env_file: .env`. It also overrides `entrypoint: []` so it never runs
+`alembic upgrade head` — migrations are `botc`'s job alone. A compromise of the
+internet-polling Telegram bot therefore cannot expose `KRAKEN_API_KEY`,
+`KRAKEN_API_SECRET`, or `POSTGRES_PASSWORD`. Verify with:
+
+```bash
+docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"   # empty
+```
+
 ### Running tests
 
 ```bash

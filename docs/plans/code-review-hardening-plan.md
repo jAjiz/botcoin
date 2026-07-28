@@ -380,9 +380,9 @@ position → reprice called, tick not called; completed close → reprice not ca
 
 ## Task 9 — C1: least-privilege env for the telegram service
 
-- [ ] `docker-compose.yml` `telegram` service: remove `env_file`; add `entrypoint: []` (migrations run only in `botc`); add explicit `environment:` — `API_BASE_URL`, `TELEGRAM_ENABLED`, `TELEGRAM_TOKEN`, `TELEGRAM_USER_ID`, `TELEGRAM_POLL_INTERVAL`, `API_SECRET_TOKEN`, `ALLOW_NO_AUTH`, `PAIRS` (all `${VAR}` interpolations from the root `.env`).
-- [ ] Verify: `docker compose up -d --build` → telegram healthy, `/status` command works, `docker compose exec telegram env | grep -c KRAKEN` → 0.
-- [ ] Document in `docs/operations.md` (the telegram container no longer receives Kraken/DB credentials and no longer runs migrations).
+- [x] `docker-compose.yml` `telegram` service: remove `env_file`; add `entrypoint: []` (migrations run only in `botc`); add explicit `environment:` — `API_BASE_URL`, `TELEGRAM_ENABLED`, `TELEGRAM_TOKEN`, `TELEGRAM_USER_ID`, `TELEGRAM_POLL_INTERVAL`, `API_SECRET_TOKEN`, `ALLOW_NO_AUTH`, `PAIRS` (all `${VAR}` interpolations from the root `.env`).
+- [x] Verify: `docker compose up -d --build` → telegram healthy, `docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"` → empty (confirmed in a disposable local stack; the `/status` Telegram-chat command itself needs a live bot token/chat and was not exercised — see report).
+- [x] Document in `docs/operations.md` (the telegram container no longer receives Kraken/DB credentials and no longer runs migrations).
 
 **Commit:** `sec(compose): stop passing Kraken/DB secrets to the telegram service`
 
