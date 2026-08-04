@@ -14,7 +14,11 @@ KRAKEN_API_SECRET = os.getenv("KRAKEN_API_SECRET")
 TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "true").lower() == "true"
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_USER_ID = os.getenv("TELEGRAM_USER_ID")
-TELEGRAM_POLL_INTERVAL = int(os.getenv("TELEGRAM_POLL_INTERVAL", 0))
+# `or 0` rather than a getenv default: the telegram service receives this var
+# through an explicit docker-compose `environment:` allowlist, and compose passes
+# an unset ${VAR} through as an empty string — present, so the getenv default
+# never applies, and int("") would kill the process at import.
+TELEGRAM_POLL_INTERVAL = int(os.getenv("TELEGRAM_POLL_INTERVAL") or 0)
 
 POSTGRES_DB = os.getenv("POSTGRES_DB", "DBbotc")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "botc")
