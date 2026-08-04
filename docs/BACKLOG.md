@@ -22,7 +22,7 @@ top of that, edge-triggered Telegram alerting warns once after a configurable
 streak of consecutive failed sessions and once again on recovery — one message
 per episode, not per failed tick.
 
-- Spec: [`specs/2026-07-03-session-failure-alerts-design.md`](specs/2026-07-03-session-failure-alerts-design.md)
+- Spec: [`specs/session-failure-alerts-design.md`](specs/session-failure-alerts-design.md)
 - Plan: [`plans/session-failure-alerts-plan.md`](plans/session-failure-alerts-plan.md)
 
 ### Dynamic Pair Configuration
@@ -80,12 +80,9 @@ per-pair `except` and never written. `trading/` no longer imports
 **Deliberately deferred out of Phase 1** (recorded by the final whole-branch
 review so they are not mistaken for work Phase 1 closed):
 
-- **`cl_ord_id`-based idempotent order placement.** The real fix for two related
-  exposures: (a) a fill landing in the ~1s window between `get_order_state` and
-  `cancel_order` in `reprice_closing_order` means the replacement is sized at the
-  full volume and over-sells by the executed amount; (b) an `AddOrder` whose
-  response is lost cannot be recognised on retry. A5 shipped the narrower
-  state-persistence mitigation only.
+- **`cl_ord_id`-based idempotent order placement.** A5 shipped the narrower
+  state-persistence mitigation only. Promoted to its own card — see
+  [Idempotent Order Placement](#idempotent-order-placement) below.
 - **`closing_requested_at` now means "last reprice", not "close requested".** No
   consumer computes a staleness timeout from it today, but an operator can no
   longer see how long an exit has been chasing. Needs a separate
@@ -94,6 +91,45 @@ review so they are not mistaken for work Phase 1 closed):
   `reprice_closing_order`). Harmless today — private Kraken calls are not
   rate-limited — but the `OrderState` could be passed down instead. Folded into
   Phase 3 rather than kept as a standalone item.
+
+### Idempotent Order Placement
+
+Give every order a client-supplied id so the bot can ask Kraken "did *my* order
+land?" instead of inferring it from a response it may never have received.
+Today `place_limit_order` sends `AddOrder` with no client id and identifies the
+order only by the `txid` Kraken returns, which leaves two live exposures — both
+of them ways to end up holding a position size the bot does not know about:
+
+- **Partial fill inside the cancel/replace window.** `reprice_closing_order`
+  reads `state.vol_exec == 0`, then calls `cancel_order`, then re-places at
+  `pos["volume"]` — the *full* size. The two are separate round trips to Kraken
+  (private endpoints do not pass through the module's public 1/sec limiter, so
+  the gap is network latency, not a fixed second), and a fill landing in between
+  still leaves a cancellable remainder: the cancel succeeds and the replacement
+  over-sells by the executed amount. The existing guards do not cover this:
+  `vol_exec > 0` is checked before the window opens, and the
+  `cancel_order → False` branch only catches a fill that consumed the order
+  *entirely*.
+- **Lost `AddOrder` response.** `_safe_call` returns `None` on a timeout or a
+  dropped connection, so `place_limit_order` returns `None` and the caller
+  aborts — but the order may well be live at Kraken with its `txid` lost. The
+  next tick sees no `closing_order_id` and places a second exit for the same
+  position.
+
+Neither is a scheduler-resilience problem, so the Phase 1 work does not reach
+them: `_persist_pair_state` guarantees an id the bot *has* is never lost, while
+these are cases where the id was never obtained or the size behind it changed.
+The fix is a client order id generated before the call and used as the recovery
+key: on any uncertain outcome, query by that id rather than guessing.
+
+**Open questions to settle in the spec** (do not assume): which client-id
+mechanism the REST `AddOrder` accepts on this account tier and which of them
+`QueryOrders`/`OpenOrders` can filter by — Kraken has exposed both a numeric
+`userref` and a newer `cl_ord_id`, and the krakenex path used here has been
+verified for neither. Also whether the replacement should size from
+`vol - vol_exec` as a cheap partial mitigation independent of the id work.
+
+- Spec: _to be written_
 
 ### Strategy Review Follow-ups
 
