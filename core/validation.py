@@ -20,7 +20,6 @@ from core.config import (
     TELEGRAM_USER_ID,
     VOLATILITY_LEVELS,
 )
-from exchange.kraken import build_pairs_map
 
 
 def validate_telegram_params(errors: list[str]) -> None:
@@ -160,6 +159,10 @@ def validate_pair_params(errors: list[str]) -> None:
 
 
 def build_and_validate_pairs(errors: list[str]) -> None:
+    # Keep function-local: the telegram service imports this module, and
+    # exchange.kraken would cost it ~45 MB of RSS (pandas + numpy) it never uses.
+    from exchange.kraken import build_pairs_map
+
     try:
         build_pairs_map(PAIRS)
         if not any(PAIRS.values()):
