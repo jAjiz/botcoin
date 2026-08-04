@@ -17,6 +17,10 @@ router = APIRouter(prefix="/optimizer", tags=["optimizer"])
 
 _HIDDEN_ROW_KEYS = ("id", "pair", "mode", "split_method")
 
+# Retains supervise() tasks so they can't be garbage-collected mid-flight:
+# asyncio only holds a weak reference to a task created via create_task.
+_supervise_tasks: set[asyncio.Task] = set()
+
 
 def _row_to_response(row: dict) -> OptimizerJobStatusResponse:
     # pair/mode are echoed inside `request`; split_method is CONTINUE-only.
@@ -34,10 +38,14 @@ async def submit(req: OptimizerRequest) -> OptimizerJobAcceptedResponse:
     if req.mode in ("OPTIMIZE", "AUTO") and req.search_space is None:
         raise HTTPException(status_code=422, detail="search_space is required for OPTIMIZE and AUTO modes")
     try:
-        job_id = JOB_STORE.try_start(DTORequest(**req.model_dump()))
+        # try_start does a synchronous DB insert + a synchronous Telegram HTTP call
+        # (2s timeout) + a process-pool submit — keep all of that off the event loop.
+        job_id = await asyncio.to_thread(JOB_STORE.try_start, DTORequest(**req.model_dump()))
     except OptimizerBusyError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
-    asyncio.create_task(JOB_STORE.supervise(job_id))  # noqa: RUF006
+    task = asyncio.create_task(JOB_STORE.supervise(job_id))
+    _supervise_tasks.add(task)
+    task.add_done_callback(_supervise_tasks.discard)
     return OptimizerJobAcceptedResponse(job_id=job_id)
 
 

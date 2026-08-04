@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, TELEGRAM_ENABLED, TELEGRAM_POLL_INTERVAL, TELEGRAM_USER_ID
 from core.logging import configure_logging
+from core.validation import validate_telegram_params
 from services.telegram.polling import build_tg_app
 from telegram.ext import Application
 
@@ -24,9 +25,20 @@ class NotifyRequest(BaseModel):
     level: Literal["info", "warning", "error"] = "info"
 
 
+def _validate_telegram_config() -> None:
+    """core.validation.validate_common_params only ever runs in the botc
+    process — this service must not rely on that having caught a
+    misconfiguration of its own env."""
+    errors: list[str] = []
+    validate_telegram_params(errors)
+    if errors:
+        raise RuntimeError("Telegram service configuration invalid: " + "; ".join(errors))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global tg_app
+    _validate_telegram_config()
     if not TELEGRAM_ENABLED:
         yield
         return

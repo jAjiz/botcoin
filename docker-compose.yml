@@ -31,10 +31,24 @@ services:
       dockerfile: Dockerfile
     container_name: botc-telegram
     restart: unless-stopped
-    env_file:
-      - .env
+    # No env_file: the telegram container talks to botc only over HTTP and must
+    # never receive Kraken/DB credentials (C1). It also does not run migrations
+    # (entrypoint: [] below) — that's botc's job alone, avoiding a redundant
+    # concurrent `alembic upgrade head` at stack start.
+    entrypoint: []
+    # Each var carries the same default core/config.py would have applied: unlike
+    # env_file, an unset ${VAR} here is passed through as an *empty string*, which
+    # is present enough to shadow the getenv default (TELEGRAM_ENABLED="" reads as
+    # disabled; int("") would crash at import).
     environment:
       API_BASE_URL: http://botc:8000
+      TELEGRAM_ENABLED: ${TELEGRAM_ENABLED:-true}
+      TELEGRAM_TOKEN: ${TELEGRAM_TOKEN:-}
+      TELEGRAM_USER_ID: ${TELEGRAM_USER_ID:-}
+      TELEGRAM_POLL_INTERVAL: ${TELEGRAM_POLL_INTERVAL:-0}
+      API_SECRET_TOKEN: ${API_SECRET_TOKEN:-}
+      ALLOW_NO_AUTH: ${ALLOW_NO_AUTH:-false}
+      PAIRS: ${PAIRS:-}
     depends_on:
       botc:
         condition: service_healthy

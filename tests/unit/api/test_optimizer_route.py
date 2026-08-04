@@ -1,6 +1,8 @@
 """Unit tests for /optimizer/jobs routes."""
 
+import asyncio
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -8,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import core.database as db
 from api.routes import optimizer as optimizer_route
+from api.schemas import OptimizerRequest as OptimizerRequestSchema
 from trading.optimizer.jobs import OptimizerBusyError
 
 _PAIR = "XBTEUR"
@@ -91,6 +94,43 @@ def test_submit_returns_202_with_job_id(monkeypatch) -> None:
     body = resp.json()
     assert body["job_id"] == _JOB_ID
     assert body["status"] == "running"
+
+
+def test_submit_calls_try_start_via_to_thread(monkeypatch) -> None:
+    """try_start does a DB insert + a synchronous Telegram HTTP call; it must run
+    off the event loop via asyncio.to_thread, not be awaited/called directly."""
+    calls = []
+
+    async def _fake_to_thread(func, *args):
+        calls.append(func)
+        return func(*args)
+
+    monkeypatch.setattr(optimizer_route.asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
+    client = _make_client(monkeypatch)
+    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE})
+    assert resp.status_code == 202
+    assert calls == [optimizer_route.JOB_STORE.try_start]
+
+
+def test_submit_retains_supervise_task_and_discards_on_completion(monkeypatch) -> None:
+    """The supervise() task must be kept in a module-level set (not fire-and-forget
+    via a bare create_task) so it cannot be garbage-collected mid-flight, and must
+    be discarded once it completes."""
+    monkeypatch.setattr(optimizer_route, "PAIRS", _PAIRS)
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "supervise", AsyncMock(return_value=None))
+
+    async def _run():
+        req = OptimizerRequestSchema(pair=_PAIR, mode="OPTIMIZE", search_space=_SPACE)
+        await optimizer_route.submit(req)
+        assert len(optimizer_route._supervise_tasks) == 1
+        # yield control so the task runs to completion and its done-callback fires
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(optimizer_route._supervise_tasks) == 0
+
+    asyncio.run(_run())
 
 
 def test_submit_disabled_returns_503(monkeypatch) -> None:

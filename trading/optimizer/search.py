@@ -713,7 +713,10 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
     if req.search_space is None:
         raise ValueError("search_space is required for OPTIMIZE/AUTO")
     auto = req.auto_settings or AutoSettings()
-    seeds = random.sample(range(1, 9999), auto.n_seeds)
+    # Seeded from req.seed (not the unseeded global RNG) so the stored request
+    # fully determines the run — otherwise seeds_used, and the whole AUTO
+    # outcome, would differ between two identical requests.
+    seeds = random.Random(req.seed).sample(range(1, 9999), auto.n_seeds)
     # OHLC + calibration are loaded once, and each seed's studies stay alive across
     # escalation levels so extra trials *continue* the search instead of restarting it.
     ctx = _build_eval_context(req, calibration)

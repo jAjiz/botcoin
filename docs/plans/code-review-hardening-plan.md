@@ -363,47 +363,47 @@ position → reprice called, tick not called; completed close → reprice not ca
 
 ## Task 7 — B3/B4/B5: optimizer job store off the event loop
 
-- [ ] `api/routes/optimizer.py::submit`: `job_id = await asyncio.to_thread(JOB_STORE.try_start, DTORequest(**req.model_dump()))`.
-- [ ] Retain supervise tasks: module-level `_supervise_tasks: set[asyncio.Task]`; `task = asyncio.create_task(...)`, `_supervise_tasks.add(task)`, `task.add_done_callback(_supervise_tasks.discard)`; drop the `# noqa: RUF006`.
-- [ ] `JobStore.supervise`: run `self._finalize(...)` via `await asyncio.to_thread(...)` (both branches).
-- [ ] `JobStore.try_start`: wrap `_EXECUTOR.submit` in `try/except` → `db.fail_optimizer_job(job_id, f"failed to submit: {exc}")`, re-raise.
-- [ ] Tests: submit-failure marks the row failed; route awaits `to_thread` (seam-mock); task set drains after completion.
+- [x] `api/routes/optimizer.py::submit`: `job_id = await asyncio.to_thread(JOB_STORE.try_start, DTORequest(**req.model_dump()))`.
+- [x] Retain supervise tasks: module-level `_supervise_tasks: set[asyncio.Task]`; `task = asyncio.create_task(...)`, `_supervise_tasks.add(task)`, `task.add_done_callback(_supervise_tasks.discard)`; drop the `# noqa: RUF006`.
+- [x] `JobStore.supervise`: run `self._finalize(...)` via `await asyncio.to_thread(...)` (both branches).
+- [x] `JobStore.try_start`: wrap `_EXECUTOR.submit` in `try/except` → `db.fail_optimizer_job(job_id, f"failed to submit: {exc}")`, re-raise.
+- [x] Tests: submit-failure marks the row failed; route awaits `to_thread` (seam-mock); task set drains after completion.
 
 **Commit:** `fix(optimizer): keep blocking job-store work off the event loop`
 
 ## Task 8 — B6/B7: config parsing + reproducible AUTO
 
-- [ ] `core/config.py`: `PAIRS = {p: {} for p in (s.strip() for s in os.getenv("PAIRS", "").split(",")) if p}` + test (`"XBTEUR, ETHEUR"` → both keys clean).
-- [ ] `trading/optimizer/search.py::run_auto_optimize`: `seeds = random.Random(req.seed).sample(range(1, 9999), auto.n_seeds)` + determinism test (same seed → same `seeds_used`).
+- [x] `core/config.py`: `PAIRS = {p: {} for p in (s.strip() for s in os.getenv("PAIRS", "").split(",")) if p}` + test (`"XBTEUR, ETHEUR"` → both keys clean).
+- [x] `trading/optimizer/search.py::run_auto_optimize`: `seeds = random.Random(req.seed).sample(range(1, 9999), auto.n_seeds)` + determinism test (same seed → same `seeds_used`).
 
 **Commit:** `fix(config,optimizer): strip PAIRS entries; seed AUTO seed selection`
 
 ## Task 9 — C1: least-privilege env for the telegram service
 
-- [ ] `docker-compose.yml` `telegram` service: remove `env_file`; add `entrypoint: []` (migrations run only in `botc`); add explicit `environment:` — `API_BASE_URL`, `TELEGRAM_ENABLED`, `TELEGRAM_TOKEN`, `TELEGRAM_USER_ID`, `TELEGRAM_POLL_INTERVAL`, `API_SECRET_TOKEN`, `ALLOW_NO_AUTH`, `PAIRS` (all `${VAR}` interpolations from the root `.env`).
-- [ ] Verify: `docker compose up -d --build` → telegram healthy, `/status` command works, `docker compose exec telegram env | grep -c KRAKEN` → 0.
-- [ ] Document in `docs/operations.md` (the telegram container no longer receives Kraken/DB credentials and no longer runs migrations).
+- [x] `docker-compose.yml` `telegram` service: remove `env_file`; add `entrypoint: []` (migrations run only in `botc`); add explicit `environment:` — `API_BASE_URL`, `TELEGRAM_ENABLED`, `TELEGRAM_TOKEN`, `TELEGRAM_USER_ID`, `TELEGRAM_POLL_INTERVAL`, `API_SECRET_TOKEN`, `ALLOW_NO_AUTH`, `PAIRS` (all `${VAR}` interpolations from the root `.env`).
+- [x] Verify: `docker compose up -d --build` → telegram healthy, `docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"` → empty (confirmed in a disposable local stack; the `/status` Telegram-chat command itself needs a live bot token/chat and was not exercised — see report).
+- [x] Document in `docs/operations.md` (the telegram container no longer receives Kraken/DB credentials and no longer runs migrations).
 
 **Commit:** `sec(compose): stop passing Kraken/DB secrets to the telegram service`
 
 ## Task 10 — C2: remove the DO-block interpolation in the Grafana-role migration
 
-- [ ] `scripts/migrations/versions/20260512_01_phase8_observability.py`: check `pg_roles` client-side (`SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'`); build the statement server-side with `SELECT format('CREATE ROLE grafana_reader LOGIN PASSWORD %L', :pw)` (or `ALTER ROLE ... WITH LOGIN PASSWORD %L`) using a bound parameter, then execute the returned string. Remove `_escape_literal` if now unused. No schema change; already-applied databases unaffected.
-- [ ] Verify on a fresh DB: `docker compose -f docker-compose.test.yml run --rm test alembic upgrade head` with a password containing `'` and `$$`.
+- [x] `scripts/migrations/versions/20260512_01_phase8_observability.py`: check `pg_roles` client-side (`SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'`); build the statement server-side with `SELECT format('CREATE ROLE grafana_reader LOGIN PASSWORD %L', :pw)` (or `ALTER ROLE ... WITH LOGIN PASSWORD %L`) using a bound parameter, then execute the returned string. Remove `_escape_literal` if now unused. No schema change; already-applied databases unaffected.
+- [x] Verify on a fresh DB: `docker compose -f docker-compose.test.yml run --rm test alembic upgrade head` with a password containing `'` and `$$` (confirmed migration succeeds and `grafana_reader` can log in with that exact password; `tests/integration/test_grafana_role.py` also passes against it).
 
 **Commit:** `sec(migrations): parameterize grafana_reader password quoting`
 
 ## Task 11 — C5: telegram service validates its own config
 
-- [ ] Failing test in `tests/unit/services/test_telegram.py`: lifespan raises `RuntimeError` when `TELEGRAM_ENABLED` and token/user-id missing or non-numeric.
-- [ ] Implement a small `_validate_telegram_config()` called at the top of the lifespan (mirror the rules of `validate_common_params`).
+- [x] Failing test in `tests/unit/services/test_telegram.py`: lifespan raises `RuntimeError` when `TELEGRAM_ENABLED` and token/user-id missing or non-numeric.
+- [x] Implement a small `_validate_telegram_config()` called at the top of the lifespan (mirror the rules of `validate_common_params`).
 
 **Commit:** `fix(telegram): validate own config at startup`
 
 ### Phase 2 acceptance checklist
 
-- [ ] Unit suite + ruff green; compose smoke test per Task 9.
-- [ ] `docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"` — empty.
+- [x] Unit suite + ruff green; compose smoke test per Task 9.
+- [x] `docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"` — empty (verified against a disposable local stack; see Task 9).
 
 ---
 
