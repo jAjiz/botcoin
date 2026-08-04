@@ -18,9 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Deliberately hostile: `'` (SQL literal), `$$` (dollar quoting) and `%`
-      # (client-side placeholder marker) are the three characters that have each
-      # broken the grafana_reader role statement in migration 20260512_01. A
-      # plain password would let a regression through unnoticed.
+      # (pyformat placeholder marker) are what the grafana_reader role statement
+      # in migration 20260512_01 has to survive — it is the one statement built
+      # around a secret's literal text. A plain password would let a regression
+      # through unnoticed.
       GRAFANA_DB_PASSWORD: "ci_gr%af$$ana'pw"
     steps:
       - name: Checkout
