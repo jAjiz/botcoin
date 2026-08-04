@@ -46,10 +46,8 @@ def upgrade() -> None:
     conn = op.get_bind()
     database = conn.engine.url.database
 
-    # The verb (CREATE/ALTER ROLE ... PASSWORD %L) is a bare identifier chosen
-    # client-side, not user input; the password itself is quoted server-side by
-    # Postgres' own format(%L, ...) via a bound parameter, so a literal `'` or
-    # `$$` in it cannot break out of the statement.
+    # The verb is chosen client-side; the password is quoted server-side by
+    # Postgres' format(%L), so `'`/`$$` in it cannot break out of the statement.
     role_exists = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'")).scalar() is not None
     verb = (
         "ALTER ROLE grafana_reader WITH LOGIN PASSWORD %L"
@@ -57,7 +55,9 @@ def upgrade() -> None:
         else "CREATE ROLE grafana_reader LOGIN PASSWORD %L"
     )
     role_stmt = conn.execute(text("SELECT format(:verb, :pw)").bindparams(verb=verb, pw=password)).scalar()
-    conn.execute(text(role_stmt))
+    # role_stmt contains the password, so it must reach the driver unparsed: text()
+    # would read `p@:ss` as a bind param, the DBAPI `p%rd` as a placeholder.
+    conn.exec_driver_sql(role_stmt, execution_options={"no_parameters": True})
 
     op.execute(f'GRANT CONNECT ON DATABASE "{database}" TO grafana_reader;')
     op.execute("GRANT USAGE ON SCHEMA public TO grafana_reader;")
