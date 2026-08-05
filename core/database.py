@@ -396,9 +396,11 @@ def get_session() -> Iterator[Session]:
     try:
         yield session
         session.commit()
-    except Exception as e:
+    except Exception:
+        # Rollback and re-raise without logging: every DAL function already logs
+        # the failure with its own context, and the API handler logs what is left.
+        # Logging here only produced a duplicate line with less information.
         session.rollback()
-        logger.error(f"Database session error: {e}")
         raise
     finally:
         session.close()
