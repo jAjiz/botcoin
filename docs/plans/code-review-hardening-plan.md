@@ -252,7 +252,7 @@ not necessarily completion.)
 - [ ] **Step 4.3: failing tests in `tests/unit/trading/test_positions_manager.py`**
   for `reprice_closing_order` (monkeypatch `get_order_state`, `cancel_order`,
   `place_limit_order`): reprices on price move (new `closing_order_id`, new
-  `closing_price` estimate, new `closing_requested_at`); skips when the order is
+  `closing_price` estimate, `closing_requested_at` unchanged); skips when the order is
   partially filled; skips when the formatted price is unchanged; no-op when the
   cancel fails; no-op on API error; no-op when the new placement fails after a
   successful cancel (position keeps the old — now canceled — order id, and the
@@ -289,7 +289,6 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         {
             "closing_price": current_price,
             "closing_order_id": new_order,
-            "closing_requested_at": now_utc(),
         }
     )
     logging.info(
@@ -297,6 +296,11 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         to_telegram=True,
     )
 ```
+
+(Amended post-review: the original version also set
+`"closing_requested_at": now_utc()` here, which turned the field into "last
+reprice" and hid how long an exit had been chasing the market. It now keeps the
+timestamp of the first close request.)
 
 - [ ] **Step 4.5: wire into `core/scheduler.py`** — after the
   `is_closing_complete` block, before the create/tick logic:
