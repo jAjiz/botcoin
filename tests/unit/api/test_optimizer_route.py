@@ -221,3 +221,30 @@ def test_get_auto_job_nests_auto_fields(monkeypatch) -> None:
     assert "converged" not in body["result"] and "seeds_used" not in body["result"]
     # the request echo groups the AUTO knobs
     assert body["request"]["auto_settings"]["n_seeds"] == 4
+
+
+def test_submit_rejects_non_iso_start(monkeypatch) -> None:
+    """An unparseable window used to be accepted and only fail inside the spawned
+    worker, after a job row had already been created."""
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE, "start": "last week"},
+    )
+    assert resp.status_code == 422
+    assert "ISO" in str(resp.json()["detail"])
+
+
+def test_submit_rejects_non_iso_end(monkeypatch) -> None:
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE, "end": "31/01/2026"},
+    )
+    assert resp.status_code == 422
+
+
+def test_optimizer_request_accepts_iso_window() -> None:
+    req = OptimizerRequestSchema(pair=_PAIR, mode="OPTIMIZE", start="2026-01-01", end="2026-02-01T00:00:00+00:00")
+    assert req.start == "2026-01-01"
+    assert req.end == "2026-02-01T00:00:00+00:00"

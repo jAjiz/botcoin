@@ -3,7 +3,24 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def _require_iso_datetime(value: str | None) -> str | None:
+    """Reject a window bound that `datetime.fromisoformat` cannot parse.
+
+    `start`/`end` stay strings — they are compared directly against the frame's
+    `dtime` column — but an unparseable one used to travel all the way into
+    pandas (backtest) or into the spawned optimizer worker, failing long after
+    the request was accepted. Validating here turns that into a 422.
+    """
+    if value is None:
+        return None
+    try:
+        datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"must be an ISO 8601 datetime (e.g. '2026-01-31' or '2026-01-31T12:00:00'): {exc}") from exc
+    return value
 
 
 class MarketItem(BaseModel):
@@ -60,6 +77,8 @@ class BacktestRequest(BaseModel):
     end: str | None = None
     max_ops: int | None = None
     use_live_config: bool = False
+
+    _check_window = field_validator("start", "end")(_require_iso_datetime)
 
 
 class OperationDTO(BaseModel):
@@ -172,6 +191,8 @@ class OptimizerRequest(BaseModel):
     auto_settings: AutoSettings | None = None
     search_space: SearchSpace | None = None
     current_params: CurrentParams | None = None
+
+    _check_window = field_validator("start", "end")(_require_iso_datetime)
 
 
 class OptimizerJobAcceptedResponse(BaseModel):
