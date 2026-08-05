@@ -54,9 +54,9 @@ the only exit.
 - **Phase 2 — shipped.** Process-boundary and secret-scoping hardening:
   optimizer routes off the event loop, per-service env allowlists, migration
   quoting, telegram self-validation.
-- **Phase 3 — pending.** Smaller refactors: engine dedup + `itertuples`,
-  `core/database.py` split, telegram polish, ISO date validation, doc-drift
-  corrections.
+- **Phase 3 — shipped.** Smaller refactors: engine dedup + `itertuples` (golden-file
+  gated), `core/database.py` split into `core/db/`, telegram polish, ISO date
+  validation, doc-drift corrections.
 
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
 - Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)

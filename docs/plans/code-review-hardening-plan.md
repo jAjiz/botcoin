@@ -420,30 +420,38 @@ code, which only mutates the position dict.)
 Ordered by value; each is an independent commit. C3/C4/D3/D8 remain recorded
 suggestions (see spec) and are intentionally not scheduled.
 
-- [ ] **Task 12 (D1):** `trading/engine.py` — extract the duplicated sell/buy
+- [x] **Task 12 (D1):** `trading/engine.py` — extract the duplicated sell/buy
   stop-hit body into one helper parameterised by side; switch `iterrows()` →
   `itertuples()`. **Gate:** a regression test that runs `simulate_operations` on
   a recorded OHLC fixture before/after and asserts the identical operation list
   (already-existing engine tests plus one golden-file comparison).
   Commit: `perf(engine): deduplicate side branches and drop iterrows`
-- [ ] **Task 13 (D2):** split `core/database.py` into
+- [x] **Task 13 (D2):** split `core/database.py` into
   `core/db/{models,ohlc,positions,control,jobs}.py`, re-export everything from
   `core/database.py` so no call site changes. Pure move; suite must stay green
   untouched. Commit: `refactor(db): split database module by domain`
-- [ ] **Task 14 (D4+D5):** telegram polish — `_pnl_percent` drops the unused
+  (Shipped with a sixth module, `core/db/session.py`: the domain modules cannot
+  import the facade at module scope, so they resolve `core.database.get_session`
+  at call time through `open_session` — which also keeps that attribute the
+  single patch seam the DAL tests rely on.)
+- [x] **Task 14 (D4+D5):** telegram polish — `_pnl_percent` drops the unused
   parameter and the message labels the value `PnL @stop`; `/notify` returns
   `{"accepted": false}` when the send fails. Update `test_telegram.py`.
   Commit: `fix(telegram): honest notify result; label stop-based PnL`
-- [ ] **Task 15 (D6):** remove the duplicate `logger.error` in
+- [x] **Task 15 (D6):** remove the duplicate `logger.error` in
   `core/database.py::get_session` (DAL functions and the API handler already
   log). Commit: `chore(db): drop duplicate session-error logging`
-- [ ] **Task 16 (D7):** CLAUDE.md corrections — `BotControl` *does* have
+- [x] **Task 16 (D7):** CLAUDE.md corrections — `BotControl` *does* have
   production callers (`bot_paused`, `latest_balance`, `latest_pair_data`,
   `ohlc_last_*`); session balance/pair_data live in `bot_control` since the
   phase-9 migration; `_SessionLogCollector` attaches to the `botc` logger (not
   the root logger) so `core.database` stdlib logs are not captured — document
   this as intended. Commit: `docs: fix CLAUDE.md drift on BotControl and session logging`
-- [ ] **Task 17 (D9):** `api/schemas.py` — `field_validator("start", "end")` on
+  (Only the `_SessionLogCollector` claim was still true when the task ran: the
+  file already documented `BotControl`'s live keys and `finalize_session` as the
+  writer of the session balance/pair_data, so those two were left alone.
+  Committed as `docs: fix CLAUDE.md drift on session logging`.)
+- [x] **Task 17 (D9):** `api/schemas.py` — `field_validator("start", "end")` on
   `BacktestRequest` and `OptimizerRequest` requiring `datetime.fromisoformat`;
   tests for 422 on garbage input. Note in the commit body that historical job
   echoes with non-ISO dates (unlikely) would fail to render. Commit:
@@ -451,8 +459,11 @@ suggestions (see spec) and are intentionally not scheduled.
 
 ### Phase 3 acceptance checklist
 
-- [ ] Unit suite + ruff green after every task (each is an independent commit).
-- [ ] Task 12 golden-file regression proves identical simulation output.
+- [x] Unit suite + ruff green after every task (each is an independent commit).
+      Final: 388 unit tests pass, coverage 90.4% (gate 80%), ruff check + format clean.
+- [x] Task 12 golden-file regression proves identical simulation output
+      (`tests/unit/fixtures/engine_golden_{ohlc.csv,ops.json}`, recorded from the
+      pre-refactor engine: 41 operations identical field-for-field after the rewrite).
 
 ---
 
