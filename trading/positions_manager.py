@@ -252,7 +252,6 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         {
             "closing_price": current_price,
             "closing_order_id": new_order,
-            "closing_requested_at": now_utc(),
         }
     )
     logging.info(

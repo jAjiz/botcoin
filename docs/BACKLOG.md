@@ -22,7 +22,7 @@ top of that, edge-triggered Telegram alerting warns once after a configurable
 streak of consecutive failed sessions and once again on recovery — one message
 per episode, not per failed tick.
 
-- Spec: [`specs/2026-07-03-session-failure-alerts-design.md`](specs/2026-07-03-session-failure-alerts-design.md)
+- Spec: [`specs/session-failure-alerts-design.md`](specs/session-failure-alerts-design.md)
 - Plan: [`plans/session-failure-alerts-plan.md`](plans/session-failure-alerts-plan.md)
 
 ### Dynamic Pair Configuration
@@ -42,58 +42,24 @@ effect on the next session without a restart. Shipped with a cleanup collapsing
 
 ### Code-Review Hardening
 
-Fixes for the defects found in the 2026-07-06 full code review. Phase 1 removes
-three failure modes that leave the bot permanently inoperative without an alert
-(pivot-detection infinite loop on flat candles; canceled/expired closing orders
-corrupting state; non-transactional close persistence wedging the session loop)
-and adds the agreed reprice-to-market behaviour for closing orders that never
-fill. Phase 2 hardens process boundaries and secret scoping (event-loop blocking
-in the optimizer routes, per-service env allowlists, migration quoting). Phase 3
-collects the smaller refactors (engine dedup + `itertuples`, database module
-split, doc-drift corrections). No strategy changes — the trailing stop remains
+Fixes for the defects found in the 2026-07-06 full code review, in three
+independently shippable phases. No strategy changes — the trailing stop remains
 the only exit.
+
+- **Phase 1 — shipped.** Three failure modes that left the bot permanently
+  inoperative without an alert (pivot-detection infinite loop on flat candles,
+  canceled/expired closing orders corrupting state, non-transactional close
+  persistence) plus reprice-to-market for closing orders that never fill.
+  Includes the follow-ups from its own review.
+- **Phase 2 — shipped.** Process-boundary and secret-scoping hardening:
+  optimizer routes off the event loop, per-service env allowlists, migration
+  quoting, telegram self-validation.
+- **Phase 3 — pending.** Smaller refactors: engine dedup + `itertuples`,
+  `core/database.py` split, telegram polish, ISO date validation, doc-drift
+  corrections.
 
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
 - Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
-
-**Phase 1 follow-ups shipped** (`fix/phase1-followups`): `load_trailing_state`
-now raises on DB errors instead of returning `None`;
-`record_position_closed` logs a warning when the idempotent insert is a no-op
-(`rowcount == 0`); `pytest-timeout` is installed and the A1 regression test
-(`test_detect_pivots_terminates_on_flat_data`) is bounded at 10s.
-
-**Phase 1 review follow-ups shipped**: `is_closing_complete` now clears the
-closing fields on *every* terminal outcome it cannot finalize, not just
-`canceled`/`expired` — the old "unexpected status" branch left them set, which
-froze the position forever (the status can never change again, `reprice` declines
-a non-`open` order, and `is_open` stays `False`) while alerting Telegram every
-tick. A pair skipped for a missing price or ATR now counts as a failed pair, so
-a frozen trailing stop can no longer hide behind a `completed` session.
-`reprice_closing_order` only touches an `open` order (a `pending` one is not on
-the book, so cancel/replace is churn). A5's persistence moved out of
-`positions_manager` into a single `_persist_pair_state` call in the scheduler's
-per-pair `finally`, which is strictly stronger than the original end-of-body
-save: an order placed just before an exception used to be swallowed by the
-per-pair `except` and never written. `trading/` no longer imports
-`core.database`.
-
-**Deliberately deferred out of Phase 1** (recorded by the final whole-branch
-review so they are not mistaken for work Phase 1 closed):
-
-- **`cl_ord_id`-based idempotent order placement.** The real fix for two related
-  exposures: (a) a fill landing in the ~1s window between `get_order_state` and
-  `cancel_order` in `reprice_closing_order` means the replacement is sized at the
-  full volume and over-sells by the executed amount; (b) an `AddOrder` whose
-  response is lost cannot be recognised on retry. A5 shipped the narrower
-  state-persistence mitigation only.
-- **`closing_requested_at` now means "last reprice", not "close requested".** No
-  consumer computes a staleness timeout from it today, but an operator can no
-  longer see how long an exit has been chasing. Needs a separate
-  `closing_first_requested_at` if a staleness timeout is ever wanted.
-- **`get_order_state` is called twice per closing tick** (scheduler + inside
-  `reprice_closing_order`). Harmless today — private Kraken calls are not
-  rate-limited — but the `OrderState` could be passed down instead. Folded into
-  Phase 3 rather than kept as a standalone item.
 
 ### Strategy Review Follow-ups
 
@@ -129,6 +95,27 @@ volatility regime rather than the entire price history.
 stable signal — more than 60 days of OHLC data are required.
 
 - Spec: _to be written_
+
+---
+
+## 💤 Deferred
+
+### Deferred out of Code-Review Hardening
+
+Points raised during the code review and consciously parked — recorded here so
+they are not mistaken for work the hardening phases closed.
+
+- **`cl_ord_id`-based idempotent order placement.** Orders are identified only
+  by the `txid` Kraken returns, so the bot cannot ask "did *my* order land?"
+  after a lost `AddOrder` response, nor size a replacement against a fill that
+  landed inside the cancel/replace window. Both end with a position size the bot
+  does not know about. Phase 1 (A5) shipped only the narrower guarantee that an
+  id the bot *has* is never lost. Needs a spec: which client-id mechanism
+  (`userref` vs `cl_ord_id`) this account tier and the krakenex path actually
+  support, and whether to size replacements from `vol - vol_exec` meanwhile.
+- **`get_order_state` is called twice per closing tick** (scheduler + inside
+  `reprice_closing_order`). Harmless — private Kraken calls are not
+  rate-limited — but the `OrderState` could be passed down instead.
 
 ---
 

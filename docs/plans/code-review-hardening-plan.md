@@ -252,7 +252,7 @@ not necessarily completion.)
 - [ ] **Step 4.3: failing tests in `tests/unit/trading/test_positions_manager.py`**
   for `reprice_closing_order` (monkeypatch `get_order_state`, `cancel_order`,
   `place_limit_order`): reprices on price move (new `closing_order_id`, new
-  `closing_price` estimate, new `closing_requested_at`); skips when the order is
+  `closing_price` estimate, `closing_requested_at` unchanged); skips when the order is
   partially filled; skips when the formatted price is unchanged; no-op when the
   cancel fails; no-op on API error; no-op when the new placement fails after a
   successful cancel (position keeps the old — now canceled — order id, and the
@@ -289,7 +289,6 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         {
             "closing_price": current_price,
             "closing_order_id": new_order,
-            "closing_requested_at": now_utc(),
         }
     )
     logging.info(
@@ -297,6 +296,11 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         to_telegram=True,
     )
 ```
+
+(Amended post-review: the original version also set
+`"closing_requested_at": now_utc()` here, which turned the field into "last
+reprice" and hid how long an exit had been chasing the market. It now keeps the
+timestamp of the first close request.)
 
 - [ ] **Step 4.5: wire into `core/scheduler.py`** — after the
   `is_closing_complete` block, before the create/tick logic:
@@ -323,14 +327,18 @@ position → reprice called, tick not called; completed close → reprice not ca
 
 ## Task 5 — A5: persist state immediately after placing a closing order
 
-- [ ] **Step 5.1: failing test** — after a successful `close_position`, the
-  trailing state was saved before the function returned (monkeypatch
-  `db.save_trailing_state`).
-- [ ] **Step 5.2:** in `close_position` (and at the end of a successful
-  `reprice_closing_order`), call `db.save_trailing_state(pair, pos)` right after
-  `pos.update(...)`, wrapped in the existing `try/except` (a failed save is a
-  recoverable missed persist; the end-of-iteration save retries). `positions_manager`
-  gains an `import core.database as db`.
+- [ ] **Step 5.1: failing test** — a closing order placed just before a per-pair
+  failure still reaches the DB (monkeypatch `db.save_trailing_state`).
+- [ ] **Step 5.2:** persist the pair's state from a single `_persist_pair_state`
+  call in the scheduler's per-pair `finally`, so it runs on the failure path too.
+  A failed write marks the pair failed instead of escaping the loop.
+
+(Amended post-review: the original version called `db.save_trailing_state(pair, pos)`
+inside `close_position` and `reprice_closing_order`, which meant `positions_manager`
+imported `core.database`. Moving it to the scheduler's `finally` is strictly
+stronger — an order placed just before an exception used to be swallowed by the
+per-pair `except` and never written — and keeps persistence out of the strategy
+code, which only mutates the position dict.)
 
 **Commit:** `fix(positions): persist closing-order state immediately after placement`
 
