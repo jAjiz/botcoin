@@ -83,10 +83,6 @@ review so they are not mistaken for work Phase 1 closed):
 - **`cl_ord_id`-based idempotent order placement.** A5 shipped the narrower
   state-persistence mitigation only. Promoted to its own card — see
   [Idempotent Order Placement](#idempotent-order-placement) below.
-- **`closing_requested_at` now means "last reprice", not "close requested".** No
-  consumer computes a staleness timeout from it today, but an operator can no
-  longer see how long an exit has been chasing. Needs a separate
-  `closing_first_requested_at` if a staleness timeout is ever wanted.
 - **`get_order_state` is called twice per closing tick** (scheduler + inside
   `reprice_closing_order`). Harmless today — private Kraken calls are not
   rate-limited — but the `OrderState` could be passed down instead. Folded into

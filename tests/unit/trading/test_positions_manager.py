@@ -448,8 +448,8 @@ def test_is_closing_complete_reopens_position_on_any_unfinalizable_terminal_stat
 
 
 def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
-    _now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+    _requested_at = datetime(2026, 1, 2, 11, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 2, 12, 0, tzinfo=UTC))
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
@@ -469,7 +469,7 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
         "volume": 0.5,
         "closing_order_id": "OLDORDER",
         "closing_price": 100.0,
-        "closing_requested_at": datetime(2026, 1, 2, 11, 0, tzinfo=UTC),
+        "closing_requested_at": _requested_at,
     }
     positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
 
@@ -477,7 +477,8 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
     assert place_calls == [("XBTEUR", "sell", 105.0, 0.5)]
     assert pos["closing_order_id"] == "NEWORDER1"
     assert pos["closing_price"] == 105.0
-    assert pos["closing_requested_at"] == _now
+    # A reprice must not overwrite when the exit was first requested.
+    assert pos["closing_requested_at"] == _requested_at
 
 
 def test_reprice_closing_order_skips_when_partially_filled(monkeypatch) -> None:
