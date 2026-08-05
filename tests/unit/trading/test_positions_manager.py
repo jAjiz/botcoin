@@ -604,6 +604,94 @@ def test_reprice_closing_order_only_touches_an_open_order(monkeypatch, status) -
     assert pos["closing_order_id"] == "OLDORDER"
 
 
+def _sequenced_order_states(*states: OrderState):
+    """Return a fake get_order_state that yields `states` in call order."""
+    calls = iter(states)
+
+    def _fake(_order_id):
+        return next(calls)
+
+    return _fake
+
+
+def test_reprice_closing_order_sizes_replacement_to_remainder_on_fill_in_cancel_window(monkeypatch) -> None:
+    """A fill landing between the pre-cancel check and the cancel call still leaves
+    a cancellable remainder. The post-cancel re-query must catch it so the
+    replacement is sized at volume - vol_exec, not the full position."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        _sequenced_order_states(
+            OrderState(status="open", avg_price=None, vol_exec=0.0),  # pre-cancel check
+            OrderState(status="canceled", avg_price=100.0, vol_exec=0.2),  # post-cancel re-query
+        ),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    place_calls: list[tuple] = []
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda pair, side, price, volume: place_calls.append((pair, side, price, volume)) or "NEWORDER2",
+    )
+
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
+
+    assert place_calls == [("XBTEUR", "sell", 105.0, pytest.approx(0.3))]
+    assert pos["volume"] == pytest.approx(0.3)
+    assert pos["closing_order_id"] == "NEWORDER2"
+    assert pos["closing_price"] == 105.0
+
+
+def test_reprice_closing_order_noop_when_post_cancel_requery_fails(monkeypatch) -> None:
+    """If the post-cancel get_order_state call errors, the executed amount is
+    unknown: placing a replacement could over-sell. Leave closing_order_id set
+    to the canceled id so the next tick's terminal-status branch self-heals."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        _sequenced_order_states(
+            OrderState(status="open", avg_price=None, vol_exec=0.0),
+            None,
+        ),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(
+        positions_manager, "place_limit_order", lambda *a, **k: pytest.fail("must not place a new order")
+    )
+
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
+
+    assert pos["closing_order_id"] == "OLDORDER"
+    assert pos["closing_price"] == 100.0
+    assert pos["volume"] == 0.5
+
+
+def test_reprice_closing_order_noop_when_remaining_is_not_positive(monkeypatch) -> None:
+    """The canceled order turns out to have consumed the whole position (or more,
+    from stale state): there is nothing left to replace."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        _sequenced_order_states(
+            OrderState(status="open", avg_price=None, vol_exec=0.0),
+            OrderState(status="canceled", avg_price=100.0, vol_exec=0.5),
+        ),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(
+        positions_manager, "place_limit_order", lambda *a, **k: pytest.fail("must not place a new order")
+    )
+
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
+
+    assert pos["closing_order_id"] == "OLDORDER"
+    assert pos["closing_price"] == 100.0
+    assert pos["volume"] == 0.5
+
+
 # ============================================================================
 # tick_position
 # ============================================================================

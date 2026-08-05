@@ -242,12 +242,41 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         return  # identical limit; re-placing would only lose queue priority
     if not cancel_order(order_id):
         return  # likely filled in the race window; next tick resolves it
+
+    # A fill can land between the vol_exec check above and the cancel call just
+    # completed: the cancel still succeeds (a cancellable remainder existed) but
+    # some volume executed in between. Re-query for the definitive vol_exec of
+    # the now-canceled order so the replacement is sized at the remainder, not
+    # the full position (over-selling by the executed amount otherwise).
+    post_cancel_state = get_order_state(order_id)
+    if post_cancel_state is None:
+        logging.warning(
+            f"[{pair}] Could not confirm executed volume for canceled order {order_id}; "
+            "not placing a replacement. Next tick's terminal-status handling will resize the position.",
+            to_telegram=True,
+        )
+        return
+
     side = pos["side"]
     volume = float(pos.get("volume", 0.0))
-    new_order = place_limit_order(pair, side, current_price, volume)
+    remaining = volume - post_cancel_state.vol_exec
+    if remaining <= 0:
+        logging.info(
+            f"[{pair}] Closing order {order_id} left no remainder after cancel "
+            f"(vol_exec={post_cancel_state.vol_exec:.8f} of {volume:.8f}); not placing a replacement."
+        )
+        return
+    if post_cancel_state.vol_exec > 0:
+        logging.info(
+            f"[{pair}] Closing order {order_id} partially filled ({post_cancel_state.vol_exec:.8f}) "
+            "during the cancel window; replacement sized to the remainder."
+        )
+
+    new_order = place_limit_order(pair, side, current_price, remaining)
     if not new_order:
         logging.error("Failed to re-place closing order after cancel.", to_telegram=True)
         return
+    pos["volume"] = remaining
     pos.update(
         {
             "closing_price": current_price,

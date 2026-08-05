@@ -112,7 +112,9 @@ they are not mistaken for work the hardening phases closed.
   does not know about. Phase 1 (A5) shipped only the narrower guarantee that an
   id the bot *has* is never lost. Needs a spec: which client-id mechanism
   (`userref` vs `cl_ord_id`) this account tier and the krakenex path actually
-  support, and whether to size replacements from `vol - vol_exec` meanwhile.
+  support. Sizing replacements from `vol - vol_exec` after a cancel-window fill
+  is done (`reprice_closing_order` re-queries post-cancel); the `AddOrder`-loss
+  half of the idempotency gap remains.
 - **`get_order_state` is called twice per closing tick** (scheduler + inside
   `reprice_closing_order`). Harmless — private Kraken calls are not
   rate-limited — but the `OrderState` could be passed down instead.
