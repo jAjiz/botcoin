@@ -86,4 +86,8 @@ async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=No
         )
     except Exception as e:
         logging.error(f"Telegram send failed: {e}")
+        # 202 still: the caller (core.logging) must never fail because a
+        # notification could not be delivered. But the message was lost, so
+        # saying "accepted" would be a lie.
+        return {"accepted": False}
     return {"accepted": True}
