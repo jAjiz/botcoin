@@ -405,6 +405,73 @@ def test_is_closing_complete_dead_order_alerts_with_the_order_id_and_status(monk
     assert to_telegram is True
 
 
+def test_is_closing_complete_finalizes_a_terminal_order_that_was_fully_executed(monkeypatch) -> None:
+    """A cancel can race a complete fill: Kraken labels the order `canceled` but
+    nothing is left to manage. That is a finished trade — finalize it instead of
+    resuming management, which would lose the trade from the PnL history."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="canceled", avg_price=69099.7, vol=0.01, vol_exec=0.01),
+    )
+
+    pos = {"side": "sell", "entry_price": 68000.0, "volume": 0.0123, "closing_order_id": "ORD001"}
+    assert positions_manager.is_closing_complete(pos) is True
+    assert pos["closing_price"] == 69099.7
+    assert pos["pnl_percent"] == round((69099.7 - 68000.0) / 68000.0 * 100, 4)
+    # Recorded against what actually traded, not our own stale bookkeeping.
+    assert pos["volume"] == 0.01
+
+
+def test_is_closing_complete_reopens_position_when_terminal_order_left_a_remainder(monkeypatch) -> None:
+    """A partial fill still leaves a position to manage, so the closing fields are
+    cleared as before — only a fully executed order is finalizable."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="canceled", avg_price=69099.7, vol=0.02, vol_exec=0.01),
+    )
+
+    pos = {"side": "sell", "entry_price": 68000.0, "volume": 0.02, "closing_order_id": "ORD001"}
+    assert positions_manager.is_closing_complete(pos) is False
+    assert "closing_order_id" not in pos
+    assert "pnl_percent" not in pos
+
+
+def test_is_closing_complete_does_not_finalize_fully_executed_order_without_usable_price(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="canceled", avg_price=0.0, vol=0.01, vol_exec=0.01),
+    )
+
+    pos = {"side": "sell", "entry_price": 68000.0, "volume": 0.01, "closing_order_id": "ORD001"}
+    assert positions_manager.is_closing_complete(pos) is False
+    assert "closing_order_id" not in pos
+    assert "pnl_percent" not in pos
+
+
+def test_is_closing_complete_announces_a_finalized_terminal_order(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status="canceled", avg_price=69099.7, vol=0.01, vol_exec=0.01),
+    )
+    captured: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        positions_manager.logging, "warning", lambda msg, to_telegram=False: captured.append((msg, to_telegram))
+    )
+
+    pos = {"side": "sell", "entry_price": 68000.0, "volume": 0.01, "closing_order_id": "ORD001"}
+    positions_manager.is_closing_complete(pos)
+
+    assert len(captured) == 1
+    msg, to_telegram = captured[0]
+    assert "ORD001" in msg
+    assert "canceled" in msg
+    assert to_telegram is True
+
+
 @pytest.mark.parametrize(
     "state",
     [

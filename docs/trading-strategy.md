@@ -63,6 +63,8 @@ If ATR changes by more than `ATR_DESV_LIMIT` (default 20 %) between sessions, bo
 
 `close_position` places a limit order and records the approximate `closing_price` (at order placement time). `is_closing_complete` polls the Kraken `QueryOrders` endpoint; when the fill is confirmed, it overwrites `closing_price` with the real fill price and computes `pnl_percent`. PnL is valid only after `is_closing_complete` returns `True`.
 
+An order that ends `canceled` or `expired` but whose executed volume covers the whole order (`vol_exec >= vol`) is finalized the same way: a cancel that raced a complete fill leaves nothing to manage, so it is recorded as a completed close rather than reopened for management. Any terminal order that still has a remainder clears its closing fields instead, and the position resumes management on the same tick.
+
 ---
 
 ## Volatility classification

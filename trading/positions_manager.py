@@ -141,7 +141,14 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     state = get_order_state(closing_order)
     if state is None or state.status in ("pending", "open"):
         return False
-    if state.status != "closed" or not state.avg_price or state.avg_price <= 0:
+    # A cancel can race a complete fill: Kraken confirms the cancellation but the
+    # order is fully executed, so there is nothing left to manage. Resuming
+    # management there loses the trade from the PnL history (refresh_position
+    # drops the now-empty position), so treat it as the finished trade it is.
+    # Measured against the order's own `vol`, never pos["volume"], which can
+    # drift from what actually rests at Kraken.
+    fully_executed = state.vol > 0 and state.vol_exec >= state.vol
+    if (state.status != "closed" and not fully_executed) or not state.avg_price or state.avg_price <= 0:
         logging.warning(
             f"Closing order {closing_order} ended as {state.status} with no usable fill price; "
             "resuming position management.",
@@ -150,6 +157,13 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
         for key in ("closing_order_id", "closing_price", "closing_requested_at"):
             pos.pop(key, None)
         return False
+    if state.status != "closed":
+        logging.warning(
+            f"Closing order {closing_order} ended as {state.status} but was fully executed "
+            f"({state.vol_exec:.8f}); recording it as a completed close.",
+            to_telegram=True,
+        )
+        pos["volume"] = state.vol_exec
     closing_price = state.avg_price
     entry = pos["entry_price"]
     side = pos["side"]
@@ -267,9 +281,11 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         )
         return
     if post_cancel_state.vol_exec > 0:
-        logging.info(
-            f"[{pair}] Closing order {order_id} partially filled ({post_cancel_state.vol_exec:.8f}) "
-            "during the cancel window; replacement sized to the remainder."
+        logging.warning(
+            f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
+            f"{post_cancel_state.vol_exec:.8f} of {volume:.8f} executed; replacement sized to "
+            f"{remaining:.8f}.",
+            to_telegram=True,
         )
 
     new_order = place_limit_order(pair, side, current_price, remaining)

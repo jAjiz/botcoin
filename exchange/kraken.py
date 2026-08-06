@@ -97,11 +97,14 @@ class OrderState:
     status: str
     avg_price: float | None
     vol_exec: float
+    # The order's own size. Defaults to 0.0 when Kraken omits it, so a
+    # `vol_exec >= vol` remainder check fails closed on unknown data.
+    vol: float = 0.0
 
 
 def get_order_state(order_id: str) -> OrderState | None:
-    """Status + average fill price + executed volume of an order, or None on
-    API error / unknown order. Callers must branch on ``status`` explicitly —
+    """Status + average fill price + ordered/executed volume of an order, or None
+    on API error / unknown order. Callers must branch on ``status`` explicitly —
     never infer completion from a bare price (a canceled order reports 0.0)."""
     result = _safe_call(
         "order state",
@@ -117,6 +120,7 @@ def get_order_state(order_id: str) -> OrderState | None:
         status=order["status"],
         avg_price=float(price) if price is not None else None,
         vol_exec=float(order.get("vol_exec") or 0.0),
+        vol=float(order.get("vol") or 0.0),
     )
 
 

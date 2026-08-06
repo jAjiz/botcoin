@@ -149,6 +149,42 @@ def test_get_order_state_returns_status_price_and_vol_exec_when_closed(monkeypat
     assert result == kraken.OrderState(status="closed", avg_price=69099.7, vol_exec=0.01)
 
 
+def test_get_order_state_returns_total_ordered_volume(monkeypatch) -> None:
+    """`vol` is the order's own size. Callers compare it against `vol_exec` to
+    decide whether anything is left, instead of trusting their own bookkeeping."""
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {
+                "ORD001": {"status": "canceled", "price": "69099.7", "vol": "0.02000000", "vol_exec": "0.01000000"}
+            },
+        },
+    )
+
+    result = kraken.get_order_state("ORD001")
+
+    assert result == kraken.OrderState(status="canceled", avg_price=69099.7, vol=0.02, vol_exec=0.01)
+
+
+def test_get_order_state_reports_zero_total_volume_when_kraken_omits_it(monkeypatch) -> None:
+    """An unknown order size must never read as 'fully executed'; 0.0 makes the
+    remainder check fail closed."""
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {
+            "error": [],
+            "result": {"ORD001": {"status": "canceled", "price": "0.00000", "vol_exec": "0.00000000"}},
+        },
+    )
+
+    result = kraken.get_order_state("ORD001")
+
+    assert result.vol == 0.0
+
+
 def test_get_order_state_returns_status_when_open_regardless_of_price(monkeypatch) -> None:
     monkeypatch.setattr(
         kraken.api,
