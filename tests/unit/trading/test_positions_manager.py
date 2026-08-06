@@ -520,7 +520,10 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="open", avg_price=None, vol_exec=0.0),
+        _sequenced_order_states(
+            OrderState(status="open", avg_price=None, vol_exec=0.0),  # pre-cancel check
+            OrderState(status="canceled", avg_price=None, vol=0.5, vol_exec=0.0),  # post-cancel re-query
+        ),
     )
     cancel_calls: list[str] = []
     monkeypatch.setattr(positions_manager, "cancel_order", lambda order_id: cancel_calls.append(order_id) or True)
@@ -624,7 +627,10 @@ def test_reprice_closing_order_noop_when_new_placement_fails_after_cancel(monkey
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="open", avg_price=None, vol_exec=0.0),
+        _sequenced_order_states(
+            OrderState(status="open", avg_price=None, vol_exec=0.0),  # pre-cancel check
+            OrderState(status="canceled", avg_price=None, vol=0.5, vol_exec=0.0),  # post-cancel re-query
+        ),
     )
     monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: None)
@@ -733,6 +739,59 @@ def test_reprice_closing_order_noop_when_post_cancel_requery_fails(monkeypatch) 
     assert pos["closing_order_id"] == "OLDORDER"
     assert pos["closing_price"] == 100.0
     assert pos["volume"] == 0.5
+
+
+@pytest.mark.parametrize("status", ["open", "pending"])
+def test_reprice_closing_order_noop_when_post_cancel_status_is_not_terminal(monkeypatch, status) -> None:
+    """A confirmed cancel does not guarantee the very next QueryOrders already
+    reflects the final state. A non-terminal status means the executed volume is
+    not definitive, and sizing a replacement from it would over-sell — exactly the
+    bug the post-cancel re-query exists to prevent."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        _sequenced_order_states(
+            OrderState(status="open", avg_price=None, vol_exec=0.0),
+            OrderState(status=status, avg_price=None, vol_exec=0.0),
+        ),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(
+        positions_manager, "place_limit_order", lambda *a, **k: pytest.fail("must not place a new order")
+    )
+
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
+
+    assert pos["closing_order_id"] == "OLDORDER"
+    assert pos["closing_price"] == 100.0
+    assert pos["volume"] == 0.5
+
+
+def test_reprice_closing_order_alert_names_the_unconfirmed_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        _sequenced_order_states(
+            OrderState(status="open", avg_price=None, vol_exec=0.0),
+            OrderState(status="open", avg_price=None, vol_exec=0.0),
+        ),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: None)
+    captured: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        positions_manager.logging, "warning", lambda msg, to_telegram=False: captured.append((msg, to_telegram))
+    )
+
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
+
+    assert len(captured) == 1
+    msg, to_telegram = captured[0]
+    assert "OLDORDER" in msg
+    assert "open" in msg
+    assert to_telegram is True
 
 
 def test_reprice_closing_order_noop_when_remaining_is_not_positive(monkeypatch) -> None:

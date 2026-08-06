@@ -262,10 +262,15 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     # some volume executed in between. Re-query for the definitive vol_exec of
     # the now-canceled order so the replacement is sized at the remainder, not
     # the full position (over-selling by the executed amount otherwise).
+    # A non-terminal status means the re-query has not caught up with the cancel
+    # yet, so its vol_exec is not definitive either: sizing from it would re-create
+    # the over-sell. Bailing is always safe here — no replacement has been placed,
+    # so the position can never end up with two live exits.
     post_cancel_state = get_order_state(order_id)
-    if post_cancel_state is None:
+    if post_cancel_state is None or post_cancel_state.status in ("pending", "open"):
+        status = post_cancel_state.status if post_cancel_state else "unknown"
         logging.warning(
-            f"[{pair}] Could not confirm executed volume for canceled order {order_id}; "
+            f"[{pair}] Could not confirm executed volume for canceled order {order_id} (status={status}); "
             "not placing a replacement. Next tick's terminal-status handling will resize the position.",
             to_telegram=True,
         )
