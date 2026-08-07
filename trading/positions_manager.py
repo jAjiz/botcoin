@@ -141,7 +141,14 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     state = get_order_state(closing_order)
     if state is None or state.status in ("pending", "open"):
         return False
-    if state.status != "closed" or not state.avg_price or state.avg_price <= 0:
+    # A cancel can race a complete fill: Kraken confirms the cancellation but the
+    # order is fully executed, so there is nothing left to manage. Resuming
+    # management there loses the trade from the PnL history (refresh_position
+    # drops the now-empty position), so treat it as the finished trade it is.
+    # Measured against the order's own `vol`, never pos["volume"], which can
+    # drift from what actually rests at Kraken.
+    fully_executed = state.vol > 0 and state.vol_exec >= state.vol
+    if (state.status != "closed" and not fully_executed) or not state.avg_price or state.avg_price <= 0:
         logging.warning(
             f"Closing order {closing_order} ended as {state.status} with no usable fill price; "
             "resuming position management.",
@@ -150,6 +157,13 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
         for key in ("closing_order_id", "closing_price", "closing_requested_at"):
             pos.pop(key, None)
         return False
+    if state.status != "closed":
+        logging.warning(
+            f"Closing order {closing_order} ended as {state.status} but was fully executed "
+            f"({state.vol_exec:.8f}); recording it as a completed close.",
+            to_telegram=True,
+        )
+        pos["volume"] = state.vol_exec
     closing_price = state.avg_price
     entry = pos["entry_price"]
     side = pos["side"]
@@ -242,12 +256,48 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         return  # identical limit; re-placing would only lose queue priority
     if not cancel_order(order_id):
         return  # likely filled in the race window; next tick resolves it
+
+    # A fill can land between the vol_exec check above and the cancel call just
+    # completed: the cancel still succeeds (a cancellable remainder existed) but
+    # some volume executed in between. Re-query for the definitive vol_exec of
+    # the now-canceled order so the replacement is sized at the remainder, not
+    # the full position (over-selling by the executed amount otherwise).
+    # A non-terminal status means the re-query has not caught up with the cancel
+    # yet, so its vol_exec is not definitive either: sizing from it would re-create
+    # the over-sell. Bailing is always safe here — no replacement has been placed,
+    # so the position can never end up with two live exits.
+    post_cancel_state = get_order_state(order_id)
+    if post_cancel_state is None or post_cancel_state.status in ("pending", "open"):
+        status = post_cancel_state.status if post_cancel_state else "unknown"
+        logging.warning(
+            f"[{pair}] Could not confirm executed volume for canceled order {order_id} (status={status}); "
+            "not placing a replacement. Next tick's terminal-status handling will resize the position.",
+            to_telegram=True,
+        )
+        return
+
     side = pos["side"]
     volume = float(pos.get("volume", 0.0))
-    new_order = place_limit_order(pair, side, current_price, volume)
+    remaining = volume - post_cancel_state.vol_exec
+    if remaining <= 0:
+        logging.info(
+            f"[{pair}] Closing order {order_id} left no remainder after cancel "
+            f"(vol_exec={post_cancel_state.vol_exec:.8f} of {volume:.8f}); not placing a replacement."
+        )
+        return
+    if post_cancel_state.vol_exec > 0:
+        logging.warning(
+            f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
+            f"{post_cancel_state.vol_exec:.8f} of {volume:.8f} executed; replacement sized to "
+            f"{remaining:.8f}.",
+            to_telegram=True,
+        )
+
+    new_order = place_limit_order(pair, side, current_price, remaining)
     if not new_order:
         logging.error("Failed to re-place closing order after cancel.", to_telegram=True)
         return
+    pos["volume"] = remaining
     pos.update(
         {
             "closing_price": current_price,

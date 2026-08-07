@@ -75,6 +75,24 @@ an explicit decision first.
 
 - Spec: [`specs/trading-strategy-review.md`](specs/trading-strategy-review.md)
 
+### Exchange-Synchronized Order Amounts
+
+`place_limit_order` formats `price`/`volume` to the pair's Kraken precision but
+returns only the txid, so callers never learn what was actually submitted.
+`pos["volume"]` therefore drifts from the order resting at Kraken (and from the
+`Numeric(28, 10)` column): `reprice_closing_order` stores a raw float
+subtraction while a rounded value goes on the wire. Have the boundary return the
+normalized amounts it sent and store those, so state matches the exchange by
+construction rather than by a rounding convention kept in sync by hand.
+
+Scope: order volumes and submitted order prices. ATR fields (`activation_atr`,
+`stop_atr`) stay full precision — rounding them to `pair_decimals` degrades
+ATR-drift detection on low-value pairs (see the rounding Design choice in
+`CLAUDE.md`). Touches the same pairs map as the `ordermin` capture in Strategy
+Review Follow-ups.
+
+- Spec: _to be written_
+
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates
@@ -112,10 +130,18 @@ they are not mistaken for work the hardening phases closed.
   does not know about. Phase 1 (A5) shipped only the narrower guarantee that an
   id the bot *has* is never lost. Needs a spec: which client-id mechanism
   (`userref` vs `cl_ord_id`) this account tier and the krakenex path actually
-  support, and whether to size replacements from `vol - vol_exec` meanwhile.
-- **`get_order_state` is called twice per closing tick** (scheduler + inside
-  `reprice_closing_order`). Harmless — private Kraken calls are not
-  rate-limited — but the `OrderState` could be passed down instead.
+  support. Sizing replacements from `vol - vol_exec` after a cancel-window fill
+  is done (`reprice_closing_order` re-queries post-cancel); the `AddOrder`-loss
+  half of the idempotency gap remains.
+- **`get_order_state` is called three times per closing tick** (scheduler, plus
+  the pre-cancel check and the post-cancel re-query inside
+  `reprice_closing_order`). Private Kraken calls *are* rate-limited — a per-tier
+  counter, ~15–20 with a slow decay — and only the public path is throttled
+  in-process by `_wait_rate_limit`. It fits today because each pair's iteration
+  includes a public OHLC call that forces ≥1 s of spacing, so the counter decays
+  between pairs; a throttled call would degrade to `None` via `_safe_call`, and
+  the post-cancel bail leaves the position without a resting exit for one tick.
+  The scheduler's `OrderState` could be passed down to remove one of the three.
 
 ---
 
