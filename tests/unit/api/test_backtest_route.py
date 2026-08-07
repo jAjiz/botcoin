@@ -1,5 +1,6 @@
 """Unit tests for POST /backtest route."""
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -80,3 +81,39 @@ def test_post_backtest_returns_summary_and_operations(monkeypatch) -> None:
     assert len(body["operations"]) == 2
     assert body["operations"][0]["side"] == "buy"
     assert body["operations"][1]["pnl_abs"] == 2000.0
+
+
+def test_post_backtest_rejects_non_iso_start(monkeypatch) -> None:
+    """A garbage date used to reach pandas, where `df["dtime"] >= "yesterday"`
+    raises deep inside the backtest instead of failing the request."""
+    client = _make_client(monkeypatch)
+    resp = client.post("/backtest", json={"pair": _PAIR, "start": "yesterday"})
+    assert resp.status_code == 422
+    assert "ISO" in str(resp.json()["detail"])
+
+
+def test_post_backtest_rejects_non_iso_end(monkeypatch) -> None:
+    client = _make_client(monkeypatch)
+    assert client.post("/backtest", json={"pair": _PAIR, "end": "2026-13-45"}).status_code == 422
+
+
+@pytest.mark.parametrize("field", ["start", "end"])
+def test_post_backtest_rejects_offset_aware_window(monkeypatch, field: str) -> None:
+    """`datetime.fromisoformat` parses an offset-aware bound, but it is compared
+    against the tz-naive `dtime` column, so pandas raises `TypeError` mid-run and
+    the request 500s — the same late failure the ISO check exists to prevent."""
+    client = _make_client(monkeypatch)
+    resp = client.post("/backtest", json={"pair": _PAIR, field: "2026-02-01T12:30:00+00:00"})
+    assert resp.status_code == 422
+    assert "offset" in str(resp.json()["detail"])
+
+
+def test_post_backtest_accepts_naive_iso_start_and_end(monkeypatch) -> None:
+    fixed_result = BacktestResult(pair=_PAIR, fee_pct=0.0, summary=_SUMMARY, operations=_OPERATIONS)
+    monkeypatch.setattr(backtest_route, "run_backtest", lambda req: fixed_result)
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/backtest",
+        json={"pair": _PAIR, "start": "2026-01-01", "end": "2026-02-01T12:30:00"},
+    )
+    assert resp.status_code == 200

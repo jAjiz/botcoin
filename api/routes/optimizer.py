@@ -7,6 +7,7 @@ from api.schemas import (
     OptimizerJobAcceptedResponse,
     OptimizerJobStatusResponse,
     OptimizerRequest,
+    check_window_bounds,
 )
 from core.config import MAX_CONCURRENT_JOBS, PAIRS
 from trading.optimizer.jobs import JOB_STORE, OptimizerBusyError
@@ -37,6 +38,10 @@ async def submit(req: OptimizerRequest) -> OptimizerJobAcceptedResponse:
     # back without re-failing.
     if req.mode in ("OPTIMIZE", "AUTO") and req.search_space is None:
         raise HTTPException(status_code=422, detail="search_space is required for OPTIMIZE and AUTO modes")
+    try:
+        check_window_bounds(req.start, req.end)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     try:
         # try_start does a synchronous DB insert + a synchronous Telegram HTTP call
         # (2s timeout) + a process-pool submit — keep all of that off the event loop.

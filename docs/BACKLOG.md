@@ -36,30 +36,21 @@ effect on the next session without a restart. Shipped with a cleanup collapsing
 - Spec: [`specs/dynamic-pair-config-design.md`](specs/dynamic-pair-config-design.md)
 - Plan: [`plans/dynamic-pair-config-plan.md`](plans/dynamic-pair-config-plan.md)
 
----
-
-## 📋 Planned
-
 ### Code-Review Hardening
 
-Fixes for the defects found in the 2026-07-06 full code review, in three
-independently shippable phases. No strategy changes — the trailing stop remains
-the only exit.
-
-- **Phase 1 — shipped.** Three failure modes that left the bot permanently
-  inoperative without an alert (pivot-detection infinite loop on flat candles,
-  canceled/expired closing orders corrupting state, non-transactional close
-  persistence) plus reprice-to-market for closing orders that never fill.
-  Includes the follow-ups from its own review.
-- **Phase 2 — shipped.** Process-boundary and secret-scoping hardening:
-  optimizer routes off the event loop, per-service env allowlists, migration
-  quoting, telegram self-validation.
-- **Phase 3 — pending.** Smaller refactors: engine dedup + `itertuples`,
-  `core/database.py` split, telegram polish, ISO date validation, doc-drift
-  corrections.
+Fixes for the defects found in the 2026-07-06 full code review, in three phases:
+the close-lifecycle failure modes that left the bot inoperative without an alert
+(1), process-boundary and secret-scoping hardening (2), and the cleanups — engine
+dedup, the `core/db/` split, ISO date validation (3). No strategy changes — the
+trailing stop remains the only exit. What the review raised and we parked is in
+the Deferred card below.
 
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
 - Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
+
+---
+
+## 📋 Planned
 
 ### Strategy Review Follow-ups
 

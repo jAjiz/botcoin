@@ -2,8 +2,14 @@
 
 Each test pins a concrete, hand-reasoned behavior on a small fixture (op count,
 side, execution price, PnL, fee, K_STOP fallback) rather than a frozen blob, so a
-failure says which behavior changed.
+failure says which behavior changed. The single exception is the golden-file
+regression at the bottom, which exists precisely to prove that a refactor of the
+simulation loop produced a byte-identical operation list.
 """
+
+import json
+from dataclasses import asdict
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -11,6 +17,7 @@ import pytest
 import trading.engine as engine
 
 _LEVELS = ("LL", "LV", "MV", "HV", "HH")
+_FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
 
 
 def _df(rows: list[tuple[float, float, float]], atr: float = 2.0) -> pd.DataFrame:
@@ -188,3 +195,43 @@ def test_reanchor_noop_when_within_distance() -> None:
     assert len(ops) == 2
     assert ops[1].side == "sell"
     assert ops[1].price == pytest.approx(102.0)
+
+
+# --- golden-file regression --------------------------------------------------
+
+
+def golden_cfg() -> engine.EngineConfig:
+    """Config recorded alongside the golden fixture. K values differ per level and
+    per side (with gaps) so the snapshot exercises the lookup_k_stop fallbacks."""
+    return engine.EngineConfig(
+        pair="GOLD",
+        calibration=engine.PairCalibration(
+            atr_p20=0.40,
+            atr_p50=0.60,
+            atr_p80=0.90,
+            atr_p95=1.20,
+            k_stop_buy={"LL": 1.1, "LV": 1.4, "MV": None, "HV": 2.2, "HH": 2.8},
+            k_stop_sell={"LL": 1.0, "LV": None, "MV": 1.9, "HV": 2.1, "HH": None},
+        ),
+        k_act=None,
+        min_margin=0.002,
+        atr_desv_limit=0.15,
+    )
+
+
+GOLDEN_FEE_RATE = 0.0026
+
+
+def test_simulate_operations_matches_golden_snapshot() -> None:
+    """Byte-identical output on a recorded 800-bar frame.
+
+    The behavioral tests above pin *why* each leg happens; this one pins the whole
+    result so a mechanical rewrite of the loop (side-branch deduplication,
+    iterrows -> itertuples) cannot change a single field without failing.
+    """
+    df = pd.read_csv(_FIXTURES_DIR / "engine_golden_ohlc.csv", parse_dates=["dtime"])
+    expected = json.loads((_FIXTURES_DIR / "engine_golden_ops.json").read_text(encoding="utf-8"))
+
+    ops = engine.simulate_operations(df, golden_cfg(), fee_rate=GOLDEN_FEE_RATE)
+
+    assert [asdict(op) for op in ops] == expected

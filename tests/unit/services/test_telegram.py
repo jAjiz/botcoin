@@ -190,6 +190,9 @@ async def test_positions_command_shows_open_position(monkeypatch) -> None:
     await polling.positions_command(update, MockContext(args=["XBTEUR"]))
     msg = update.message.replies[0]
     assert "Trailing" in msg and "Stop" in msg
+    # The figure is what the position would realize at its stop, not a live
+    # mark-to-market PnL — the label has to say so.
+    assert "PnL @stop" in msg
 
 
 @pytest.mark.asyncio
@@ -249,10 +252,10 @@ async def test_positions_command_shows_no_position(monkeypatch) -> None:
 
 def test_pnl_percent() -> None:
     buy_pos = {"side": "buy", "entry_price": 80000.0, "trailing_price": 82000.0, "stop_price": 79000.0}
-    assert polling._pnl_percent(buy_pos, 82000.0) == pytest.approx((80000.0 - 79000.0) / 80000.0 * 100)
+    assert polling._pnl_percent(buy_pos) == pytest.approx((80000.0 - 79000.0) / 80000.0 * 100)
 
     no_trailing = {"side": "buy", "entry_price": 80000.0, "trailing_price": None, "stop_price": None}
-    assert polling._pnl_percent(no_trailing, 80000.0) is None
+    assert polling._pnl_percent(no_trailing) is None
 
 
 # ============================================================================
@@ -301,9 +304,26 @@ def test_notify_sends_message_with_level_prefix(monkeypatch):
 
 
 def test_notify_tolerates_send_failure(monkeypatch):
+    """A failed send must not raise — but it must not claim the message was
+    accepted either, or the caller has no way to know the alert was lost."""
     client, mock_tg = _notify_client(monkeypatch)
     mock_tg.bot.send_message.side_effect = RuntimeError("network error")
-    assert client.post("/notify", json={"message": "test", "level": "info"}).status_code == 202
+    resp = client.post("/notify", json={"message": "test", "level": "info"})
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": False}
+
+
+def test_notify_reports_disabled_without_a_server_error(monkeypatch):
+    """`tg_app is None` — the service started without TELEGRAM_TOKEN while botc
+    still has TELEGRAM_ENABLED=true — is a valid configuration, not a server
+    fault. FastAPI validates the response against the handler's return
+    annotation, so a `str` reason under a `dict[str, bool]` contract turns this
+    branch into a 500 and hides the answer it was built to give."""
+    client, _ = _notify_client(monkeypatch)
+    monkeypatch.setattr(tg_module, "tg_app", None)
+    resp = client.post("/notify", json={"message": "x", "level": "info"})
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": False, "reason": "Telegram is disabled"}
 
 
 def test_notify_rejects_request_without_token(monkeypatch):
