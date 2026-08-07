@@ -244,7 +244,45 @@ def test_submit_rejects_non_iso_end(monkeypatch) -> None:
     assert resp.status_code == 422
 
 
-def test_optimizer_request_accepts_iso_window() -> None:
-    req = OptimizerRequestSchema(pair=_PAIR, mode="OPTIMIZE", start="2026-01-01", end="2026-02-01T00:00:00+00:00")
-    assert req.start == "2026-01-01"
-    assert req.end == "2026-02-01T00:00:00+00:00"
+def test_submit_accepts_naive_iso_window(monkeypatch) -> None:
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={
+            "pair": _PAIR,
+            "mode": "OPTIMIZE",
+            "search_space": _SPACE,
+            "start": "2026-01-01",
+            "end": "2026-02-01T00:00:00",
+        },
+    )
+    assert resp.status_code == 202
+
+
+def test_optimizer_request_echoes_a_non_iso_window() -> None:
+    """The model must stay lenient: it doubles as the response model for stored
+    jobs, and `try_start` inserts the row *before* the run, so a job whose window
+    never parsed still has a row to render."""
+    req = OptimizerRequestSchema(pair=_PAIR, mode="OPTIMIZE", start="last week")
+    assert req.start == "last week"
+
+
+def test_get_job_renders_a_stored_non_iso_window(monkeypatch) -> None:
+    row = dict(_JOB_ROW, request={**_JOB_ROW["request"], "start": "last week"})
+    monkeypatch.setattr(db, "get_optimizer_job", lambda jid: row)
+    client = _make_client(monkeypatch)
+    resp = client.get(f"/optimizer/jobs/{_JOB_ID}")
+    assert resp.status_code == 200
+    assert resp.json()["request"]["start"] == "last week"
+
+
+def test_list_jobs_is_not_broken_by_one_stored_non_iso_window(monkeypatch) -> None:
+    """The whole list is built in one comprehension: a single unrenderable row
+    would hide every other job."""
+    bad = dict(_JOB_ROW, request={**_JOB_ROW["request"], "start": "last week"})
+    monkeypatch.setattr(db, "list_optimizer_jobs", lambda limit: [bad, dict(_JOB_ROW)])
+    client = _make_client(monkeypatch)
+    resp = client.get("/optimizer/jobs")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2

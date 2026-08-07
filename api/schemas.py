@@ -23,6 +23,23 @@ def _require_iso_datetime(value: str | None) -> str | None:
     return value
 
 
+def check_window_bounds(start: str | None, end: str | None) -> None:
+    """Validate an optimizer window from the route, raising `ValueError`.
+
+    Deliberately *not* a validator on `OptimizerRequest`: that model is also the
+    response model for a stored job (`OptimizerJobStatusResponse.request`), and
+    `JobStore.try_start` inserts the row before the run starts, so a job whose
+    window never parsed still has a row to render. A validator would run on the
+    way out too and turn one bad row into a 500 — for `GET /optimizer/jobs`, for
+    the entire list. Same reason `search_space` is enforced at the route.
+    """
+    for name, value in (("start", start), ("end", end)):
+        try:
+            _require_iso_datetime(value)
+        except ValueError as exc:
+            raise ValueError(f"{name}: {exc}") from exc
+
+
 class MarketItem(BaseModel):
     pair: str
     base_asset: str | None = None
@@ -178,6 +195,8 @@ class OptimizerRequest(BaseModel):
     pair: str
     mode: Literal["OPTIMIZE", "CURRENT", "AUTO"]
     fee_pct: float = 0.0
+    # start/end must be naive ISO 8601, enforced at the route via check_window_bounds
+    # for the same reason as search_space below.
     start: str | None = None
     end: str | None = None
     train_split: float = Field(default=0.8, ge=0.5, le=1.0)
@@ -191,8 +210,6 @@ class OptimizerRequest(BaseModel):
     auto_settings: AutoSettings | None = None
     search_space: SearchSpace | None = None
     current_params: CurrentParams | None = None
-
-    _check_window = field_validator("start", "end")(_require_iso_datetime)
 
 
 class OptimizerJobAcceptedResponse(BaseModel):
