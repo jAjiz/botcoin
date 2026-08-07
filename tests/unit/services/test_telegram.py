@@ -313,6 +313,19 @@ def test_notify_tolerates_send_failure(monkeypatch):
     assert resp.json() == {"accepted": False}
 
 
+def test_notify_reports_disabled_without_a_server_error(monkeypatch):
+    """`tg_app is None` — the service started without TELEGRAM_TOKEN while botc
+    still has TELEGRAM_ENABLED=true — is a valid configuration, not a server
+    fault. FastAPI validates the response against the handler's return
+    annotation, so a `str` reason under a `dict[str, bool]` contract turns this
+    branch into a 500 and hides the answer it was built to give."""
+    client, _ = _notify_client(monkeypatch)
+    monkeypatch.setattr(tg_module, "tg_app", None)
+    resp = client.post("/notify", json={"message": "x", "level": "info"})
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": False, "reason": "Telegram is disabled"}
+
+
 def test_notify_rejects_request_without_token(monkeypatch):
     client, _ = _notify_client(monkeypatch, token="secret-xyz", allow_no_auth=False)
     assert client.post("/notify", json={"message": "x", "level": "info"}).status_code == 401

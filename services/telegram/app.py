@@ -71,7 +71,10 @@ app = FastAPI(title="BoTC Telegram", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/notify", status_code=202)
-async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=None)) -> dict[str, bool]:
+async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=None)) -> dict[str, object]:
+    # `object`, not `bool`: FastAPI validates the response against this annotation,
+    # and the disabled branch below carries a `str` reason. Under `dict[str, bool]`
+    # that branch answered 500 — a server fault for a valid configuration.
     if API_SECRET_TOKEN:
         if x_api_token is None or not secrets.compare_digest(x_api_token, API_SECRET_TOKEN):
             raise HTTPException(status_code=401, detail="Invalid or missing API token")
