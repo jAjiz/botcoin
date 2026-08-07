@@ -75,6 +75,24 @@ an explicit decision first.
 
 - Spec: [`specs/trading-strategy-review.md`](specs/trading-strategy-review.md)
 
+### Exchange-Synchronized Order Amounts
+
+`place_limit_order` formats `price`/`volume` to the pair's Kraken precision but
+returns only the txid, so callers never learn what was actually submitted.
+`pos["volume"]` therefore drifts from the order resting at Kraken (and from the
+`Numeric(28, 10)` column): `reprice_closing_order` stores a raw float
+subtraction while a rounded value goes on the wire. Have the boundary return the
+normalized amounts it sent and store those, so state matches the exchange by
+construction rather than by a rounding convention kept in sync by hand.
+
+Scope: order volumes and submitted order prices. ATR fields (`activation_atr`,
+`stop_atr`) stay full precision — rounding them to `pair_decimals` degrades
+ATR-drift detection on low-value pairs (see the rounding Design choice in
+`CLAUDE.md`). Touches the same pairs map as the `ordermin` capture in Strategy
+Review Follow-ups.
+
+- Spec: _to be written_
+
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates
