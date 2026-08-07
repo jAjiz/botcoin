@@ -244,6 +244,19 @@ def test_submit_rejects_non_iso_end(monkeypatch) -> None:
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize("field", ["start", "end"])
+def test_submit_rejects_offset_aware_window(monkeypatch, field: str) -> None:
+    """An offset-aware bound parses as ISO but is still unusable: it is compared
+    against the tz-naive `dtime` column, which raises inside pandas."""
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE, field: "2026-02-01T00:00:00+00:00"},
+    )
+    assert resp.status_code == 422
+    assert "offset" in str(resp.json()["detail"])
+
+
 def test_submit_accepts_naive_iso_window(monkeypatch) -> None:
     monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
     client = _make_client(monkeypatch)

@@ -7,19 +7,27 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 def _require_iso_datetime(value: str | None) -> str | None:
-    """Reject a window bound that `datetime.fromisoformat` cannot parse.
+    """Reject a window bound that cannot be compared against the `dtime` column.
 
     `start`/`end` stay strings — they are compared directly against the frame's
-    `dtime` column — but an unparseable one used to travel all the way into
-    pandas (backtest) or into the spawned optimizer worker, failing long after
-    the request was accepted. Validating here turns that into a 422.
+    `dtime` column — but an unusable one used to travel all the way into pandas
+    (backtest) or into the spawned optimizer worker, failing long after the
+    request was accepted. Validating here turns that into a 422.
+
+    Two things are unusable, and parseability alone does not catch both.
+    `datetime.fromisoformat` also accepts an offset-aware bound, but `dtime` is
+    tz-naive `datetime64[ns]`, so `df["dtime"] <= "2026-02-01T00:00:00+00:00"`
+    raises `TypeError` mid-run — the same late failure, just further downstream.
+    Bounds are naive UTC, like every timestamp stored in `ohlc_data`.
     """
     if value is None:
         return None
     try:
-        datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"must be an ISO 8601 datetime (e.g. '2026-01-31' or '2026-01-31T12:00:00'): {exc}") from exc
+    if parsed.tzinfo is not None:
+        raise ValueError(f"must not carry a UTC offset (stored timestamps are naive UTC): {value!r}")
     return value
 
 
