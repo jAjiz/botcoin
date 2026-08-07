@@ -133,9 +133,15 @@ they are not mistaken for work the hardening phases closed.
   support. Sizing replacements from `vol - vol_exec` after a cancel-window fill
   is done (`reprice_closing_order` re-queries post-cancel); the `AddOrder`-loss
   half of the idempotency gap remains.
-- **`get_order_state` is called twice per closing tick** (scheduler + inside
-  `reprice_closing_order`). Harmless — private Kraken calls are not
-  rate-limited — but the `OrderState` could be passed down instead.
+- **`get_order_state` is called three times per closing tick** (scheduler, plus
+  the pre-cancel check and the post-cancel re-query inside
+  `reprice_closing_order`). Private Kraken calls *are* rate-limited — a per-tier
+  counter, ~15–20 with a slow decay — and only the public path is throttled
+  in-process by `_wait_rate_limit`. It fits today because each pair's iteration
+  includes a public OHLC call that forces ≥1 s of spacing, so the counter decays
+  between pairs; a throttled call would degrade to `None` via `_safe_call`, and
+  the post-cancel bail leaves the position without a resting exit for one tick.
+  The scheduler's `OrderState` could be passed down to remove one of the three.
 
 ---
 
