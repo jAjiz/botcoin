@@ -94,18 +94,25 @@ call site stay valid; both production call sites always pass one.
 
 ### 2. Where it is persisted
 
-New optional key on the position dict: **`closing_cl_ord_id`**, alongside the
+New optional key on the position dict: **`closing_request_id`**, alongside the
 existing `closing_order_id` / `closing_price` / `closing_requested_at`.
+
+The name deliberately differs from Kraken's: the position dict and the DB column
+use the domain name `closing_request_id`, while everything that produces or
+transports the Kraken-format identifier keeps the API's vocabulary —
+`new_cl_ord_id()`, `place_limit_order`'s `cl_ord_id` parameter and payload key,
+`find_order_by_cl_ord_id`. Both refer to the same value; the boundary is the
+exchange wrapper.
 
 That requires:
 
-- **`core/database.py`** — `TrailingState.closing_cl_ord_id = Column(Text, nullable=True)`,
+- **`core/database.py`** — `TrailingState.closing_request_id = Column(Text, nullable=True)`,
   plus the field in `to_dict`, `_state_entry_to_trailing_record` and
   `_trailing_record_to_state_entry` (the latter only when not `None`, matching
   the other optional fields).
 - **A new Alembic migration** under `scripts/migrations/versions/`
   (`down_revision = "20260616_01"`), a single
-  `op.add_column("trailing_state", sa.Column("closing_cl_ord_id", sa.Text(), nullable=True))`
+  `op.add_column("trailing_state", sa.Column("closing_request_id", sa.Text(), nullable=True))`
   and the matching `drop_column` in `downgrade`. No index (lookups are by the
   `pair` primary key) and no check constraint. Per CLAUDE.md, model and
   migration are updated in the same change — CI builds the schema from
@@ -142,7 +149,7 @@ crash-mid-placement is ever observed.
 
 **The state invariant this whole design rests on:**
 
-> `closing_cl_ord_id` set **and** `closing_order_id` absent
+> `closing_request_id` set **and** `closing_order_id` absent
 > ⇒ an `AddOrder` was sent whose outcome is unknown.
 
 Both call sites are shaped to produce exactly that state and nothing else.
@@ -152,7 +159,7 @@ Both call sites are shaped to produce exactly that state and nothing else.
 ```python
 cl_ord_id = new_cl_ord_id()
 pos.update({
-    "closing_cl_ord_id": cl_ord_id,
+    "closing_request_id": cl_ord_id,
     "closing_price": current_price,      # still an estimate, unchanged semantics
     "closing_requested_at": now_utc(),
 })
@@ -173,7 +180,7 @@ it already means "when we asked to close".
 cl_ord_id = new_cl_ord_id()
 pos["volume"] = remaining          # confirmed by the post-cancel re-query
 pos["closing_price"] = current_price
-pos["closing_cl_ord_id"] = cl_ord_id
+pos["closing_request_id"] = cl_ord_id
 pos.pop("closing_order_id", None)  # the old order is confirmed canceled
 new_order = place_limit_order(pair, side, current_price, remaining, cl_ord_id=cl_ord_id)
 if not new_order:
@@ -195,7 +202,7 @@ Three deliberate moves here:
 3. **This supersedes a documented decision.** Today, "cancel succeeded,
    replacement failed" deliberately keeps the dead `closing_order_id` so
    `is_open` stays `False` and the next tick's terminal-status branch clears it.
-   Under this design the same protection comes from `closing_cl_ord_id` (§6),
+   Under this design the same protection comes from `closing_request_id` (§6),
    and the clearing is done by the resolver. The CLAUDE.md text describing the
    old behaviour must be updated in the same PR.
 
@@ -262,7 +269,7 @@ def resolve_unconfirmed_closing_order(pair: str, pos: dict[str, Any] | None) -> 
     must be left untouched."""
 ```
 
-- Nothing pending (`not pos`, no `closing_cl_ord_id`, or `closing_order_id`
+- Nothing pending (`not pos`, no `closing_request_id`, or `closing_order_id`
   already set) → `True`, no API call.
 - Lookup returns a txid → `pos["closing_order_id"] = txid`, log to Telegram
   (this is a recovered order, the operator should know), return `True`. The
@@ -273,7 +280,7 @@ def resolve_unconfirmed_closing_order(pair: str, pos: dict[str, Any] | None) -> 
   the closing fields and resumes management. No new terminal-state logic, and no
   wasted tick.
 - Lookup returns "absent" → the order never landed. Clear
-  `closing_cl_ord_id`, `closing_order_id`, `closing_price`,
+  `closing_request_id`, `closing_order_id`, `closing_price`,
   `closing_requested_at` (the same tuple `is_closing_complete` clears, extended
   with the new key), log a warning to Telegram, return `True`. The position is
   open again and the same tick's `tick_position` may legitimately re-close it —
@@ -321,7 +328,7 @@ first failure is already announced by `close_position`'s existing
 
 ```python
 def is_open(pos) -> bool:
-    return bool(pos) and not pos.get("closing_order_id") and not pos.get("closing_cl_ord_id")
+    return bool(pos) and not pos.get("closing_order_id") and not pos.get("closing_request_id")
 ```
 
 Without this, a position in the pending state passes `is_open`, reaches
@@ -329,7 +336,7 @@ Without this, a position in the pending state passes `is_open`, reaches
 `is_open` is the single choke point for "may I manage/close this position", and
 the two keys are always cleared together, so the extra condition is safe.
 This extends the CLAUDE.md invariant to: *a position with `closing_order_id`
-**or** `closing_cl_ord_id` set is not open.*
+**or** `closing_request_id` set is not open.*
 
 ## Edge cases
 
@@ -339,7 +346,7 @@ This extends the CLAUDE.md invariant to: *a position with `closing_order_id`
 | `AddOrder` response lost, order never landed | Resolver proves absence, clears the closing fields, position resumes; the same tick may re-close with a **new** id. |
 | Lookup itself fails | Pair marked failed, state untouched, retried next tick; sustained failure surfaces through the existing consecutive-failure alert. |
 | Id resolves to an already-terminal order (`canceled`/`expired`/`closed`) | No special path — the txid is written in and `is_closing_complete`'s existing terminal branch handles it on the same tick. |
-| Stale id from a previous position | Impossible to mis-resolve: ids are per-attempt UUIDs, so a stale id can only ever match its own order. A closed position's row is deleted by `record_position_closed`; every other clearing path clears `closing_cl_ord_id` with the rest of the tuple. |
+| Stale id from a previous position | Impossible to mis-resolve: ids are per-attempt UUIDs, so a stale id can only ever match its own order. A closed position's row is deleted by `record_position_closed`; every other clearing path clears `closing_request_id` with the rest of the tuple. |
 | Kraken rejects a duplicate `cl_ord_id` | Cannot arise — no id is ever sent twice. If it somehow did, `_safe_call` turns the reject into `None` and the pending path handles it. |
 | Multiple matches for one id | Log an error, prefer the open order. Should be unreachable. |
 | Crash between the HTTP send and the tick's `finally` | Not covered. See §2 and *Residual risk*. |
@@ -361,10 +368,10 @@ dict, as `test_place_limit_order_rounds_to_pair_precision` already does).
   one: an error must never read as "absent").
 
 **`trading/positions_manager.py`**
-- `close_position` writes `closing_cl_ord_id` **before** calling
+- `close_position` writes `closing_request_id` **before** calling
   `place_limit_order` — assert from inside the fake `place_limit_order` that
-  `pos["closing_cl_ord_id"]` is already set and equals the `cl_ord_id` argument.
-- A `None` return leaves the pending state (`closing_cl_ord_id` set,
+  `pos["closing_request_id"]` is already set and equals the `cl_ord_id` argument.
+- A `None` return leaves the pending state (`closing_request_id` set,
   `closing_order_id` absent) and `is_open(pos) is False`.
 - `reprice_closing_order` on the placement path: old `closing_order_id` dropped,
   new id set, `volume == remaining`, all before the call; on success the new
@@ -373,7 +380,7 @@ dict, as `test_place_limit_order_rounds_to_pair_precision` already does).
 - `resolve_unconfirmed_closing_order`: no-op + no API call when nothing pending;
   txid adopted on a hit; fields cleared on a proven miss; `False` + untouched
   state on a lookup error.
-- `is_open` is `False` while only `closing_cl_ord_id` is set.
+- `is_open` is `False` while only `closing_request_id` is set.
 
 **`core/scheduler.py`**
 - A pending pair whose lookup fails is added to `failed_pairs`, skips the rest
@@ -381,7 +388,7 @@ dict, as `test_place_limit_order_rounds_to_pair_precision` already does).
 - Resolution followed by `is_closing_complete` finalizing on the **same** tick.
 
 **`core/database.py`**
-- `closing_cl_ord_id` round-trips through `save_trailing_state` /
+- `closing_request_id` round-trips through `save_trailing_state` /
   `load_trailing_state`, and is absent from the dict when the column is `NULL`.
 - Whatever ORM/migration parity check the repo already runs covers the new
   column.
@@ -488,7 +495,7 @@ lifecycle text:
   `userref` (32-bit, groups orders, mutually exclusive), and why resolution goes
   through `OpenOrders`/`ClosedOrders` rather than `QueryOrders` (which does not
   accept the field).
-- **`closing_cl_ord_id` set with `closing_order_id` absent means "outcome
+- **`closing_request_id` set with `closing_order_id` absent means "outcome
   unknown"**, and `is_open` is `False` for both — the single choke point that
   prevents a second exit.
 - Update the `reprice_closing_order` description: the dead `closing_order_id` is
