@@ -161,8 +161,10 @@ Routing through `failed_pairs` reuses the edge-triggered consecutive-failure
 alert — one message per episode — and is the same reasoning already applied to a
 pair with no price: a latched pair with no resting order is an *unmanaged* pair,
 so it must not pass as a successful session. The operator is not left blind in
-the meantime: the breach itself already sends `"⛔ Stop price … hitted"` to
-Telegram on the tick it happens.
+the meantime: the breach itself sends `"⛔ Stop price … hitted"` to Telegram on
+the tick it happens. That line is also gated on the first attempt — it is emitted
+by `close_position`, which the manager now calls every retry tick, so without the
+gate it would flood exactly like the error it replaces.
 
 ### 5. Scheduler wiring
 
@@ -284,9 +286,7 @@ Unit tests only, module-level monkeypatching, in the existing style.
   `is_open(pos) is False`, and returns `False`.
 - A retry does **not** overwrite an existing `stop_at`.
 - `is_open` is `False` with only `stop_at` set; `True` with neither field.
-- `tick_position` is a no-op on a latched position — regression test asserting no
-  recalibration and no trailing update when `stop_at` is set (drive it with an
-  ATR drift large enough to move the stop, and a price above `trailing_price`).
+- The breach line reaches Telegram on the first attempt only, not on each retry.
 - `manage_closing_order`: no-op + no API call when `stop_at` is absent; the
   reprice body runs when `closing_order_id` is set (keep PR #64's existing tests
   under the new name); the re-place branch refreshes then calls
@@ -297,7 +297,9 @@ Unit tests only, module-level monkeypatching, in the existing style.
 
 **`core/scheduler.py`**
 - A latched pair with no order id reaches `manage_closing_order` and is skipped
-  by `tick_position`.
+  by `tick_position` — the regression for the defect this spec exists to fix.
+  It belongs here rather than in `positions_manager`: `tick_position` has no
+  internal guard, `is_open` at the call site is the guard.
 - A `False` return adds the pair to `failed_pairs` and the state is still
   persisted by the `finally`.
 - Terminal-with-remainder → cleared by `is_closing_complete` → re-placed by the
