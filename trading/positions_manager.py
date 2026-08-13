@@ -240,24 +240,31 @@ def tick_position(
             )
 
 
-def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> None:
+def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> bool:
     """Chase the fill of a still-open closing order: cancel it and re-place the
-    limit at the current market price."""
+    limit at the current market price.
+
+    Returns ``False`` only when the previous order is no longer on the book **and**
+    no replacement was placed — the pair is latched with nothing resting at Kraken,
+    which the scheduler must treat as a failed pair. Every early return that leaves
+    the original order untouched (or that has nothing left to place) returns
+    ``True``: nothing was lost, so nothing is owed beyond the next tick."""
     order_id = pos.get("closing_order_id")
     if not order_id:
-        return
+        return True  # nothing to chase; the re-place branch owns this state
     state = get_order_state(order_id)
     if state is None or state.status != "open":
         # A pending order isn't on the book yet, so cancel/replace is pure churn;
-        # terminal states are is_closing_complete's job.
-        return
+        # terminal states are is_closing_complete's job. Either way the order was
+        # never cancelled here, so nothing changed.
+        return True
     if state.vol_exec > 0:
-        return  # executing at its price; don't fragment the fill
+        return True  # executing at its price; don't fragment the fill
     current_price = last_prices[pair]
     if round_price(pair, current_price) == round_price(pair, pos.get("closing_price")):
-        return  # identical limit; re-placing would only lose queue priority
+        return True  # identical limit; re-placing would only lose queue priority
     if not cancel_order(order_id):
-        return  # likely filled in the race window; next tick resolves it
+        return True  # cancel unconfirmed: the order likely still rests, or filled
 
     # A fill can land between the vol_exec check above and the cancel call just
     # completed: the cancel still succeeds (a cancellable remainder existed) but
@@ -276,7 +283,9 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
             "not placing a replacement. Next tick's terminal-status handling will resize the position.",
             to_telegram=True,
         )
-        return
+        # The cancel *was* confirmed, so the exit is off the book and nothing
+        # replaced it: this is an unmanaged latched pair, not a benign no-op.
+        return False
 
     side = pos["side"]
     volume = float(pos.get("volume", 0.0))
@@ -286,7 +295,9 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
             f"[{pair}] Closing order {order_id} left no remainder after cancel "
             f"(vol_exec={post_cancel_state.vol_exec:.8f} of {volume:.8f}); not placing a replacement."
         )
-        return
+        # Fully executed during the cancel window: nothing is owed, and
+        # is_closing_complete finalizes the trade on the next tick.
+        return True
     if post_cancel_state.vol_exec > 0:
         logging.warning(
             f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
@@ -298,7 +309,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     new_order = place_limit_order(pair, side, current_price, remaining)
     if not new_order:
         logging.error("Failed to re-place closing order after cancel.", to_telegram=True)
-        return
+        return False  # cancelled exit, no replacement: the pair is unmanaged
     pos["volume"] = remaining
     pos.update(
         {
@@ -310,6 +321,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         f"[{pair}] 🔁 Repriced closing {side.upper()} order to {round_price(pair, current_price):,}€",
         to_telegram=True,
     )
+    return True
 
 
 def manage_closing_order(
@@ -322,15 +334,16 @@ def manage_closing_order(
     """Drive an owed exit toward a resting order.
 
     Owns every state between the stop breach and the fill: chase the price of a
-    live order, or place one when none rests. Returns False only when a placement
-    was attempted and failed, so the scheduler can mark the pair failed — a
-    position dropped by ``refresh_position`` is a resolved pair, not a failure."""
+    live order, or place one when none rests. Returns False when the pair is left
+    latched with nothing resting at Kraken — a placement was attempted and failed,
+    or a reprice cancelled the resting exit without replacing it — so the scheduler
+    can mark the pair failed. A position dropped by ``refresh_position`` is a
+    resolved pair, not a failure."""
     if not pos or not pos.get("stop_at"):
         return True
 
     if pos.get("closing_order_id"):
-        reprice_closing_order(pair, pos, last_prices)
-        return True
+        return reprice_closing_order(pair, pos, last_prices)
 
     if not refresh_position(pair, pos, balance, last_prices, trailing_state):
         return True
@@ -358,7 +371,10 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
 
         closing_order = place_limit_order(pair, side, current_price, volume)
         if not closing_order:
-            logging.error(f"[{pair}] Failed to place the closing order; the exit stays owed and is retried next tick.")
+            logging.error(
+                f"[{pair}] Failed to place the closing order; the exit stays owed and is retried next tick.",
+                to_telegram=first_attempt,
+            )
             return False
 
         pos.update(
@@ -370,6 +386,9 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
         )
         return True
     except Exception as e:
-        # Recoverable: scheduler must keep ticking; surface failure via Telegram.
-        logging.error(f"Failed to close trailing position: {e}", to_telegram=True)
+        # Recoverable: the scheduler must keep ticking. Gated on the first attempt
+        # like the breach line — the manager retries every tick, so a deterministic
+        # exception would otherwise send one Telegram per tick forever. Persistence
+        # is covered by the consecutive-failure streak alert.
+        logging.error(f"Failed to close trailing position: {e}", to_telegram=first_attempt)
         return False

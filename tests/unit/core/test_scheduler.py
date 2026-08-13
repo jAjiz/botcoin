@@ -210,6 +210,7 @@ def test_trading_session_fails_the_pair_when_the_owed_exit_cannot_be_placed(monk
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
     monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
     monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: False)
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a latched position"))
     saved: list = []
     monkeypatch.setattr(db, "save_trailing_state", lambda pair, state: saved.append((pair, state)))
     calls = _patch_finalize(monkeypatch)
@@ -217,7 +218,7 @@ def test_trading_session_fails_the_pair_when_the_owed_exit_cannot_be_placed(monk
     scheduler.trading_session()
 
     assert calls[0]["status"] == "failed"
-    assert "XBTEUR" in calls[0]["log_messages"]
+    assert "Could not place the owed exit order" in calls[0]["log_messages"]
 
 
 def test_trading_session_replaces_a_dead_closing_order_on_the_same_tick(monkeypatch):

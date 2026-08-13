@@ -763,14 +763,14 @@ def test_save_trailing_state_with_optional_fields(monkeypatch):
     assert saved.closing_order_id == "close_123"
 
 
-def test_trailing_record_round_trips_stop_at(monkeypatch):
+def test_trailing_record_round_trips_stop_at():
     _breach = datetime(2026, 4, 1, 11, 15, 0, tzinfo=UTC)
     record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry(stop_at=_breach))
     assert record.stop_at == _breach
     assert _trailing_record_to_state_entry(record)["stop_at"] == _breach
 
 
-def test_trailing_record_omits_stop_at_when_null(monkeypatch):
+def test_trailing_record_omits_stop_at_when_null():
     record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry())
     assert "stop_at" not in _trailing_record_to_state_entry(record)
 
