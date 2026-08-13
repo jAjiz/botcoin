@@ -123,7 +123,7 @@ helpers so the function itself is a dispatcher, not a 60-line block:
 | Sub-state | Branch |
 | --- | --- |
 | no `stop_at` | return `True` — the position is open, nothing owed |
-| `closing_order_id` set | today's `reprice_closing_order` body, unchanged |
+| `closing_order_id` set | `reprice_closing_order`, whose `bool` return propagates out |
 | `stop_at` set, no `closing_order_id` | **re-place**: `refresh_position`, then `close_position` |
 
 The re-place branch calls `refresh_position` first, for two reasons. A latched
