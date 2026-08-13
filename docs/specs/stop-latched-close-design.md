@@ -2,7 +2,7 @@
 
 **Status:** Draft — ready for an implementation plan
 **Date:** 2026-08-12
-**Ships before:** [`idempotent-order-placement-design.md`](idempotent-order-placement-design.md), which is revised to sit on top of this (see §7)
+**Ships before:** the `cl_ord_id` idempotency work, tracked in `docs/BACKLOG.md`. That spec is revised to sit on top of this one (see §7); it is not on `main` yet, so it is deliberately not linked here.
 
 ## Problem
 
@@ -136,20 +136,31 @@ branch deliberately does **not** refresh — its volume must match what rests at
 Kraken, which is what PR #64's remainder sizing computes.
 
 `close_position` gains a `bool` return (placed / not placed) so the dispatcher
-can report upward.
+can report upward. `reprice_closing_order` gains one too, and the dispatcher
+returns it: the reprice path can cancel the resting exit and then fail to place
+a replacement, which leaves the pair just as unmanaged as a failed placement.
 
-**`False` means "could not drive", not "the position is gone".** A drop by
-`refresh_position` returns `True`: the pair was resolved, there is nothing left
-to place, and marking it failed would alert on a normal dust outcome. Only a
-placement that was attempted and failed returns `False`.
+**`False` means "the pair is latched with nothing resting at Kraken", not "the
+position is gone".** A drop by `refresh_position` returns `True`: the pair was
+resolved, there is nothing left to place, and marking it failed would alert on a
+normal dust outcome. `False` covers exactly two shapes — a placement attempted
+and failed, and a confirmed cancel with no replacement placed (a failed or
+non-terminal post-cancel re-query, or a failed `place_limit_order`). Every
+`reprice_closing_order` early return that leaves the original order on the book
+returns `True`.
 
 One ordering consequence to accept deliberately: the manager runs *before*
 `create_position` in the per-pair block, so a drop here frees the pair to open a
 fresh position on the same tick, where a drop inside `tick_position` (which runs
-after) would wait a tick. It is harmless — `create_position` refuses below
-`MIN_VALUE` using the same `calculate_position` call that triggered the drop, so
-the only reachable case is the inventory manager legitimately choosing a new
-position from the current balance, one tick earlier than before.
+after) would wait a tick. It is harmless, but not because the two calls agree:
+`refresh_position` passes `force_side=side` (`positions_manager.py:113`) while
+`create_position` does not (`:19`), so the latter picks whichever of
+`buy_value`/`sell_value` is larger. A latched SELL dropped for a sub-`MIN_VALUE`
+sell remainder can therefore open a **BUY** on the same tick. That is ordinary
+inventory rebalancing — the same decision `create_position` would have made a
+tick later before this change — and the new position is still refused below
+`MIN_VALUE` on its own side. The only thing this ordering changes is *when* it
+happens.
 
 ### 4. Failure reporting: `failed_pairs`, not a per-tick message
 
@@ -224,7 +235,10 @@ position management" to "re-placing the exit". The finalize path is untouched;
 
 ### 7. What this changes in the idempotency spec
 
-This spec makes that one smaller, and it must be revised in the same PR series:
+> This section applies to the `cl_ord_id` idempotency work when it lands on its
+> own branch; that spec is not on `main`, and rebasing it is out of scope here.
+
+This spec makes that one smaller, and it must be revised when it lands:
 
 - **§4 resolver.** The "order never landed" outcome no longer clears the closing
   fields and reopens the position. It clears `closing_request_id` /
@@ -269,7 +283,7 @@ This spec makes that one smaller, and it must be revised in the same PR series:
 | Price recovers above the stop after a failed placement | Irrelevant — the exit stands and is re-placed. This is the behaviour change. |
 | ATR drifts after a failed placement | Irrelevant — no recalibration runs on a latched position. |
 | Latched position falls below `MIN_VALUE` | `refresh_position` drops it, the `finally` deletes the row, the retry loop ends. The manager returns `True` — a drop is not a failure. |
-| A dropped pair reaches `create_position` on the same tick | Possible now that the manager precedes step 5. `create_position` refuses under `MIN_VALUE` on the same computation, so only a genuinely fundable new position opens — one tick earlier than before. |
+| A dropped pair reaches `create_position` on the same tick | Possible now that the manager precedes step 5. `create_position` runs its own unforced `calculate_position`, so it may open the **opposite** side (a dropped SELL becoming a BUY) — normal inventory rebalancing, still refused under `MIN_VALUE`, one tick earlier than before. |
 | Order `canceled`/`expired` with a remainder | `is_closing_complete` clears the order fields and keeps `stop_at`; the same tick re-places. |
 | Order canceled but fully executed | Unchanged — finalized by `is_closing_complete`, row deleted. |
 | Operator cancels the closing order by hand at Kraken | The bot re-places it. Deliberate: the exit is owed until it is filled. Cancelling an exit means removing the position's state, not cancelling its order. |

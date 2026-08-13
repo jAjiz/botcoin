@@ -176,7 +176,9 @@ def trading_session() -> None:
                     if trailing_state.get(pair):
                         logging.warning(
                             f"TRADING_ENABLED is false but {pair} has a stored position; "
-                            "it is NOT being managed (trailing stop frozen)."
+                            "it is NOT being managed (trailing stop frozen). If the position "
+                            "is latched (stop_at set), the owed exit is never placed either — "
+                            "a breached stop stays unfilled until trading is re-enabled."
                         )
                     continue
 
