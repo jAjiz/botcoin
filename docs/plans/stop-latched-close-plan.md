@@ -861,7 +861,6 @@ git commit -m "fix(positions): a position whose stop fired is not open"
 **Files:**
 - Modify: `CLAUDE.md` (trading-loop steps, invariants, position lifecycle, Design choices)
 - Modify: `docs/BACKLOG.md`
-- Modify: `docs/specs/idempotent-order-placement-design.md`, `docs/plans/idempotent-order-placement-plan.md`
 
 - [ ] **Step 1: Update the CLAUDE.md invariant**
 
@@ -921,29 +920,11 @@ owns everything between the breach and the fill.
 - Plan: [`plans/stop-latched-close-plan.md`](plans/stop-latched-close-plan.md)
 ```
 
-- [ ] **Step 5: Revise the idempotency spec and plan**
-
-Apply §7 of this spec to `docs/specs/idempotent-order-placement-design.md`:
-
-- §2: `down_revision` becomes `"20260812_01"`; add `stop_at` to the field list.
-- §3: `close_position` no longer writes `closing_requested_at` — the latch is
-  already set; it writes `closing_request_id` and `closing_price`.
-- §4: the resolver's "absent" outcome clears `closing_request_id` and
-  `closing_price` only, keeps `stop_at`, and falls through to the re-place
-  branch instead of reopening the position.
-- §5: delete the standalone scheduler step 3a. Resolution moves inside
-  `manage_closing_order`, in front of its re-place branch; a failed lookup is the
-  same `False` return as a failed placement.
-- §6: delete — `is_open` already excludes a latched position.
-
-Mirror the same changes in `docs/plans/idempotent-order-placement-plan.md`
-(Tasks 3, 6, 7, 8, 9 and both acceptance checklists).
-
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add CLAUDE.md docs/
-git commit -m "docs: record the stop-latched close and rebase the idempotency spec"
+git commit -m "docs: record the stop-latched close"
 ```
 
 ---
