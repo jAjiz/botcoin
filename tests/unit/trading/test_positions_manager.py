@@ -1051,3 +1051,56 @@ def test_tick_position_recalibrates_stop_when_stop_atr_out_of_range(monkeypatch)
     # recalibration passes trailing_price as the reference, not current_price
     assert pos["stop_price"] == 70.0
     assert pos["stop_atr"] == 5.0
+
+
+# ============================================================================
+# manage_closing_order
+# ============================================================================
+
+
+def test_manage_closing_order_is_a_noop_for_an_open_position(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "get_order_state", lambda _: pytest.fail("no API call"))
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a: pytest.fail("no placement"))
+
+    pos = {"side": "sell", "volume": 0.5, "entry_price": 100.0}
+    assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 100.0}, {}) is True
+
+
+def test_manage_closing_order_reprices_a_live_order(monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr(positions_manager, "reprice_closing_order", lambda *a: calls.append(a))
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a: pytest.fail("must not re-place"))
+
+    pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00", "closing_order_id": "ORD001"}
+    assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 105.0}, {}) is True
+    assert calls == [("XBTEUR", pos, {"XBTEUR": 105.0})]
+
+
+def test_manage_closing_order_refreshes_then_replaces_when_no_order_rests(monkeypatch) -> None:
+    """A latched position never reaches tick_position, so nothing else resizes it
+    — and a stale volume may be exactly why the last attempt was rejected."""
+    order: list[str] = []
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: order.append("refresh") or True)
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a: order.append("close") or True)
+
+    pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00"}
+    assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 100.0}, {}) is True
+    assert order == ["refresh", "close"]
+
+
+def test_manage_closing_order_reports_a_failed_replacement(monkeypatch) -> None:
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a: False)
+
+    pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00"}
+    assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 100.0}, {}) is False
+
+
+def test_manage_closing_order_succeeds_when_the_position_is_dropped(monkeypatch) -> None:
+    """A drop is a resolved pair, not a failure: there is nothing left to place,
+    and it is the natural end of an otherwise endless retry loop."""
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: False)
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a: pytest.fail("nothing to place"))
+
+    pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00"}
+    assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 100.0}, {}) is True

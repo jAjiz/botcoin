@@ -308,6 +308,31 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     )
 
 
+def manage_closing_order(
+    pair: str,
+    pos: dict[str, Any],
+    balance: dict[str, Any],
+    last_prices: dict[str, float],
+    trailing_state: dict[str, Any],
+) -> bool:
+    """Drive an owed exit toward a resting order.
+
+    Owns every state between the stop breach and the fill: chase the price of a
+    live order, or place one when none rests. Returns False only when a placement
+    was attempted and failed, so the scheduler can mark the pair failed — a
+    position dropped by ``refresh_position`` is a resolved pair, not a failure."""
+    if not pos or not pos.get("stop_at"):
+        return True
+
+    if pos.get("closing_order_id"):
+        reprice_closing_order(pair, pos, last_prices)
+        return True
+
+    if not refresh_position(pair, pos, balance, last_prices, trailing_state):
+        return True
+    return close_position(pair, pos, last_prices)
+
+
 def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> bool:
     """Place the exit order for a position whose stop was hit.
 
