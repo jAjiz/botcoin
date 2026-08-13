@@ -310,30 +310,39 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     )
 
 
-def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> None:
+def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> bool:
+    """Place the exit order for a position whose stop was hit.
+
+    ``stop_at`` is latched first, before anything that can fail, so a rejected or
+    lost placement still records that an exit is owed — otherwise the next tick
+    would re-enter ``tick_position`` and could widen the stop past the breach.
+    Returns True only when an order is resting at Kraken."""
+    first_attempt = "stop_at" not in pos
     try:
+        pos.setdefault("stop_at", now_utc())
         side = pos["side"]
         stop_price = pos["stop_price"]
         current_price = last_prices[pair]
         volume = float(pos.get("volume", 0.0))
         logging.info(
             f"[{pair}] ⛔ Stop price {round_price(pair, stop_price):,}€ hitted: placing LIMIT {side.upper()} order | {volume:.8f} @ {round_price(pair, current_price):,}€",
-            to_telegram=True,
+            to_telegram=first_attempt,
         )
 
         closing_order = place_limit_order(pair, side, current_price, volume)
         if not closing_order:
-            logging.error("Failed to place closing order. Aborting close.", to_telegram=True)
-            return
+            logging.error(f"[{pair}] Failed to place the closing order; the exit stays owed and is retried next tick.")
+            return False
 
         pos.update(
             {
                 "volume": round(volume, 8),
                 "closing_price": current_price,
                 "closing_order_id": closing_order,
-                "stop_at": now_utc(),
             }
         )
+        return True
     except Exception as e:
         # Recoverable: scheduler must keep ticking; surface failure via Telegram.
         logging.error(f"Failed to close trailing position: {e}", to_telegram=True)
+        return False

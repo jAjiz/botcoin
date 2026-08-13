@@ -273,7 +273,7 @@ def test_close_position_leaves_position_untouched_when_place_order_fails(monkeyp
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
     prices = {"XBTEUR": 90.0}
 
-    positions_manager.close_position("XBTEUR", pos, prices)
+    assert positions_manager.close_position("XBTEUR", pos, prices) is False
     assert "closing_order_id" not in pos
 
 
@@ -287,8 +287,84 @@ def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatc
     prices = {"XBTEUR": 90.0}
 
     # Must not raise: the scheduler has to keep ticking the other pairs.
-    positions_manager.close_position("XBTEUR", pos, prices)
+    assert positions_manager.close_position("XBTEUR", pos, prices) is False
     assert "closing_order_id" not in pos
+
+
+def test_close_position_latches_stop_at_before_placing(monkeypatch) -> None:
+    """The latch must be durable before the order goes out: a lost or rejected
+    placement still means the exit is owed."""
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+    seen: list = []
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *args: seen.append(pos.get("stop_at")) or "ORDER123",
+    )
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is True
+    assert seen == [_now]
+
+
+def test_close_position_latches_stop_at_when_placement_fails(monkeypatch) -> None:
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
+    assert pos["stop_at"] == _now
+    assert "closing_order_id" not in pos
+
+
+def test_close_position_latches_stop_at_when_placement_raises(monkeypatch) -> None:
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+
+    def boom(*_args):
+        raise Exception("kraken exploded")
+
+    monkeypatch.setattr(positions_manager, "place_limit_order", boom)
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
+    assert pos["stop_at"] == _now
+
+
+def test_close_position_does_not_overwrite_an_existing_stop_at(monkeypatch) -> None:
+    """A retry records the first breach, not the attempt that finally landed."""
+    _breach = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, 13, 0, tzinfo=UTC))
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": _breach}
+
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is True
+    assert pos["stop_at"] == _breach
+
+
+def test_close_position_announces_the_breach_only_on_the_first_attempt(monkeypatch) -> None:
+    """Retries must not re-send the breach line every tick during an outage."""
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
+    captured: list[bool] = []
+    monkeypatch.setattr(positions_manager.logging, "info", lambda msg, to_telegram=False: captured.append(to_telegram))
+
+    retry = {
+        "side": "sell",
+        "entry_price": 100.0,
+        "stop_price": 95.0,
+        "volume": 1.0,
+        "stop_at": datetime(2026, 1, 1, 11, 0, tzinfo=UTC),
+    }
+    positions_manager.close_position("XBTEUR", retry, {"XBTEUR": 90.0})
+
+    assert captured == [False]
 
 
 # ============================================================================
