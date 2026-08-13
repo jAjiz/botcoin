@@ -131,8 +131,7 @@ def is_open(pos: dict[str, Any] | None) -> bool:
 def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     """Check if the closing order is filled. If so, update pos with the real fill
     price and PnL. Any terminal outcome that cannot be finalized instead clears the
-    closing fields: leaving them set would freeze the position forever, since the
-    status can never change again and ``is_open`` stays False."""
+    dead order's fields, keeping `stop_at` so the same tick re-places the exit."""
     if not pos:
         return False
     closing_order = pos.get("closing_order_id")
@@ -150,11 +149,10 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     fully_executed = state.vol > 0 and state.vol_exec >= state.vol
     if (state.status != "closed" and not fully_executed) or not state.avg_price or state.avg_price <= 0:
         logging.warning(
-            f"Closing order {closing_order} ended as {state.status} with no usable fill price; "
-            "resuming position management.",
+            f"Closing order {closing_order} ended as {state.status} with no usable fill price; re-placing the exit.",
             to_telegram=True,
         )
-        for key in ("closing_order_id", "closing_price", "stop_at"):
+        for key in ("closing_order_id", "closing_price"):
             pos.pop(key, None)
         return False
     if state.status != "closed":

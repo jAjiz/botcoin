@@ -440,7 +440,7 @@ def test_is_closing_complete_pnl_for_buy_side(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("status", ["canceled", "expired"])
-def test_is_closing_complete_clears_fields_and_reopens_position_when_order_dead(monkeypatch, status) -> None:
+def test_is_closing_complete_clears_fields_and_keeps_the_exit_owed_when_order_dead(monkeypatch, status) -> None:
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
@@ -457,7 +457,8 @@ def test_is_closing_complete_clears_fields_and_reopens_position_when_order_dead(
     assert positions_manager.is_closing_complete(pos) is False
     assert "closing_order_id" not in pos
     assert "closing_price" not in pos
-    assert "stop_at" not in pos
+    # The exit is still owed: only the dead order's own fields are cleared.
+    assert pos["stop_at"] == "2026-07-26T00:00:00+00:00"
     assert positions_manager.is_open(pos) is True
 
 
@@ -556,7 +557,7 @@ def test_is_closing_complete_announces_a_finalized_terminal_order(monkeypatch) -
         OrderState(status="some-status-kraken-invented", avg_price=68200.0, vol_exec=0.5),
     ],
 )
-def test_is_closing_complete_reopens_position_on_any_unfinalizable_terminal_state(monkeypatch, state) -> None:
+def test_is_closing_complete_keeps_the_exit_owed_on_any_unfinalizable_terminal_state(monkeypatch, state) -> None:
     """A terminal status we cannot finalize must clear the closing fields like a
     cancel does. Leaving them set would freeze the position forever: the status
     can never change again, reprice declines a non-open order, and is_open stays
@@ -577,7 +578,8 @@ def test_is_closing_complete_reopens_position_on_any_unfinalizable_terminal_stat
     assert positions_manager.is_closing_complete(pos) is False
     assert "closing_order_id" not in pos
     assert "closing_price" not in pos
-    assert "stop_at" not in pos
+    # The exit is still owed: only the dead order's own fields are cleared.
+    assert pos["stop_at"] == "2026-07-26T00:00:00+00:00"
     assert "pnl_percent" not in pos
     assert positions_manager.is_open(pos) is True
     # Must reach Telegram: an exit that neither filled nor cancelled cleanly is
