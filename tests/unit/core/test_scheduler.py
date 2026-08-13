@@ -187,10 +187,7 @@ def test_trading_session_manages_a_latched_position_with_no_resting_order(monkey
     managed: list = []
     monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: managed.append(a) or True)
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("position still exists"))
-    # The mock doesn't restore closing_order_id the way a real placement would,
-    # so is_open (unchanged in this task) still reads True; stub the tick so the
-    # test isolates manage_closing_order without exercising the real tick path.
-    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a latched position"))
     calls = _patch_finalize(monkeypatch)
 
     scheduler.trading_session()
@@ -244,9 +241,7 @@ def test_trading_session_replaces_a_dead_closing_order_on_the_same_tick(monkeypa
     managed: list = []
     monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: managed.append(a[1]) or True)
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("position still exists"))
-    # Same reason as above: the mock leaves closing_order_id cleared, so is_open
-    # (unchanged in this task) reads True; stub the tick to isolate this branch.
-    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: None)
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a latched position"))
     monkeypatch.setattr(db, "save_trailing_state", lambda *a: None)
     calls = _patch_finalize(monkeypatch)
 
@@ -255,6 +250,28 @@ def test_trading_session_replaces_a_dead_closing_order_on_the_same_tick(monkeypa
     # Same tick: the dead order is gone and the manager still saw the latched position.
     assert len(managed) == 1
     assert "closing_order_id" not in managed[0]
+    assert calls[0]["status"] == "completed"
+
+
+def test_trading_session_never_ticks_a_latched_position(monkeypatch):
+    """The defect this replaces: a failed placement left the position open, so the
+    next tick could widen the stop past the breach or re-arm the trail."""
+    _setup_one_pair_loop(
+        monkeypatch,
+        trailing_state={
+            "side": "sell",
+            "entry_price": 50000.0,
+            "stop_at": datetime(2026, 5, 12, 9, 0, 0, tzinfo=UTC),
+        },
+    )
+    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
+    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
+    monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: True)
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not manage a latched position"))
+    calls = _patch_finalize(monkeypatch)
+
+    scheduler.trading_session()
+
     assert calls[0]["status"] == "completed"
 
 

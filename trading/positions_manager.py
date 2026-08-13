@@ -125,7 +125,10 @@ def refresh_position(
 
 
 def is_open(pos: dict[str, Any] | None) -> bool:
-    return bool(pos) and not pos.get("closing_order_id")
+    """A position is open only until its stop fires. ``closing_order_id`` needs no
+    clause here: it can only be set by ``close_position``, which latches
+    ``stop_at`` first."""
+    return bool(pos) and not pos.get("stop_at")
 
 
 def is_closing_complete(pos: dict[str, Any] | None) -> bool:

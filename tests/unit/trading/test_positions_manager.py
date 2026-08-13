@@ -377,8 +377,14 @@ def test_is_open_returns_false_for_falsy_pos(pos) -> None:
     assert positions_manager.is_open(pos) is False
 
 
-def test_is_open_returns_false_when_closing_order_present() -> None:
-    assert positions_manager.is_open({"side": "sell", "closing_order_id": "ORD001"}) is False
+def test_is_open_returns_false_when_stop_was_hit() -> None:
+    """A position whose stop fired is not open, whether or not an order was placed."""
+    assert positions_manager.is_open({"stop_at": "2026-07-26T00:00:00+00:00"}) is False
+
+
+def test_is_open_returns_false_while_a_closing_order_rests() -> None:
+    pos = {"stop_at": "2026-07-26T00:00:00+00:00", "closing_order_id": "ORD001"}
+    assert positions_manager.is_open(pos) is False
 
 
 def test_is_open_returns_true_when_no_closing_order() -> None:
@@ -459,7 +465,7 @@ def test_is_closing_complete_clears_fields_and_keeps_the_exit_owed_when_order_de
     assert "closing_price" not in pos
     # The exit is still owed: only the dead order's own fields are cleared.
     assert pos["stop_at"] == "2026-07-26T00:00:00+00:00"
-    assert positions_manager.is_open(pos) is True
+    assert positions_manager.is_open(pos) is False
 
 
 def test_is_closing_complete_dead_order_alerts_with_the_order_id_and_status(monkeypatch) -> None:
@@ -581,7 +587,7 @@ def test_is_closing_complete_keeps_the_exit_owed_on_any_unfinalizable_terminal_s
     # The exit is still owed: only the dead order's own fields are cleared.
     assert pos["stop_at"] == "2026-07-26T00:00:00+00:00"
     assert "pnl_percent" not in pos
-    assert positions_manager.is_open(pos) is True
+    assert positions_manager.is_open(pos) is False
     # Must reach Telegram: an exit that neither filled nor cancelled cleanly is
     # not something any other signal would surface to the operator.
     assert captured and captured[0][1] is True
