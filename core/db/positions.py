@@ -29,7 +29,7 @@ def _state_entry_to_trailing_record(pair: str, position_data: dict[str, Any]) ->
         stop_atr=_to_decimal(position_data.get("stop_atr")),
         closing_order_id=position_data.get("closing_order_id"),
         closing_price=_to_decimal(position_data.get("closing_price")),
-        closing_requested_at=position_data.get("closing_requested_at"),
+        stop_at=position_data.get("stop_at"),
     )
 
 
@@ -54,8 +54,8 @@ def _trailing_record_to_state_entry(record: TrailingState) -> dict[str, Any]:
         state_entry["closing_order_id"] = record.closing_order_id
     if record.closing_price is not None:
         state_entry["closing_price"] = float(record.closing_price)
-    if record.closing_requested_at is not None:
-        state_entry["closing_requested_at"] = record.closing_requested_at
+    if record.stop_at is not None:
+        state_entry["stop_at"] = record.stop_at
     return state_entry
 
 

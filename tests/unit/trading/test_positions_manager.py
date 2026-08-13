@@ -262,7 +262,7 @@ def test_close_position_updates_position_on_success(monkeypatch) -> None:
     positions_manager.close_position("XBTEUR", pos, prices)
 
     assert pos["closing_order_id"] == "ORDER123"
-    assert pos["closing_requested_at"] == _now
+    assert pos["stop_at"] == _now
     assert pos["closing_price"] == 90.0
     assert "pnl_percent" not in pos
 
@@ -376,12 +376,12 @@ def test_is_closing_complete_clears_fields_and_reopens_position_when_order_dead(
         "entry_price": 68000.0,
         "closing_order_id": "ORD001",
         "closing_price": 68500.0,
-        "closing_requested_at": "2026-07-26T00:00:00+00:00",
+        "stop_at": "2026-07-26T00:00:00+00:00",
     }
     assert positions_manager.is_closing_complete(pos) is False
     assert "closing_order_id" not in pos
     assert "closing_price" not in pos
-    assert "closing_requested_at" not in pos
+    assert "stop_at" not in pos
     assert positions_manager.is_open(pos) is True
 
 
@@ -496,12 +496,12 @@ def test_is_closing_complete_reopens_position_on_any_unfinalizable_terminal_stat
         "entry_price": 68000.0,
         "closing_order_id": "ORD001",
         "closing_price": 68500.0,
-        "closing_requested_at": "2026-07-26T00:00:00+00:00",
+        "stop_at": "2026-07-26T00:00:00+00:00",
     }
     assert positions_manager.is_closing_complete(pos) is False
     assert "closing_order_id" not in pos
     assert "closing_price" not in pos
-    assert "closing_requested_at" not in pos
+    assert "stop_at" not in pos
     assert "pnl_percent" not in pos
     assert positions_manager.is_open(pos) is True
     # Must reach Telegram: an exit that neither filled nor cancelled cleanly is
@@ -539,7 +539,7 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
         "volume": 0.5,
         "closing_order_id": "OLDORDER",
         "closing_price": 100.0,
-        "closing_requested_at": _requested_at,
+        "stop_at": _requested_at,
     }
     positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0})
 
@@ -547,8 +547,8 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
     assert place_calls == [("XBTEUR", "sell", 105.0, 0.5)]
     assert pos["closing_order_id"] == "NEWORDER1"
     assert pos["closing_price"] == 105.0
-    # A reprice must not overwrite when the exit was first requested.
-    assert pos["closing_requested_at"] == _requested_at
+    # A reprice must not overwrite when the stop was hit.
+    assert pos["stop_at"] == _requested_at
 
 
 def test_reprice_closing_order_skips_when_partially_filled(monkeypatch) -> None:

@@ -154,7 +154,7 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
             "resuming position management.",
             to_telegram=True,
         )
-        for key in ("closing_order_id", "closing_price", "closing_requested_at"):
+        for key in ("closing_order_id", "closing_price", "stop_at"):
             pos.pop(key, None)
         return False
     if state.status != "closed":
@@ -331,7 +331,7 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
                 "volume": round(volume, 8),
                 "closing_price": current_price,
                 "closing_order_id": closing_order,
-                "closing_requested_at": now_utc(),
+                "stop_at": now_utc(),
             }
         )
     except Exception as e:
