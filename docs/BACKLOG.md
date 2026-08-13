@@ -48,6 +48,17 @@ the Deferred card below.
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
 - Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
 
+### Stop-Latched Close
+
+A failed `place_limit_order` used to leave no trace, so the next tick re-entered
+`tick_position` and could widen the stop past the breach or re-arm the trail: an
+API failure revoked a strategy decision. `stop_at` now latches the breach before
+the placement attempt, `is_open` is `not stop_at`, and `manage_closing_order`
+owns everything between the breach and the fill.
+
+- Spec: [`specs/stop-latched-close-design.md`](specs/stop-latched-close-design.md)
+- Plan: [`plans/stop-latched-close-plan.md`](plans/stop-latched-close-plan.md)
+
 ---
 
 ## 📋 Planned

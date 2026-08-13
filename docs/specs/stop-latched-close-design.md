@@ -88,10 +88,11 @@ def is_open(pos: dict[str, Any] | None) -> bool:
     return bool(pos) and not pos.get("stop_at")
 ```
 
-`closing_order_id` no longer needs to appear here: it can only ever be set by
-`close_position`, which sets `stop_at` first, so `stop_at` subsumes it. This is
-the single choke point — a latched position can never reach `tick_position`,
-so no recalibration and no bounce can un-decide the exit.
+``closing_order_id`` needs no clause here: it is set only by ``close_position``,
+which latches ``stop_at`` first, or by ``reprice_closing_order``, which only
+ever runs on an already-latched position. Either way `stop_at` subsumes it.
+This is the single choke point — a latched position can never reach
+`tick_position`, so no recalibration and no bounce can un-decide the exit.
 
 **Why a dedicated field rather than reusing an existing one.** The latch must
 *never* be cleared while the position lives; every other closing field must be
