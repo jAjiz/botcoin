@@ -126,9 +126,9 @@ def refresh_position(
 
 def is_open(pos: dict[str, Any] | None) -> bool:
     """A position is open only until its stop fires. ``closing_order_id`` needs no
-    clause here: it is set only by ``close_position``, which latches ``stop_at``
-    first, or by ``reprice_closing_order``, which only ever runs on an
-    already-latched position."""
+    clause here: it is set only by ``close_position`` or ``reprice_closing_order``,
+    and both only ever run once ``stop_at`` is already latched — by
+    ``tick_position`` on the breach tick, or already present on a retry."""
     return bool(pos) and not pos.get("stop_at")
 
 
@@ -228,7 +228,12 @@ def tick_position(
         if (side == "sell" and current_price <= pos["stop_price"]) or (
             side == "buy" and current_price >= pos["stop_price"]
         ):
-            close_position(pair, pos, last_prices)
+            pos["stop_at"] = now_utc()
+            logging.info(
+                f"[{pair}] ⛔ Stop price {round_price(pair, pos['stop_price']):,}€ hitted: placing LIMIT {side.upper()} order | {pos['volume']:.8f} @ {round_price(pair, current_price):,}€",
+                to_telegram=True,
+            )
+            close_position(pair, pos, last_prices, first_attempt=True)
             return
 
         if (side == "sell" and current_price > pos["trailing_price"]) or (
@@ -347,48 +352,45 @@ def manage_closing_order(
 
     if not refresh_position(pair, pos, balance, last_prices, trailing_state):
         return True
-    return close_position(pair, pos, last_prices)
+
+    return close_position(pair, pos, last_prices, first_attempt=False)
 
 
-def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> bool:
+def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float], first_attempt: bool) -> bool:
     """Place the exit order for a position whose stop was hit.
 
-    ``stop_at`` is latched first, before anything that can fail, so a rejected or
-    lost placement still records that an exit is owed — otherwise the next tick
-    would re-enter ``tick_position`` and could widen the stop past the breach.
-    Returns True only when an order is resting at Kraken."""
-    first_attempt = "stop_at" not in pos
+    Callers latch ``stop_at`` before ever reaching here — ``tick_position`` on the
+    breach tick, or an earlier attempt on a retry — so a rejected or lost placement
+    still finds the exit recorded as owed. ``first_attempt`` gates the
+    placement-failure messages to one Telegram per breach episode, since
+    ``manage_closing_order`` calls this on every retry tick. Returns True only when
+    an order is resting at Kraken."""
     try:
-        pos.setdefault("stop_at", now_utc())
         side = pos["side"]
-        stop_price = pos["stop_price"]
         current_price = last_prices[pair]
         volume = float(pos.get("volume", 0.0))
-        logging.info(
-            f"[{pair}] ⛔ Stop price {round_price(pair, stop_price):,}€ hitted: placing LIMIT {side.upper()} order | {volume:.8f} @ {round_price(pair, current_price):,}€",
-            to_telegram=first_attempt,
-        )
 
         closing_order = place_limit_order(pair, side, current_price, volume)
         if not closing_order:
             logging.error(
-                f"[{pair}] Failed to place the closing order; the exit stays owed and is retried next tick.",
+                f"[{pair}] Failed to place the closing order, it remains owed and will be retried every tick.",
                 to_telegram=first_attempt,
             )
             return False
 
         pos.update(
             {
-                "volume": round(volume, 8),
                 "closing_price": current_price,
                 "closing_order_id": closing_order,
             }
         )
+
+        if not first_attempt:
+            logging.info(
+                f"[{pair}] 🏁 Placed closing {side.upper()} order at {round_price(pair, current_price):,}€ for {volume:.8f} vol",
+                to_telegram=True,
+            )
         return True
     except Exception as e:
-        # Recoverable: the scheduler must keep ticking. Gated on the first attempt
-        # like the breach line — the manager retries every tick, so a deterministic
-        # exception would otherwise send one Telegram per tick forever. Persistence
-        # is covered by the consecutive-failure streak alert.
         logging.error(f"Failed to close trailing position: {e}", to_telegram=first_attempt)
         return False

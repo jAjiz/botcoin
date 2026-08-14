@@ -252,17 +252,14 @@ def test_refresh_position_drops_position_and_returns_false_when_below_min_value(
 
 
 def test_close_position_updates_position_on_success(monkeypatch) -> None:
-    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
 
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
 
-    positions_manager.close_position("XBTEUR", pos, prices)
+    positions_manager.close_position("XBTEUR", pos, prices, first_attempt=True)
 
     assert pos["closing_order_id"] == "ORDER123"
-    assert pos["stop_at"] == _now
     assert pos["closing_price"] == 90.0
     assert "pnl_percent" not in pos
 
@@ -270,10 +267,10 @@ def test_close_position_updates_position_on_success(monkeypatch) -> None:
 def test_close_position_leaves_position_untouched_when_place_order_fails(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
 
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
 
-    assert positions_manager.close_position("XBTEUR", pos, prices) is False
+    assert positions_manager.close_position("XBTEUR", pos, prices, first_attempt=True) is False
     assert "closing_order_id" not in pos
 
 
@@ -283,126 +280,35 @@ def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatc
 
     monkeypatch.setattr(positions_manager, "place_limit_order", boom)
 
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
 
     # Must not raise: the scheduler has to keep ticking the other pairs.
-    assert positions_manager.close_position("XBTEUR", pos, prices) is False
+    assert positions_manager.close_position("XBTEUR", pos, prices, first_attempt=True) is False
     assert "closing_order_id" not in pos
-
-
-def test_close_position_latches_stop_at_before_placing(monkeypatch) -> None:
-    """The latch must be durable before the order goes out: a lost or rejected
-    placement still means the exit is owed."""
-    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
-    seen: list = []
-    monkeypatch.setattr(
-        positions_manager,
-        "place_limit_order",
-        lambda *args: seen.append(pos.get("stop_at")) or "ORDER123",
-    )
-
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
-
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is True
-    assert seen == [_now]
-
-
-def test_close_position_latches_stop_at_when_placement_fails(monkeypatch) -> None:
-    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
-
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
-
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
-    assert pos["stop_at"] == _now
-    assert "closing_order_id" not in pos
-
-
-def test_close_position_latches_stop_at_when_placement_raises(monkeypatch) -> None:
-    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
-
-    def boom(*_args):
-        raise Exception("kraken exploded")
-
-    monkeypatch.setattr(positions_manager, "place_limit_order", boom)
-
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
-
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
-    assert pos["stop_at"] == _now
-
-
-def test_close_position_does_not_overwrite_an_existing_stop_at(monkeypatch) -> None:
-    """A retry records the first breach, not the attempt that finally landed."""
-    _breach = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, 13, 0, tzinfo=UTC))
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
-
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": _breach}
-
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is True
-    assert pos["stop_at"] == _breach
-
-
-def test_close_position_announces_the_breach_only_on_the_first_attempt(monkeypatch) -> None:
-    """Retries must not re-send the breach line every tick during an outage."""
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
-    captured: list[bool] = []
-    monkeypatch.setattr(positions_manager.logging, "info", lambda msg, to_telegram=False: captured.append(to_telegram))
-
-    retry = {
-        "side": "sell",
-        "entry_price": 100.0,
-        "stop_price": 95.0,
-        "volume": 1.0,
-        "stop_at": datetime(2026, 1, 1, 11, 0, tzinfo=UTC),
-    }
-    positions_manager.close_position("XBTEUR", retry, {"XBTEUR": 90.0})
-
-    assert captured == [False]
-
-
-def test_close_position_announces_the_breach_on_the_first_attempt(monkeypatch) -> None:
-    """The mirror of the suppression test: the breach line is the only
-    operator-facing signal at the moment the stop fires, so it must actually go
-    out. Without this, gating it to a bare False would keep the suite green."""
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
-    captured: list[bool] = []
-    monkeypatch.setattr(positions_manager.logging, "info", lambda msg, to_telegram=False: captured.append(to_telegram))
-
-    fresh = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
-    positions_manager.close_position("XBTEUR", fresh, {"XBTEUR": 90.0})
-
-    assert captured == [True]
 
 
 def test_close_position_reports_a_failed_placement_to_telegram_once(monkeypatch) -> None:
     """The manager retries every tick, so an unconditional Telegram on the
     placement failure would send one message per tick for the whole outage."""
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
     captured: list[bool] = []
     monkeypatch.setattr(positions_manager.logging, "error", lambda msg, to_telegram=False: captured.append(to_telegram))
 
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=True) is False
     assert captured == [True]
 
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
+    # Same latched position, next tick: the manager passes first_attempt=False.
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=False) is False
     assert captured == [True, False]
 
 
 def test_close_position_does_not_flood_telegram_when_the_close_keeps_raising(monkeypatch) -> None:
     """A deterministic exception (e.g. place_limit_order indexing an empty txid
-    list) recurs on every retry tick, so the generic handler is gated on the first
-    attempt too. Persistence is covered by the consecutive-failure streak alert."""
-    monkeypatch.setattr(positions_manager, "now_utc", lambda: datetime(2026, 1, 1, 12, 0, tzinfo=UTC))
+    list) recurs on every retry tick, so the generic handler is gated on
+    first_attempt too. Persistence is covered by the consecutive-failure streak
+    alert."""
 
     def boom(*_args):
         raise IndexError("list index out of range")
@@ -411,12 +317,12 @@ def test_close_position_does_not_flood_telegram_when_the_close_keeps_raising(mon
     captured: list[bool] = []
     monkeypatch.setattr(positions_manager.logging, "error", lambda msg, to_telegram=False: captured.append(to_telegram))
 
-    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0}
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=True) is False
     assert captured == [True]
 
     # Same latched position, next tick: the exception repeats, the message must not.
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
+    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=False) is False
     assert captured == [True, False]
 
 
@@ -1063,16 +969,50 @@ def test_tick_position_closes_buy_when_stop_hit(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.2)
 
     closed: list[str] = []
-    monkeypatch.setattr(positions_manager, "close_position", lambda pair, pos, prices: closed.append(pair))
+    monkeypatch.setattr(
+        positions_manager,
+        "close_position",
+        lambda pair, pos, prices, first_attempt: closed.append((pair, first_attempt)),
+    )
 
     # buy: close when current_price >= stop_price; stop_atr in range
-    pos: dict[str, Any] = {"side": "buy", "trailing_price": 80.0, "stop_price": 95.0, "stop_atr": 5.0}
+    pos: dict[str, Any] = {"side": "buy", "volume": 1.0, "trailing_price": 80.0, "stop_price": 95.0, "stop_atr": 5.0}
     trailing_state: dict[str, Any] = {"XBTEUR": pos}
     positions_manager.tick_position(
         "XBTEUR", pos, balance={}, last_prices={"XBTEUR": 96.0}, atr_val=5.0, trailing_state=trailing_state
     )
 
-    assert closed == ["XBTEUR"]
+    assert closed == [("XBTEUR", True)]
+    assert pos["stop_at"] is not None
+
+
+def test_tick_position_latches_stop_at_and_announces_the_breach_before_closing(monkeypatch) -> None:
+    """Mirrors ``activated_at``: the latch and the operator-facing announcement
+    both happen here, before ``close_position`` is ever called, so a rejected or
+    lost placement still leaves the exit recorded as owed."""
+    _now = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *_: True)
+    monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.2)
+    monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
+
+    seen_stop_at: list = []
+    captured: list[bool] = []
+    monkeypatch.setattr(positions_manager.logging, "info", lambda msg, to_telegram=False: captured.append(to_telegram))
+    monkeypatch.setattr(
+        positions_manager,
+        "close_position",
+        lambda pair, pos, prices, first_attempt: seen_stop_at.append(pos.get("stop_at")),
+    )
+
+    pos: dict[str, Any] = {"side": "sell", "volume": 1.0, "trailing_price": 100.0, "stop_price": 95.0, "stop_atr": 5.0}
+    trailing_state: dict[str, Any] = {"XBTEUR": pos}
+    positions_manager.tick_position(
+        "XBTEUR", pos, balance={}, last_prices={"XBTEUR": 90.0}, atr_val=5.0, trailing_state=trailing_state
+    )
+
+    assert pos["stop_at"] == _now
+    assert seen_stop_at == [_now]  # latched before close_position runs
+    assert captured == [True]  # the breach line is the operator's only signal
 
 
 def test_tick_position_updates_trailing_when_sell_price_moves_up(monkeypatch) -> None:
@@ -1135,7 +1075,7 @@ def test_manage_closing_order_is_a_noop_for_an_open_position(monkeypatch) -> Non
 def test_manage_closing_order_reprices_a_live_order(monkeypatch) -> None:
     calls: list = []
     monkeypatch.setattr(positions_manager, "reprice_closing_order", lambda *a: calls.append(a) or True)
-    monkeypatch.setattr(positions_manager, "close_position", lambda *a: pytest.fail("must not re-place"))
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: pytest.fail("must not re-place"))
 
     pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00", "closing_order_id": "ORD001"}
     assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 105.0}, {}) is True
@@ -1147,7 +1087,7 @@ def test_manage_closing_order_propagates_a_reprice_failure(monkeypatch) -> None:
     latched with nothing on the book — the same unmanaged state as a failed
     placement, so it must reach failed_pairs instead of passing as completed."""
     monkeypatch.setattr(positions_manager, "reprice_closing_order", lambda *a: False)
-    monkeypatch.setattr(positions_manager, "close_position", lambda *a: pytest.fail("must not re-place"))
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: pytest.fail("must not re-place"))
 
     pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00", "closing_order_id": "ORD001"}
     assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 105.0}, {}) is False
@@ -1158,7 +1098,7 @@ def test_manage_closing_order_refreshes_then_replaces_when_no_order_rests(monkey
     — and a stale volume may be exactly why the last attempt was rejected."""
     order: list[str] = []
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: order.append("refresh") or True)
-    monkeypatch.setattr(positions_manager, "close_position", lambda *a: order.append("close") or True)
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: order.append("close") or True)
 
     pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00"}
     assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 100.0}, {}) is True
@@ -1167,7 +1107,7 @@ def test_manage_closing_order_refreshes_then_replaces_when_no_order_rests(monkey
 
 def test_manage_closing_order_reports_a_failed_replacement(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
-    monkeypatch.setattr(positions_manager, "close_position", lambda *a: False)
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: False)
 
     pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00"}
     assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 100.0}, {}) is False
@@ -1177,7 +1117,7 @@ def test_manage_closing_order_succeeds_when_the_position_is_dropped(monkeypatch)
     """A drop is a resolved pair, not a failure: there is nothing left to place,
     and it is the natural end of an otherwise endless retry loop."""
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: False)
-    monkeypatch.setattr(positions_manager, "close_position", lambda *a: pytest.fail("nothing to place"))
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: pytest.fail("nothing to place"))
 
     pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00"}
     assert positions_manager.manage_closing_order("XBTEUR", pos, {}, {"XBTEUR": 100.0}, {}) is True
