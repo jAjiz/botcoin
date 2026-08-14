@@ -218,9 +218,8 @@ def test_trading_session_fails_the_pair_when_the_owed_exit_cannot_be_placed(monk
 
 
 def test_trading_session_records_the_closed_position_when_the_fill_is_confirmed(monkeypatch):
-    """FILLED is the only outcome that writes to the DB, and the write stays here:
-    manage_close_position reports the fill, the scheduler persists it and drops
-    the pair so create_position can open a new one on the same tick."""
+    """FILLED is the only state that writes to the DB, and the write stays in the
+    scheduler; dropping the pair lets create_position open a new one the same tick."""
     _setup_one_pair_loop(
         monkeypatch,
         trailing_state={

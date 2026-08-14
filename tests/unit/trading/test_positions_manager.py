@@ -1162,10 +1162,8 @@ def test_manage_close_position_is_pending_when_the_position_is_dropped(monkeypat
 
 
 def test_manage_close_position_clears_a_dead_order_and_re_places_it_in_one_call(monkeypatch) -> None:
-    """The finalize-then-manage order used to be an `elif` chain in the scheduler.
-    Merged into one function it must still hold: a terminal order that cannot be
-    finalized has its fields cleared and a fresh exit placed on the SAME tick,
-    never a full interval later."""
+    """A terminal order that cannot be finalized has its fields cleared and a fresh
+    exit placed on the SAME tick, never a full interval later."""
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",

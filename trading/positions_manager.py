@@ -135,9 +135,7 @@ def refresh_position(
 
 def is_open(pos: dict[str, Any] | None) -> bool:
     """A position is open only until its stop fires. ``closing_order_id`` needs no
-    clause here: it is set only by ``close_position`` or ``reprice_closing_order``,
-    and both only ever run once ``stop_at`` is already latched — by
-    ``tick_position`` on the breach tick, or already present on a retry."""
+    clause here: it is only ever set once ``stop_at`` is already latched."""
     return bool(pos) and not pos.get("stop_at")
 
 
@@ -160,12 +158,9 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     state = get_order_state(closing_order)
     if state is None or state.status in ("pending", "open"):
         return False
-    # A cancel can race a complete fill: Kraken confirms the cancellation but the
-    # order is fully executed, so there is nothing left to manage. Resuming
-    # management there loses the trade from the PnL history (refresh_position
-    # drops the now-empty position), so treat it as the finished trade it is.
-    # Measured against the order's own `vol`, never pos["volume"], which can
-    # drift from what actually rests at Kraken.
+    # A cancel can race a complete fill: Kraken confirms the cancellation but nothing
+    # is left to manage, so it is a finished trade. Measured against the order's own
+    # `vol`, never pos["volume"], which can drift from what rests at Kraken.
     fully_executed = state.vol > 0 and state.vol_exec >= state.vol
     if (state.status != "closed" and not fully_executed) or not state.avg_price or state.avg_price <= 0:
         logging.warning(
@@ -265,19 +260,16 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     """Chase the fill of a still-open closing order: cancel it and re-place the
     limit at the current market price.
 
-    Returns ``False`` only when the previous order is no longer on the book **and**
-    no replacement was placed — the pair is latched with nothing resting at Kraken,
-    which the scheduler must treat as a failed pair. Every early return that leaves
-    the original order untouched (or that has nothing left to place) returns
-    ``True``: nothing was lost, so nothing is owed beyond the next tick."""
+    Returns ``False`` only when the previous order is off the book **and** no
+    replacement was placed; every other path leaves an order resting (or has
+    nothing left to place) and returns ``True``."""
     order_id = pos.get("closing_order_id")
     if not order_id:
         return True  # nothing to chase; the re-place branch owns this state
     state = get_order_state(order_id)
     if state is None or state.status != "open":
         # A pending order isn't on the book yet, so cancel/replace is pure churn;
-        # terminal states are is_closing_complete's job. Either way the order was
-        # never cancelled here, so nothing changed.
+        # terminal states are is_closing_complete's job.
         return True
     if state.vol_exec > 0:
         return True  # executing at its price; don't fragment the fill
@@ -287,15 +279,12 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     if not cancel_order(order_id):
         return True  # cancel unconfirmed: the order likely still rests, or filled
 
-    # A fill can land between the vol_exec check above and the cancel call just
-    # completed: the cancel still succeeds (a cancellable remainder existed) but
-    # some volume executed in between. Re-query for the definitive vol_exec of
-    # the now-canceled order so the replacement is sized at the remainder, not
-    # the full position (over-selling by the executed amount otherwise).
-    # A non-terminal status means the re-query has not caught up with the cancel
-    # yet, so its vol_exec is not definitive either: sizing from it would re-create
-    # the over-sell. Bailing is always safe here — no replacement has been placed,
-    # so the position can never end up with two live exits.
+    # A fill can land between the vol_exec check above and the cancel round trip, so
+    # re-query for the definitive vol_exec and size the replacement at the remainder;
+    # re-placing the full volume would over-sell by whatever executed. A non-terminal
+    # status means the read has not caught up with the cancel, so its vol_exec is not
+    # definitive either. Bailing is safe: nothing has been placed, so the position can
+    # never hold two live exits.
     post_cancel_state = get_order_state(order_id)
     if post_cancel_state is None or post_cancel_state.status in ("pending", "open"):
         status = post_cancel_state.status if post_cancel_state else "unknown"
@@ -304,9 +293,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
             "not placing a replacement. Next tick's terminal-status handling will resize the position.",
             to_telegram=True,
         )
-        # The cancel *was* confirmed, so the exit is off the book and nothing
-        # replaced it: this is an unmanaged latched pair, not a benign no-op.
-        return False
+        return False  # confirmed cancel, no replacement: the pair is unmanaged
 
     side = pos["side"]
     volume = float(pos.get("volume", 0.0))
@@ -316,9 +303,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
             f"[{pair}] Closing order {order_id} left no remainder after cancel "
             f"(vol_exec={post_cancel_state.vol_exec:.8f} of {volume:.8f}); not placing a replacement."
         )
-        # Fully executed during the cancel window: nothing is owed, and
-        # is_closing_complete finalizes the trade on the next tick.
-        return True
+        return True  # fully executed during the cancel window; is_closing_complete finalizes it next tick
     if post_cancel_state.vol_exec > 0:
         logging.warning(
             f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
@@ -376,14 +361,10 @@ def manage_close_position(
 
 
 def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float], first_attempt: bool) -> bool:
-    """Place the exit order for a position whose stop was hit.
-
-    Callers latch ``stop_at`` before ever reaching here — ``tick_position`` on the
-    breach tick, or an earlier attempt on a retry — so a rejected or lost placement
-    still finds the exit recorded as owed. ``first_attempt`` gates the
-    placement-failure messages to one Telegram per breach episode, since
-    ``manage_close_position`` calls this on every retry tick. Returns True only when
-    an order is resting at Kraken."""
+    """Place the exit order for a position whose ``stop_at`` the caller already
+    latched. ``first_attempt`` gates the placement-failure messages to one Telegram
+    per breach episode, since ``manage_close_position`` retries every tick. Returns
+    True only when an order is resting at Kraken."""
     try:
         side = pos["side"]
         current_price = last_prices[pair]
