@@ -13,10 +13,11 @@ from exchange.kraken import get_balance, get_last_prices
 from trading.market_analyzer import get_current_atr
 from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
 from trading.positions_manager import (
+    ClosingState,
     create_position,
-    is_closing_complete,
+    is_closing,
     is_open,
-    manage_closing_order,
+    manage_close_position,
     tick_position,
 )
 
@@ -182,19 +183,20 @@ def trading_session() -> None:
                         )
                     continue
 
-                if is_closing_complete(trailing_state.get(pair)):
-                    db.record_position_closed(pair, trailing_state[pair])
-                    del trailing_state[pair]
-                    logging.info(f"Trailing position removed for {pair}.")
-                elif (trailing_state.get(pair) or {}).get("stop_at"):
-                    # An owed exit with no resting order is an unmanaged pair, so a
-                    # failure here routes into the existing consecutive-failure alert
-                    # rather than a new per-tick Telegram message.
-                    if not manage_closing_order(
-                        pair, trailing_state[pair], current_balance, last_prices, trailing_state
-                    ):
-                        logging.error(f"[{pair}] Could not place the owed exit order; marking the pair failed.")
-                        failed_pairs.append(pair)
+                pos = trailing_state.get(pair)
+                if is_closing(pos):
+                    match manage_close_position(pair, pos, current_balance, last_prices, trailing_state):
+                        case ClosingState.FILLED:
+                            db.record_position_closed(pair, pos)
+                            del trailing_state[pair]
+                            logging.info(f"Trailing position removed for {pair}.")
+                        case ClosingState.UNMANAGED:
+                            # Routed into the consecutive-failure alert rather than a
+                            # per-tick Telegram: an unmanaged pair is a failed pair.
+                            logging.error(f"[{pair}] Could not place the owed exit order; marking the pair failed.")
+                            failed_pairs.append(pair)
+                        case ClosingState.PENDING:
+                            pass
 
                 if not trailing_state.get(pair):
                     create_position(pair, current_balance, last_prices, current_atr, trailing_state)

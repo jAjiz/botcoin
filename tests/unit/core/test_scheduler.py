@@ -5,10 +5,10 @@ import pytest
 import core.database as db
 import core.runtime as runtime
 import core.scheduler as scheduler
+from trading.positions_manager import ClosingState
 
 # TODO: branches of the per-pair loop still uncovered (extend _setup_one_pair_loop):
 #   - price or ATR is None -> pair is skipped, no state change
-#   - is_closing_complete True -> save_closed_position + delete_trailing_state, pair dropped
 #   - is_open True -> tick_position is called
 #   - state changed vs previous -> save_trailing_state; became None -> delete_trailing_state
 #   - get_last_prices returning None -> session aborts with "Could not fetch prices"
@@ -108,7 +108,7 @@ def test_trading_session_skips_positions_when_trading_disabled(monkeypatch):
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", False)
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("must not open positions"))
     monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not manage positions"))
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: pytest.fail("must not check closes"))
+    monkeypatch.setattr(scheduler, "is_closing", lambda _s: pytest.fail("must not check closes"))
     calls = _patch_finalize(monkeypatch)
 
     scheduler.trading_session()
@@ -135,7 +135,6 @@ def test_trading_session_warns_on_stored_position_when_trading_disabled(monkeypa
 def test_trading_session_opens_position_when_trading_enabled(monkeypatch):
     _setup_one_pair_loop(monkeypatch)
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
     monkeypatch.setattr(scheduler, "is_open", lambda _s: False)
     created: list = []
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: created.append(a))
@@ -158,9 +157,8 @@ def test_trading_session_manages_a_closing_order_and_does_not_tick(monkeypatch):
         },
     )
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
     managed: list = []
-    monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: managed.append(a) or True)
+    monkeypatch.setattr(scheduler, "manage_close_position", lambda *a, **k: managed.append(a) or ClosingState.PENDING)
     monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a closing position"))
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("must not create a new position"))
     calls = _patch_finalize(monkeypatch)
@@ -183,9 +181,8 @@ def test_trading_session_manages_a_latched_position_with_no_resting_order(monkey
         },
     )
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
     managed: list = []
-    monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: managed.append(a) or True)
+    monkeypatch.setattr(scheduler, "manage_close_position", lambda *a, **k: managed.append(a) or ClosingState.PENDING)
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("position still exists"))
     monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a latched position"))
     calls = _patch_finalize(monkeypatch)
@@ -208,8 +205,7 @@ def test_trading_session_fails_the_pair_when_the_owed_exit_cannot_be_placed(monk
         },
     )
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
-    monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: False)
+    monkeypatch.setattr(scheduler, "manage_close_position", lambda *a, **k: ClosingState.UNMANAGED)
     monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a latched position"))
     saved: list = []
     monkeypatch.setattr(db, "save_trailing_state", lambda pair, state: saved.append((pair, state)))
@@ -221,36 +217,37 @@ def test_trading_session_fails_the_pair_when_the_owed_exit_cannot_be_placed(monk
     assert "Could not place the owed exit order" in calls[0]["log_messages"]
 
 
-def test_trading_session_replaces_a_dead_closing_order_on_the_same_tick(monkeypatch):
-    """The reason manage_closing_order runs *after* is_closing_complete: a terminal
-    order with a remainder is cleared and re-placed within one tick, instead of
-    leaving a breached position with nothing on the book for a full interval."""
-    stored = {
-        "side": "sell",
-        "entry_price": 50000.0,
-        "stop_at": datetime(2026, 5, 12, 9, 0, 0, tzinfo=UTC),
-        "closing_order_id": "ORD001",
-    }
-    _setup_one_pair_loop(monkeypatch, trailing_state=stored)
+def test_trading_session_records_the_closed_position_when_the_fill_is_confirmed(monkeypatch):
+    """FILLED is the only outcome that writes to the DB, and the write stays here:
+    manage_close_position reports the fill, the scheduler persists it and drops
+    the pair so create_position can open a new one on the same tick."""
+    _setup_one_pair_loop(
+        monkeypatch,
+        trailing_state={
+            "side": "sell",
+            "entry_price": 50000.0,
+            "stop_at": datetime(2026, 5, 12, 9, 0, 0, tzinfo=UTC),
+            "closing_order_id": "ORD001",
+            "closing_price": 49000.0,
+            "pnl_percent": -2.0,
+        },
+    )
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-
-    def _clear_dead_order(pos):
-        pos.pop("closing_order_id", None)
-        return False
-
-    monkeypatch.setattr(scheduler, "is_closing_complete", _clear_dead_order)
-    managed: list = []
-    monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: managed.append(a[1]) or True)
-    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: pytest.fail("position still exists"))
-    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not tick a latched position"))
-    monkeypatch.setattr(db, "save_trailing_state", lambda *a: None)
+    monkeypatch.setattr(scheduler, "manage_close_position", lambda *a, **k: ClosingState.FILLED)
+    recorded: list = []
+    monkeypatch.setattr(db, "record_position_closed", lambda pair, pos: recorded.append((pair, dict(pos))))
+    monkeypatch.setattr(db, "delete_trailing_state", lambda _p: True)
+    created: list = []
+    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: created.append(a))
+    monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("no position left to tick"))
     calls = _patch_finalize(monkeypatch)
 
     scheduler.trading_session()
 
-    # Same tick: the dead order is gone and the manager still saw the latched position.
-    assert len(managed) == 1
-    assert "closing_order_id" not in managed[0]
+    assert len(recorded) == 1
+    assert recorded[0][0] == "XBTEUR"
+    assert recorded[0][1]["pnl_percent"] == -2.0
+    assert len(created) == 1  # the pair was dropped, so the tick can open a new position
     assert calls[0]["status"] == "completed"
 
 
@@ -266,30 +263,8 @@ def test_trading_session_never_ticks_a_latched_position(monkeypatch):
         },
     )
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
-    monkeypatch.setattr(scheduler, "manage_closing_order", lambda *a, **k: True)
+    monkeypatch.setattr(scheduler, "manage_close_position", lambda *a, **k: ClosingState.PENDING)
     monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: pytest.fail("must not manage a latched position"))
-    calls = _patch_finalize(monkeypatch)
-
-    scheduler.trading_session()
-
-    assert calls[0]["status"] == "completed"
-
-
-def test_trading_session_does_not_reprice_when_close_completed(monkeypatch):
-    _setup_one_pair_loop(
-        monkeypatch,
-        trailing_state={"side": "sell", "entry_price": 50000.0, "closing_order_id": "ORD001"},
-    )
-    monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: True)
-    monkeypatch.setattr(db, "record_position_closed", lambda *a, **k: None)
-    monkeypatch.setattr(db, "delete_trailing_state", lambda _p: True)
-    monkeypatch.setattr(
-        scheduler, "manage_closing_order", lambda *a, **k: pytest.fail("must not manage a completed close")
-    )
-    monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)
-    monkeypatch.setattr(scheduler, "is_open", lambda _s: False)
     calls = _patch_finalize(monkeypatch)
 
     scheduler.trading_session()
@@ -309,17 +284,16 @@ def test_trading_session_persists_a_closing_order_placed_before_a_failure(monkey
     }
     _setup_one_pair_loop(monkeypatch, trailing_state=stored)
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)
 
     def _manage(_pair, pos, _balance, _prices, _state):
         pos["closing_order_id"] = "ORD002"
-        return True
+        return ClosingState.PENDING
 
     def _explode(_s):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(scheduler, "manage_closing_order", _manage)
+    monkeypatch.setattr(scheduler, "manage_close_position", _manage)
     monkeypatch.setattr(scheduler, "is_open", _explode)
     saved: list[tuple[str, dict]] = []
     monkeypatch.setattr(db, "save_trailing_state", lambda pair, pos: saved.append((pair, dict(pos))))
@@ -350,18 +324,17 @@ def test_trading_session_marks_the_pair_failed_when_the_persist_fails(monkeypatc
     }
     _setup_one_pair_loop(monkeypatch, trailing_state=stored)
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
     monkeypatch.setattr(scheduler, "is_open", lambda _s: False)
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)
 
     def _manage(_pair, pos, _balance, _prices, _state):
         pos["closing_order_id"] = "ORD002"
-        return True
+        return ClosingState.PENDING
 
     def _failing_save(_pair, _pos):
         raise Exception("db unavailable")
 
-    monkeypatch.setattr(scheduler, "manage_closing_order", _manage)
+    monkeypatch.setattr(scheduler, "manage_close_position", _manage)
     monkeypatch.setattr(db, "save_trailing_state", _failing_save)
     calls = _patch_finalize(monkeypatch)
 
@@ -376,7 +349,6 @@ def test_trading_session_does_not_persist_an_unchanged_pair(monkeypatch):
     stored = {"side": "sell", "entry_price": 50000.0}
     _setup_one_pair_loop(monkeypatch, trailing_state=stored)
     monkeypatch.setattr(scheduler, "TRADING_ENABLED", True)
-    monkeypatch.setattr(scheduler, "is_closing_complete", lambda _s: False)
     monkeypatch.setattr(scheduler, "is_open", lambda _s: True)
     monkeypatch.setattr(scheduler, "tick_position", lambda *a, **k: None)
     monkeypatch.setattr(scheduler, "create_position", lambda *a, **k: None)

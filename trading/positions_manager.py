@@ -1,3 +1,4 @@
+from enum import StrEnum
 from typing import Any
 
 import core.logging as logging
@@ -6,6 +7,14 @@ from core.utils import now_utc, round_price
 from exchange.kraken import cancel_order, get_order_state, place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
+
+
+class ClosingState(StrEnum):
+    """The state ``manage_close_position`` leaves a closing position in."""
+
+    FILLED = "filled"  # confirmed fill; pos carries the real closing_price and pnl_percent
+    PENDING = "pending"  # an order rests at Kraken, or the position was dropped
+    UNMANAGED = "unmanaged"  # latched with nothing resting at Kraken
 
 
 def create_position(
@@ -130,6 +139,13 @@ def is_open(pos: dict[str, Any] | None) -> bool:
     and both only ever run once ``stop_at`` is already latched — by
     ``tick_position`` on the breach tick, or already present on a retry."""
     return bool(pos) and not pos.get("stop_at")
+
+
+def is_closing(pos: dict[str, Any] | None) -> bool:
+    """A position whose stop has fired: the exact complement of ``is_open``. Keyed
+    on ``stop_at``, not ``closing_order_id``, so a breach whose placement was
+    rejected or lost still routes into the closing flow."""
+    return bool(pos) and bool(pos.get("stop_at"))
 
 
 def is_closing_complete(pos: dict[str, Any] | None) -> bool:
@@ -329,31 +345,34 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     return True
 
 
-def manage_closing_order(
+def manage_close_position(
     pair: str,
     pos: dict[str, Any],
     balance: dict[str, Any],
     last_prices: dict[str, float],
     trailing_state: dict[str, Any],
-) -> bool:
-    """Drive an owed exit toward a resting order.
+) -> ClosingState:
+    """Drive a latched position from the stop breach to the fill: finalize a
+    confirmed fill, chase the price of a live order, or place one when none rests.
 
-    Owns every state between the stop breach and the fill: chase the price of a
-    live order, or place one when none rests. Returns False when the pair is left
-    latched with nothing resting at Kraken — a placement was attempted and failed,
-    or a reprice cancelled the resting exit without replacing it — so the scheduler
-    can mark the pair failed. A position dropped by ``refresh_position`` is a
-    resolved pair, not a failure."""
-    if not pos or not pos.get("stop_at"):
-        return True
+    Callers gate on ``is_closing(pos)``, which is why nothing here re-checks
+    ``stop_at``. Finalizing runs first so a terminal order that cannot be finalized
+    is cleared before the placement branch and its replacement goes out on the same
+    tick. ``FILLED`` reports the fill instead of writing it: persistence is the
+    scheduler's job."""
+    if is_closing_complete(pos):
+        return ClosingState.FILLED
 
     if pos.get("closing_order_id"):
-        return reprice_closing_order(pair, pos, last_prices)
+        return ClosingState.PENDING if reprice_closing_order(pair, pos, last_prices) else ClosingState.UNMANAGED
 
+    # A latched position never reaches tick_position, so nothing else resizes it —
+    # and a stale volume may be why the last attempt was rejected.
     if not refresh_position(pair, pos, balance, last_prices, trailing_state):
-        return True
+        return ClosingState.PENDING  # dropped: a resolved pair, not a failure
 
-    return close_position(pair, pos, last_prices, first_attempt=False)
+    placed = close_position(pair, pos, last_prices, first_attempt=False)
+    return ClosingState.PENDING if placed else ClosingState.UNMANAGED
 
 
 def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float], first_attempt: bool) -> bool:
@@ -363,7 +382,7 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
     breach tick, or an earlier attempt on a retry — so a rejected or lost placement
     still finds the exit recorded as owed. ``first_attempt`` gates the
     placement-failure messages to one Telegram per breach episode, since
-    ``manage_closing_order`` calls this on every retry tick. Returns True only when
+    ``manage_close_position`` calls this on every retry tick. Returns True only when
     an order is resting at Kraken."""
     try:
         side = pos["side"]
