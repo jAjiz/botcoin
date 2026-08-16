@@ -80,7 +80,7 @@ Step 6 lives in the `finally`, and is the **only** place the position block writ
 
 - The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch in code. Adding one is a strategy change, not a refactor.
 - `closing_price` is an **estimate** until `is_closing_complete` confirms the fill: `close_position` writes it first (at order placement), and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. `is_closing_complete` performs the final write with the real fill from Kraken and computes `pnl_percent`. Any code that reads `closing_price` before `is_closing_complete` returns `True` is reading an estimate.
-- A position whose stop has fired is **not** open — `is_open` is `not stop_at`, and `tick_position` must not run on it, whether or not a closing order was placed. Steps 3–4 of the loop resolve the exit before step 6 checks `is_open`.
+- A position whose stop has fired is **not** open — `is_open` is `not stop_at`, and `tick_position` must not run on it, whether or not a closing order was placed. Step 3 of the loop resolves the exit before step 5 checks `is_open`.
 - `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Callers that don't handle `None` will silently corrupt state.
 
 ### Position lifecycle (`trading/positions_manager.py`)
