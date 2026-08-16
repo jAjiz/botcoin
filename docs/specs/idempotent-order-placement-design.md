@@ -446,15 +446,16 @@ updates. Only here does behaviour change.
   double-exiting), it is visible through the pair-failure alert, and it ends as
   soon as Kraken answers.
 - **Up to two extra private API calls** on the pending path (`OpenOrders` +1,
-  `ClosedOrders` +4 on the counter), inside a session whose duration is already
+  `ClosedOrders` +1 on the counter), inside a session whose duration is already
   alarmed on (`SLEEPING_INTERVAL` overrun). Rare enough that it should not move
   the needle; see *Resolved questions* 3 for the budget and why exhausting it
   degrades safely.
 
 ## Resolved questions
 
-Settled with the operator against the API docs on 2026-08-05. Kept here because
-each one shaped a decision above.
+Settled with the operator against the API docs on 2026-08-05, and re-verified
+against the live docs on 2026-08-16 (question 3 was wrong; see the correction
+there). Kept here because each one shaped a decision above.
 
 1. **Pagination on the `ClosedOrders` fallback is a non-issue** — but not for the
    obvious reason. Closed orders do accumulate quickly (every reprice cancels and
@@ -465,24 +466,26 @@ each one shaped a decision above.
    after placement — an orphan sweep would need its own bounding strategy.
 2. **`cl_ord_id` is returned on the order objects** the bot reads back, so a
    future orphan sweep can prove an unknown open order is ours.
-3. **`ClosedOrders` costs +4 on the private rate-limit counter** (account-history
-   endpoints), against a 20-point ceiling that refills at 1 point/sec;
-   `OpenOrders` and `QueryOrders` cost +1, and `AddOrder`/`CancelOrder` cost 0.
-   **The fallback leg is deliberately not gated.** It only runs when `OpenOrders`
-   missed, so the common resolution costs +1; the worst case (every pair pending
-   in the same tick) requires several `AddOrder` responses lost at once, i.e. an
-   outage during which the lookups fail anyway; and exhausting the counter
-   degrades safely — Kraken returns a rate-limit error, `_safe_call` yields
-   `None`, the resolver reports "unknown", and the pair is marked failed and
-   retried next tick. Gating logic would add a state machine to avoid a failure
-   that is already handled. With `SLEEPING_INTERVAL = 60` the counter refills
-   fully between sessions, so this is a within-session burst question only.
-
-   Note the pair-count implication: at +4 per fallback plus the session's other
-   private calls against a 20-point ceiling, the simultaneous-pending worst case
-   is bounded at roughly 4 pairs. Confirm the account tier before growing beyond
-   that — 20 points at 1/sec is Kraken's Pro tier; lower tiers have a smaller
-   ceiling and a slower refill.
+3. **`ClosedOrders` costs +1 on the REST call counter, not +4.** An earlier draft
+   claimed +4, a number transplanted from the trading limiter (question 4). Only
+   ledger/trade-history calls cost more than +1, and `ClosedOrders` is not one.
+   The pending path therefore costs +2 at worst, which only reinforces the
+   decision **not to gate the fallback leg**: exhausting the counter already
+   degrades safely into "unknown" + a failed pair, and gating would add a state
+   machine to avoid a handled failure. The earlier draft's ~4-pair bound was an
+   artifact of the wrong cost; the binding constraint is the three
+   `get_order_state` calls a closing pair already makes per tick, not this
+   fallback. **The account's verification tier is still unconfirmed** — the
+   ceiling and refill rate depend on it, so treat any budget here as provisional.
+4. **`AddOrder`/`CancelOrder` bill a second, independent trading limiter** — the
+   earlier draft said they cost 0, which is true only of the REST counter.
+   `CancelOrder`'s penalty scales inversely with how long the order rested, so
+   `reprice_closing_order`'s cancel/replace loop bills it on every chase. At
+   `SLEEPING_INTERVAL = 60` the cost clears between ticks at any realistic pair
+   count, so no action is needed. What matters is the direction: **shortening the
+   interval raises the per-cancel penalty while shrinking the decay window, from
+   both ends at once.** The trading limiter, not the REST counter, is what bounds
+   `SLEEPING_INTERVAL` from below.
 
 ## Design choices to record in CLAUDE.md
 
@@ -501,3 +504,7 @@ lifecycle text:
 - Update the `reprice_closing_order` description: the dead `closing_order_id` is
   no longer kept after a failed replacement; the pending client id now provides
   that protection.
+- **`SLEEPING_INTERVAL` is bounded from below by Kraken's trading rate limiter,
+  not by the REST call counter** — `reprice_closing_order` cancels and replaces
+  once per tick, and cancelling a short-lived order costs more (*Resolved
+  questions* 4). Fine at 60 s; check before ever lowering it.
