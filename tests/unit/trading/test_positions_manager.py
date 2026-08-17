@@ -8,8 +8,7 @@ from exchange.kraken import OrderState
 
 
 def _capture_telegram(monkeypatch) -> list[tuple[str, bool]]:
-    """Record every log call as (message, to_telegram) so a test can assert what
-    the operator would actually receive."""
+    """Record every log call as (message, to_telegram)."""
     sent: list[tuple[str, bool]] = []
     for level in ("info", "warning", "error"):
         monkeypatch.setattr(
@@ -303,8 +302,7 @@ def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatc
 
 
 def test_close_position_announces_a_successful_placement(monkeypatch) -> None:
-    """Announced on every attempt, including the first: the breach message says the
-    stop fired, this one says an order actually rests at Kraken."""
+    """Announced on every attempt, including the first after the breach."""
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
     sent = _capture_telegram(monkeypatch)
 
@@ -315,8 +313,7 @@ def test_close_position_announces_a_successful_placement(monkeypatch) -> None:
 
 
 def test_close_position_never_sends_failure_detail_to_telegram(monkeypatch) -> None:
-    """Failure detail stays in the logs; the pair-failure streak does the alerting,
-    so a retry every tick cannot flood Telegram for the length of an outage."""
+    """Failure detail stays in the logs; the per-pair streak does the alerting."""
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
     sent = _capture_telegram(monkeypatch)
 

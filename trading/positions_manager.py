@@ -240,7 +240,7 @@ def tick_position(
         ):
             pos["stop_at"] = now_utc()
             logging.info(
-                f"[{pair}] ⛔ Stop price {round_price(pair, pos['stop_price']):,}€ hitted: the {side.upper()} exit is now owed.",
+                f"[{pair}] ⛔ Stop price {round_price(pair, pos['stop_price']):,}€ hitted for {side.upper()} position.",
                 to_telegram=True,
             )
             close_position(pair, pos, last_prices)
@@ -359,12 +359,10 @@ def manage_close_position(
 
 
 def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> bool:
-    """Place the exit order for a position whose ``stop_at`` the caller already
-    latched. Returns True only when an order is resting at Kraken.
+    """Place the exit order for an already-latched position; True only when one rests at Kraken.
 
-    Placement failures are logged, never sent: ``manage_close_position`` retries
-    every tick, so a Telegram here would flood for the length of an outage. The
-    per-pair failure streak alerts instead."""
+    Failures are logged, never sent: the manager retries every tick, so the per-pair
+    streak alerts instead."""
     try:
         side = pos["side"]
         current_price = last_prices[pair]
@@ -384,8 +382,7 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
             }
         )
 
-        # Announced on every attempt: the breach message says the stop fired, this
-        # one says an order actually rests at Kraken.
+        # Announced on every attempt: the breach says the stop fired, this says an order rests.
         logging.info(
             f"[{pair}] 🏁 Placed closing {side.upper()} order at {round_price(pair, current_price):,}€ for {volume:.8f} vol",
             to_telegram=True,

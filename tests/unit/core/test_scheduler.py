@@ -131,7 +131,7 @@ def test_trading_session_warns_on_stored_position_when_trading_disabled(monkeypa
     scheduler.trading_session()
 
     assert calls[0]["status"] == "completed"
-    assert "NOT being managed" in calls[0]["log_messages"]
+    assert "its stop is frozen" in calls[0]["log_messages"]
 
 
 def test_trading_session_opens_position_when_trading_enabled(monkeypatch):
@@ -583,8 +583,7 @@ def test_notify_session_outcome_sends_pair_recovery_naming_the_pair(monkeypatch)
 
 
 def test_notify_session_outcome_alerts_a_second_pair_while_the_first_still_fails(monkeypatch):
-    """The pinning bug this design fixes: an already-alerted pair must not silence
-    a different pair that starts failing later."""
+    """The pinning bug this fixes: an alerted pair must not silence a different one."""
     monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
     monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR", "ETHEUR"])
     _reset_alert_state()
@@ -608,10 +607,10 @@ def test_notify_session_outcome_telegram_never_carries_a_failure_reason(monkeypa
     scheduler._notify_session_outcome("failed", 1.0, [])
     scheduler._notify_session_outcome("pair_error", 1.0, ["XBTEUR"])
 
-    alerts = [m for m, tg in sent if tg and m.startswith("⚠️")]
-    assert len(alerts) == 2  # one for the session, one for the pair
-    for msg in alerts:
-        assert "logs" in msg.lower()
+    session_alert, pair_alert = [m for m, tg in sent if tg and m.startswith("⚠️")]
+    # The session alert identifies nothing but the streak; the pair alert adds only the pair.
+    assert "XBTEUR" not in session_alert
+    assert pair_alert.count("XBTEUR") == 1
 
 
 def test_notify_session_outcome_failed_session_leaves_pair_streaks_untouched(monkeypatch):
@@ -662,8 +661,7 @@ def test_notify_session_outcome_sends_single_overrun_recovery(monkeypatch):
 
 
 def test_notify_session_outcome_pair_error_still_counts_as_overrun(monkeypatch):
-    """Overrun is orthogonal to the outcome: a session that completed its work
-    counts, whether or not one of its pairs failed."""
+    """Overrun is orthogonal to the outcome: a session that did its work counts."""
     monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
     monkeypatch.setattr(scheduler, "SLEEPING_INTERVAL", 60)
     monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR"])

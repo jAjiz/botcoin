@@ -112,8 +112,7 @@ def test_register_pair_success_signals_recovery_only_when_alerted():
 
 
 def test_an_alerted_pair_does_not_silence_another_pair():
-    """Why the streak is keyed per pair: a permanently broken pair holds only its
-    own flag, so a pair that starts failing later still gets its own alert."""
+    """A permanently broken pair must not hold the flag for the others."""
     runtime._shared_data["consecutive_pair_failures"] = {}
     runtime._shared_data["pair_failure_alerted"] = set()
 
