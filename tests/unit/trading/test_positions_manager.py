@@ -679,7 +679,9 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
     monkeypatch.setattr(
         positions_manager,
         "place_limit_order",
-        lambda pair, side, price, volume: place_calls.append((pair, side, price, volume)) or "NEWORDER1",
+        lambda pair, side, price, volume, cl_ord_id=None: (
+            place_calls.append((pair, side, price, volume, cl_ord_id)) or "NEWORDER1"
+        ),
     )
 
     pos = {
@@ -692,11 +694,48 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
     assert positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0}) is True
 
     assert cancel_calls == ["OLDORDER"]
-    assert place_calls == [("XBTEUR", "sell", 105.0, 0.5)]
+    assert [c[:4] for c in place_calls] == [("XBTEUR", "sell", 105.0, 0.5)]
     assert pos["closing_order_id"] == "NEWORDER1"
     assert pos["closing_price"] == 105.0
     # A reprice must not overwrite when the stop was hit.
     assert pos["stop_at"] == _requested_at
+
+
+def test_reprice_closing_order_mints_a_new_id_for_the_replacement(monkeypatch) -> None:
+    """The replacement is a new attempt, so it gets its own id — never the
+    original request's — and it must be on `pos` before the call, same as
+    `close_position`."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        _sequenced_order_states(
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),  # pre-cancel check
+            OrderState(status=OrderStatus.CANCELED, avg_price=None, vol=0.5, vol_exec=0.0),  # post-cancel re-query
+        ),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+
+    captured: dict[str, Any] = {}
+
+    def fake_place_limit_order(pair, side, price, volume, cl_ord_id=None):
+        captured["pos_closing_request_id"] = pos.get("closing_request_id")
+        captured["cl_ord_id"] = cl_ord_id
+        return "NEWORDER1"
+
+    monkeypatch.setattr(positions_manager, "place_limit_order", fake_place_limit_order)
+
+    pos = {
+        "side": "sell",
+        "volume": 0.5,
+        "closing_order_id": "OLDORDER",
+        "closing_price": 100.0,
+        "closing_request_id": "original-request-id",
+    }
+    assert positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0}) is True
+
+    assert captured["cl_ord_id"] is not None
+    assert captured["cl_ord_id"] != "original-request-id"
+    assert captured["pos_closing_request_id"] == captured["cl_ord_id"]
 
 
 def test_reprice_closing_order_skips_when_partially_filled(monkeypatch) -> None:
@@ -856,7 +895,9 @@ def test_reprice_closing_order_sizes_replacement_to_remainder_on_fill_in_cancel_
     monkeypatch.setattr(
         positions_manager,
         "place_limit_order",
-        lambda pair, side, price, volume: place_calls.append((pair, side, price, volume)) or "NEWORDER2",
+        lambda pair, side, price, volume, cl_ord_id=None: (
+            place_calls.append((pair, side, price, volume)) or "NEWORDER2"
+        ),
     )
 
     pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}

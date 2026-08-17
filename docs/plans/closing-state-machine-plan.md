@@ -145,10 +145,10 @@ nothing reads `closing_request_id` at all until task 9.
 
 ## Task 5 — `reprice_closing_order` mints the id for the replacement
 
-- [ ] **Test**: on the placement path the replacement's `cl_ord_id` is a **new**
+- [x] **Test**: on the placement path the replacement's `cl_ord_id` is a **new**
   id, different from the one `close_position` used, and it is set on `pos` before
   the call.
-- [ ] **Implement**: mint immediately before `place_limit_order`, write it to
+- [x] **Implement**: mint immediately before `place_limit_order`, write it to
   `pos`, pass it through.
 
 Do **not** drop `closing_order_id` here and do **not** move `pos["volume"]`

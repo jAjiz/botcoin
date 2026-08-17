@@ -310,7 +310,9 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
             to_telegram=True,
         )
 
-    new_order = place_limit_order(pair, side, current_price, remaining)
+    cl_ord_id = new_cl_ord_id()
+    pos["closing_request_id"] = cl_ord_id
+    new_order = place_limit_order(pair, side, current_price, remaining, cl_ord_id=cl_ord_id)
     if not new_order:
         logging.error("Failed to re-place closing order after cancel.")
         return False  # cancelled exit, no replacement: the pair is unmanaged
