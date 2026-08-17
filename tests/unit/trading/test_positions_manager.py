@@ -265,7 +265,7 @@ def test_refresh_position_drops_position_and_returns_false_when_below_min_value(
 
 
 def test_close_position_updates_position_on_success(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: "ORDER123")
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
@@ -277,18 +277,41 @@ def test_close_position_updates_position_on_success(monkeypatch) -> None:
     assert "pnl_percent" not in pos
 
 
+def test_close_position_mints_and_writes_the_request_id_before_placing(monkeypatch) -> None:
+    """The ordering is the whole point: if the response is lost but the order
+    landed, the persisted state must already describe the attempt."""
+    captured: dict[str, Any] = {}
+
+    def fake_place_limit_order(pair, side, price, volume, cl_ord_id=None):
+        captured["pos_closing_request_id"] = pos.get("closing_request_id")
+        captured["cl_ord_id"] = cl_ord_id
+        return "ORDER123"
+
+    monkeypatch.setattr(positions_manager, "place_limit_order", fake_place_limit_order)
+
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
+    positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0})
+
+    assert captured["cl_ord_id"] is not None
+    assert captured["pos_closing_request_id"] == captured["cl_ord_id"]
+
+
 def test_close_position_leaves_position_untouched_when_place_order_fails(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: None)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
 
     assert positions_manager.close_position("XBTEUR", pos, prices) is False
     assert "closing_order_id" not in pos
+    # The request id and estimated price were written before the call, so a
+    # lost response still leaves the attempt recorded; only the id says it was owed.
+    assert pos["closing_request_id"] is not None
+    assert pos["closing_price"] == 90.0
 
 
 def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatch) -> None:
-    def boom(*_args):
+    def boom(*_args, **_kwargs):
         raise Exception("kraken exploded")
 
     monkeypatch.setattr(positions_manager, "place_limit_order", boom)
@@ -303,7 +326,7 @@ def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatc
 
 def test_close_position_announces_a_successful_placement(monkeypatch) -> None:
     """Announced on every attempt, including the first after the breach."""
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: "ORDER123")
     sent = _capture_telegram(monkeypatch)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
@@ -314,7 +337,7 @@ def test_close_position_announces_a_successful_placement(monkeypatch) -> None:
 
 def test_close_position_never_sends_failure_detail_to_telegram(monkeypatch) -> None:
     """Failure detail stays in the logs; the per-pair streak does the alerting."""
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: None)
     sent = _capture_telegram(monkeypatch)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
@@ -325,7 +348,7 @@ def test_close_position_never_sends_failure_detail_to_telegram(monkeypatch) -> N
 
 
 def test_close_position_never_sends_a_raised_error_to_telegram(monkeypatch) -> None:
-    def boom(*_args):
+    def boom(*_args, **_kwargs):
         raise IndexError("list index out of range")
 
     monkeypatch.setattr(positions_manager, "place_limit_order", boom)
@@ -1224,7 +1247,7 @@ def test_manage_close_position_clears_a_dead_order_and_re_places_it_in_one_call(
         lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=0.0, vol_exec=0.0),
     )
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a: "ORD002")
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: "ORD002")
 
     pos = {
         "side": "sell",

@@ -3,7 +3,7 @@ from typing import Any
 
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
-from core.utils import now_utc, round_price
+from core.utils import new_cl_ord_id, now_utc, round_price
 from exchange.kraken import OrderStatus, cancel_order, get_order_state, place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
@@ -357,19 +357,13 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
         current_price = last_prices[pair]
         volume = float(pos.get("volume", 0.0))
 
-        closing_order = place_limit_order(pair, side, current_price, volume)
+        cl_ord_id = new_cl_ord_id()
+        pos.update({"closing_request_id": cl_ord_id, "closing_price": current_price})
+        closing_order = place_limit_order(pair, side, current_price, volume, cl_ord_id=cl_ord_id)
         if not closing_order:
-            logging.error(
-                f"[{pair}] Failed to place the closing order, it remains owed and will be retried every tick."
-            )
+            logging.error(f"[{pair}] Closing order not confirmed; it remains owed and will be resolved next tick.")
             return False
-
-        pos.update(
-            {
-                "closing_price": current_price,
-                "closing_order_id": closing_order,
-            }
-        )
+        pos["closing_order_id"] = closing_order
 
         # Announced on every attempt: the breach says the stop fired, this says an order rests.
         logging.info(

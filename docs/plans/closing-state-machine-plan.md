@@ -111,14 +111,14 @@ primary key.
 
 ## Task 4 — `close_position` mints the id
 
-- [ ] **Test** (`tests/unit/trading/test_positions_manager.py`): assert from
+- [x] **Test** (`tests/unit/trading/test_positions_manager.py`): assert from
   *inside* the fake `place_limit_order` that `pos["closing_request_id"]` is
   already set and equals the `cl_ord_id` argument it received — the ordering is
   the whole point, so a test that only checks the value afterwards does not cover
   it.
-- [ ] **Test**: a `None` return leaves `closing_request_id` set and
+- [x] **Test**: a `None` return leaves `closing_request_id` set and
   `closing_order_id` absent.
-- [ ] **Implement** in `trading/positions_manager.py`:
+- [x] **Implement** in `trading/positions_manager.py`:
 
 ```python
 cl_ord_id = new_cl_ord_id()
