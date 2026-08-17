@@ -55,26 +55,22 @@ owns everything between the breach and the fill.
 
 - Spec: [`specs/stop-latched-close-design.md`](specs/stop-latched-close-design.md)
 
+### Closing State Machine & Idempotent Placement
+
+A lost `AddOrder` response used to be indistinguishable from a rejection, so the
+next tick could place a second exit for the same holding. Every order now carries
+a client-chosen `cl_ord_id`, and a closing position routes on whether its
+placement was *confirmed* — which decides whether "Kraken doesn't have it"
+licenses a re-place or means the pair is unmanaged. Landed together with a
+restructure of the closing path into one selector with a single `OrderStatus`
+dispatch, which also dropped the reprice tick from three `get_order_state` calls
+to two.
+
+- Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
+
 ---
 
 ## 📋 Planned
-
-### Closing State Machine & Idempotent Placement
-
-A lost `AddOrder` response is today indistinguishable from a rejection, so the
-next tick can place a second exit for the same holding. Every order gains a
-client-chosen `cl_ord_id`, and a closing position routes on whether its placement
-was *confirmed* — which decides whether "Kraken doesn't have it" licenses a
-re-place or means the pair is unmanaged. Lands together with a restructure of the
-closing path into one selector with a single `OrderStatus` dispatch, which also
-drops the reprice tick from three `get_order_state` calls to two.
-
-Ships in one PR. The exchange behaviour the resolver depends on — that Kraken
-accepts the id and that both order-listing endpoints filter by it — was verified
-on the account up front, so there is nothing left to stage.
-
-- Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
-- Plan: [`plans/closing-state-machine-plan.md`](plans/closing-state-machine-plan.md)
 
 ### Strategy Review Follow-ups
 

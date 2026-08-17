@@ -8,6 +8,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Idempotent closing-order placement:** every order the bot places now carries a per-attempt client id (`cl_ord_id`), persisted as `closing_request_id` before the placement call goes out. A lost `AddOrder` response is resolved on the next tick via `find_order_by_cl_ord_id` (`ClosedOrders`/`OpenOrders`) instead of silently becoming a second exit against the same holding.
+
+### Changed
+- **Restructured the closing path into one selector with a single `OrderStatus` dispatch.** `manage_close_position` now routes on which id is present (Confirmed vs. Unconfirmed) and hands the order's state to `_drive_closing_order`, the only place that branches on status; `finalize_close` (renamed from `is_closing_complete`) and `reprice_closing_order` each just interpret what the selector already established. Drops the reprice tick from three `get_order_state` calls to two.
+- The reprice remainder is now sized from the order's own `vol - vol_exec`, not `pos["volume"]`, which could drift by up to one lot tick from submission rounding and turn a fully executed order into an unplaceable dust remainder.
+
 ---
 
 ## [2.12.0] – Session Resilience & Failure Alerting
