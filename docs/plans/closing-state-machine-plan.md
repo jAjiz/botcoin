@@ -48,9 +48,9 @@ resolver has an id to find.
 
 ## Task 1 — `new_cl_ord_id()`
 
-- [ ] **Test** (`tests/unit/core/test_utils.py`): returns 32 lowercase hex
+- [x] **Test** (`tests/unit/core/test_utils.py`): returns 32 lowercase hex
   characters; two calls differ.
-- [ ] **Implement** in `core/utils.py`:
+- [x] **Implement** in `core/utils.py`:
 
 ```python
 def new_cl_ord_id() -> str:
@@ -66,11 +66,11 @@ row.
 
 ## Task 2 — `place_limit_order` sends the id
 
-- [ ] **Tests** (`tests/unit/exchange/test_kraken.py`, capturing the payload the
+- [x] **Tests** (`tests/unit/exchange/test_kraken.py`, capturing the payload the
   way `test_place_limit_order_rounds_to_pair_precision` already does): the
   `AddOrder` payload contains `cl_ord_id` when one is passed, and the key is
   **absent entirely** (not `None`) when it is not.
-- [ ] **Implement** in `exchange/kraken.py`: add
+- [x] **Implement** in `exchange/kraken.py`: add
   `cl_ord_id: str | None = None` to the signature and merge
   `{"cl_ord_id": cl_ord_id}` into the payload only when not `None`.
 
@@ -81,11 +81,11 @@ call site stay valid; both production call sites always pass one.
 
 ## Task 3 — `closing_request_id` column
 
-- [ ] **Test** (`tests/unit/core/test_database.py`): `closing_request_id`
+- [x] **Test** (`tests/unit/core/test_database.py`): `closing_request_id`
   round-trips through `save_trailing_state` / `load_trailing_state`, and is
   **absent from the dict** (not `None`) when the column is `NULL`, matching how
   the other optional fields behave.
-- [ ] **Implement**:
+- [x] **Implement**:
   - `core/db/models.py` — `TrailingState.closing_request_id = Column(Text, nullable=True)`,
     plus the key in `TrailingState.to_dict()`.
   - `core/db/positions.py` — `closing_request_id=position_data.get("closing_request_id")`
@@ -104,7 +104,7 @@ primary key.
 `closed_positions` is deliberately **not** extended — its audit key is the unique
 `closing_order_id`, which exists for every recorded close by construction.
 
-- [ ] Run the migration against a fresh DB (command above) — CI builds the schema
+- [x] Run the migration against a fresh DB (command above) — CI builds the schema
   from migrations, and model/migration drift has bitten this repo before.
 
 **Commit:** `feat(db): persist the closing request id on trailing state`

@@ -775,6 +775,17 @@ def test_trailing_record_omits_stop_at_when_null():
     assert "stop_at" not in _trailing_record_to_state_entry(record)
 
 
+def test_trailing_record_round_trips_closing_request_id():
+    record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry(closing_request_id="deadbeef"))
+    assert record.closing_request_id == "deadbeef"
+    assert _trailing_record_to_state_entry(record)["closing_request_id"] == "deadbeef"
+
+
+def test_trailing_record_omits_closing_request_id_when_null():
+    record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry())
+    assert "closing_request_id" not in _trailing_record_to_state_entry(record)
+
+
 def test_save_trailing_state_raises_on_db_error(monkeypatch):
     """Test that save_trailing_state re-raises on database error."""
     patch_get_session_error(monkeypatch)
