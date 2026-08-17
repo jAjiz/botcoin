@@ -224,11 +224,11 @@ in place except the unresolvable statuses.
 
 ## Task 8 — size the remainder from the order
 
-- [ ] **Test**: the dust case — `post_cancel.vol_exec == post_cancel.vol` with a
+- [x] **Test**: the dust case — `post_cancel.vol_exec == post_cancel.vol` with a
   **larger** `pos["volume"]` — places nothing and returns `True`, so the next tick
   finalizes it instead of trying to sell dust.
-- [ ] **Test**: Kraken omitting `vol` (reads `0.0`) places nothing.
-- [ ] **Implement**: `remaining = post_cancel.vol - post_cancel.vol_exec`.
+- [x] **Test**: Kraken omitting `vol` (reads `0.0`) places nothing.
+- [x] **Implement**: `remaining = post_cancel.vol - post_cancel.vol_exec`.
 
 `place_limit_order` rounds to `lot_decimals` before sending, so `pos["volume"]`
 and the order's `vol` differ by up to one lot tick. The old subtraction turned an

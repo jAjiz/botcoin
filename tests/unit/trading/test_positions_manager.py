@@ -768,11 +768,11 @@ def test_reprice_closing_order_noop_when_new_placement_fails_after_cancel(monkey
 def test_reprice_closing_order_sizes_replacement_to_remainder_on_fill_in_cancel_window(monkeypatch) -> None:
     """A fill landing between the pre-cancel check and the cancel call still leaves
     a cancellable remainder. The post-cancel re-query must catch it so the
-    replacement is sized at volume - vol_exec, not the full position."""
+    replacement is sized at the order's own vol - vol_exec, not pos["volume"]."""
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol_exec=0.2),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol=0.5, vol_exec=0.2),
     )
     monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
     place_calls: list[tuple] = []
@@ -882,6 +882,53 @@ def test_reprice_closing_order_noop_when_remaining_is_not_positive(monkeypatch) 
 
     assert pos["closing_order_id"] == "OLDORDER"
     assert pos["closing_price"] == 100.0
+    assert pos["volume"] == 0.5
+
+
+def test_reprice_closing_order_sizes_remainder_from_the_order_not_pos_volume(monkeypatch) -> None:
+    """`place_limit_order` rounds to `lot_decimals` before sending, so
+    `pos["volume"]` can drift from the order's own `vol` by up to one lot tick.
+    An order fully executed against its own `vol` (vol_exec == vol) must leave no
+    remainder, even when `pos["volume"]` is stale and larger — sizing from
+    `pos["volume"]` would place a dust-sized (or here, oversized) replacement
+    instead of letting branch 1 finalize the completed trade next tick."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol=0.01, vol_exec=0.01),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(
+        positions_manager, "place_limit_order", lambda *a, **k: pytest.fail("must not place a new order")
+    )
+
+    state = OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0)
+    # pos["volume"] has drifted well above the order's own vol.
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    assert positions_manager.reprice_closing_order("XBTEUR", pos, state, last_prices={"XBTEUR": 105.0}) is True
+
+    assert pos["closing_order_id"] == "OLDORDER"
+    assert pos["volume"] == 0.5
+
+
+def test_reprice_closing_order_places_nothing_when_kraken_omits_the_orders_vol(monkeypatch) -> None:
+    """`vol` reads 0.0 when Kraken omits it (see OrderState), so the remainder
+    must fail closed rather than sizing from pos["volume"]."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol_exec=0.2),  # vol omitted -> 0.0
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
+    monkeypatch.setattr(
+        positions_manager, "place_limit_order", lambda *a, **k: pytest.fail("must not place a new order")
+    )
+
+    state = OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0)
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    assert positions_manager.reprice_closing_order("XBTEUR", pos, state, last_prices={"XBTEUR": 105.0}) is True
+
+    assert pos["closing_order_id"] == "OLDORDER"
     assert pos["volume"] == 0.5
 
 

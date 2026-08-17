@@ -301,18 +301,22 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
         return False  # confirmed cancel, no replacement: the pair is unmanaged
 
     side = pos["side"]
-    volume = float(pos.get("volume", 0.0))
-    remaining = volume - post_cancel_state.vol_exec
+    # Sized from the order's own numbers, never pos["volume"]: place_limit_order rounds to
+    # lot_decimals before sending, so the two can drift by up to one lot tick — sizing from
+    # pos["volume"] turned a fully executed order into an unplaceable dust remainder. Also
+    # fails closed when Kraken omits `vol` (reads 0.0): remaining goes negative, nothing placed.
+    remaining = post_cancel_state.vol - post_cancel_state.vol_exec
     if remaining <= 0:
         logging.info(
             f"[{pair}] Closing order {order_id} left no remainder after cancel "
-            f"(vol_exec={post_cancel_state.vol_exec:.8f} of {volume:.8f}); not placing a replacement."
+            f"(vol_exec={post_cancel_state.vol_exec:.8f} of {post_cancel_state.vol:.8f}); "
+            "not placing a replacement."
         )
         return True  # fully executed during the cancel window; branch 1 finalizes it next tick
     if post_cancel_state.vol_exec > 0:
         logging.warning(
             f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
-            f"{post_cancel_state.vol_exec:.8f} of {volume:.8f} executed; replacement sized to "
+            f"{post_cancel_state.vol_exec:.8f} of {post_cancel_state.vol:.8f} executed; replacement sized to "
             f"{remaining:.8f}.",
             to_telegram=True,
         )
