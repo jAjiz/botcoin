@@ -199,7 +199,7 @@ caller owns them, and `_drive_closing_order` cannot exist until both. Splitting
 this produces intermediate states that double-query or fail the suite; the pieces
 land together.
 
-- [ ] **Tests — migrate, do not rewrite.** The existing coverage moves to its new
+- [x] **Tests — migrate, do not rewrite.** The existing coverage moves to its new
   owner:
   - `is_closing_complete_*` interpretation tests (filled, buy-side PnL,
     fully-executed cancel, no usable price, `vol` vs `pos["volume"]` fullness) →
@@ -208,9 +208,9 @@ land together.
     unresolvable) → `_drive_closing_order`.
   - `reprice_closing_order_*` tests that stub the pre-cancel `get_order_state` →
     pass the state in instead; assert the pre-cancel query is **not** made.
-- [ ] **New test**: `_drive_closing_order` returns `None` and clears the fields on
+- [x] **New test**: `_drive_closing_order` returns `None` and clears the fields on
   a terminal-but-unusable order, and the same call re-places on that tick.
-- [ ] **Implement** in `trading/positions_manager.py`, per spec §4–§7:
+- [x] **Implement** in `trading/positions_manager.py`, per spec §4–§7:
   `_clear_closing_fields`, `finalize_close(pos, state)`, `_drive_closing_order`,
   `reprice_closing_order(pair, pos, state, last_prices)`, and
   `manage_close_position` branch 1.
