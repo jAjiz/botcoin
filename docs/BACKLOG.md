@@ -3,6 +3,7 @@
 The working backlog of features for BoTCoin. Each entry is independent and
 self-contained — there is no fixed delivery order. Cards are grouped by status
 and kept brief: the design and the reasoning behind it live in the linked spec.
+A card being implemented also links a plan, which is deleted once it ships.
 
 **Status legend:** ✅ Shipped · 📋 Planned · 💤 Deferred
 
@@ -73,6 +74,7 @@ resolver depends on has to be confirmed on the account before anything depends
 on it.
 
 - Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
+- Plan: [`plans/closing-state-machine-plan.md`](plans/closing-state-machine-plan.md)
 
 ### Strategy Review Follow-ups
 
