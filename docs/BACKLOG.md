@@ -62,6 +62,22 @@ owns everything between the breach and the fill.
 
 ## 📋 Planned
 
+### Closing State Machine & Idempotent Placement
+
+A lost `AddOrder` response is today indistinguishable from a rejection, so the
+next tick can place a second exit for the same holding. Every order gains a
+client-chosen `cl_ord_id`, and a closing position routes on whether its placement
+was *confirmed* — which decides whether "Kraken doesn't have it" licenses a
+re-place or means the pair is unmanaged. Lands together with a restructure of the
+closing path into one selector with a single `OrderStatus` dispatch, which also
+drops the reprice tick from three `get_order_state` calls to two.
+
+Ships in two PRs with a live check between them: the exchange behaviour the
+resolver depends on has to be confirmed on the account before anything depends
+on it.
+
+- Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
+
 ### Strategy Review Follow-ups
 
 Actionable, non-strategy items from the 2026-07-06 trading-strategy review:
@@ -119,33 +135,16 @@ stable signal — more than 60 days of OHLC data are required.
 
 ## 💤 Deferred
 
-### Deferred out of Code-Review Hardening
+### Orphan Order Sweep
 
-Points raised during the code review and consciously parked — recorded here so
-they are not mistaken for work the hardening phases closed.
+A hard process kill *between* the `AddOrder` send and the tick's `finally` loses
+the client id before it is persisted, so that order is unrecoverable by id. An
+unfiltered `OpenOrders` sweep, matched against the ids the bot knows, would catch
+it. Deliberately left out of the closing state machine spec: different mechanism,
+different trigger, and its lookup cannot reuse the "always among the newest"
+argument that bounds the resolver's, so it needs its own paging strategy.
 
-- **`cl_ord_id`-based idempotent order placement.** Orders are identified only
-  by the `txid` Kraken returns, so the bot cannot ask "did *my* order land?"
-  after a lost `AddOrder` response, nor size a replacement against a fill that
-  landed inside the cancel/replace window. Both end with a position size the bot
-  does not know about. Phase 1 (A5) shipped only the narrower guarantee that an
-  id the bot *has* is never lost. Needs a spec: which client-id mechanism
-  (`userref` vs `cl_ord_id`) this account tier and the krakenex path actually
-  support. Sizing replacements from `vol - vol_exec` after a cancel-window fill
-  is done (`reprice_closing_order` re-queries post-cancel); the `AddOrder`-loss
-  half of the idempotency gap remains. With the `stop_at` latch in place the
-  re-place branch retries a placement every tick until one rests, rather than
-  only while the stop is still breached, so that remaining half is reached more
-  often than before. Same risk class, higher exposure.
-- **`get_order_state` is called three times per closing tick** (scheduler, plus
-  the pre-cancel check and the post-cancel re-query inside
-  `reprice_closing_order`). Private Kraken calls *are* rate-limited — a per-tier
-  counter, ~15–20 with a slow decay — and only the public path is throttled
-  in-process by `_wait_rate_limit`. It fits today because each pair's iteration
-  includes a public OHLC call that forces ≥1 s of spacing, so the counter decays
-  between pairs; a throttled call would degrade to `None` via `_safe_call`, and
-  the post-cancel bail leaves the position without a resting exit for one tick.
-  The scheduler's `OrderState` could be passed down to remove one of the three.
+- Spec: _to be written_
 
 ---
 
