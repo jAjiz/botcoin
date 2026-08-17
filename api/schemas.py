@@ -69,7 +69,7 @@ class PositionDetail(BaseModel):
     stop_atr: float | None = None
     closing_order_id: str | None = None
     closing_price: float | None = None
-    closing_requested_at: datetime | None = None
+    stop_at: datetime | None = None
 
 
 class PositionResponse(BaseModel):

@@ -123,8 +123,8 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 ## Constraints and invariants
 
 - The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch. Adding one is a strategy change and must be discussed explicitly.
-- A position with `closing_order_id` set is **not open** — `tick_position` must not run on it (the scheduler enforces this via step ordering).
-- `closing_price` is an estimate until fill confirmation: `close_position` writes it first at order placement, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. `is_closing_complete` performs the final write with the real fill price and computes `pnl_percent`.
+- A position whose stop has fired (`stop_at` latched) is **not open** — `tick_position` must not run on it, whether or not a closing order was ever placed (the scheduler enforces this via step ordering).
+- `closing_price` is an estimate until fill confirmation, and it is only present once an order actually rests at Kraken: `close_position` writes it when a placement succeeds, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. A breach whose placement failed, or whose order died terminally without a usable fill, has `stop_at` latched and no `closing_price` at all — the exit is owed, but nothing has been quoted for it yet. `is_closing_complete` performs the final write with the real fill price and computes `pnl_percent`; any read before it returns `True` is reading an estimate.
 - `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Every caller that does not handle `None` will silently corrupt state.
 
 ---

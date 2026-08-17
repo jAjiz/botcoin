@@ -15,6 +15,8 @@ _shared_data = {
     "session_failure_alerted": False,
     "consecutive_session_overruns": 0,
     "session_overrun_alerted": False,
+    "consecutive_pair_failures": {},  # {pair: count}
+    "pair_failure_alerted": set(),  # pairs already alerted on
 }
 
 
@@ -104,8 +106,7 @@ def pop_config_dirty(pair: str) -> bool:
 
 
 def register_session_failure(threshold: int) -> int | None:
-    """Count a failed session. Return the streak count once (the tick it first
-    reaches ``threshold``), else None, so the caller alerts only once."""
+    """Count a failed session; return the streak count the first tick it reaches ``threshold``."""
     with _lock:
         _shared_data["consecutive_session_failures"] += 1
         count = _shared_data["consecutive_session_failures"]
@@ -116,8 +117,7 @@ def register_session_failure(threshold: int) -> int | None:
 
 
 def register_session_success() -> bool:
-    """Reset the failure streak. Return True if we had alerted, so the caller
-    sends one recovery message."""
+    """Reset the failure streak; return True if we had alerted, so the caller announces recovery."""
     with _lock:
         was_alerted = _shared_data["session_failure_alerted"]
         _shared_data["consecutive_session_failures"] = 0
@@ -125,11 +125,28 @@ def register_session_success() -> bool:
         return was_alerted
 
 
+def register_pair_failure(pair: str, threshold: int) -> int | None:
+    """Count a session in which ``pair`` failed; return the streak count the first tick it reaches ``threshold``."""
+    with _lock:
+        count = _shared_data["consecutive_pair_failures"].get(pair, 0) + 1
+        _shared_data["consecutive_pair_failures"][pair] = count
+        if count >= threshold and pair not in _shared_data["pair_failure_alerted"]:
+            _shared_data["pair_failure_alerted"].add(pair)
+            return count
+        return None
+
+
+def register_pair_success(pair: str) -> bool:
+    """Reset ``pair``'s failure streak; return True if we had alerted on it."""
+    with _lock:
+        _shared_data["consecutive_pair_failures"][pair] = 0
+        was_alerted = pair in _shared_data["pair_failure_alerted"]
+        _shared_data["pair_failure_alerted"].discard(pair)
+        return was_alerted
+
+
 def register_session_overrun(threshold: int) -> int | None:
-    """Count a session that overran the scheduling interval (long enough to skip
-    the next tick). Return the streak count once (the tick it first reaches
-    ``threshold``), else None, so the caller alerts only once. Independent of the
-    failure streak."""
+    """Count a session that overran the interval; return the streak count the first tick it reaches ``threshold``."""
     with _lock:
         _shared_data["consecutive_session_overruns"] += 1
         count = _shared_data["consecutive_session_overruns"]
@@ -140,8 +157,7 @@ def register_session_overrun(threshold: int) -> int | None:
 
 
 def register_session_ontime() -> bool:
-    """Reset the overrun streak (a session that finished within the interval).
-    Return True if we had alerted, so the caller sends one recovery message."""
+    """Reset the overrun streak; return True if we had alerted, so the caller announces recovery."""
     with _lock:
         was_alerted = _shared_data["session_overrun_alerted"]
         _shared_data["consecutive_session_overruns"] = 0

@@ -13,10 +13,11 @@ from exchange.kraken import get_balance, get_last_prices
 from trading.market_analyzer import get_current_atr
 from trading.parameters_manager import calculate_trading_parameters, get_volatility_level
 from trading.positions_manager import (
+    ClosingState,
     create_position,
-    is_closing_complete,
+    is_closing,
     is_open,
-    reprice_closing_order,
+    manage_close_position,
     tick_position,
 )
 
@@ -46,62 +47,6 @@ def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
     return None
 
 
-def _notify_session_outcome(status: str, reason: str | None, elapsed_seconds: float) -> None:
-    """Edge-triggered Telegram alerting: one message when the failure streak hits
-    the threshold, one on recovery, ``paused`` neutral. Touches only runtime and
-    the DB-independent Telegram logger, so it never masks the session's exception.
-
-    On a completed session it also tracks an independent *overrun* streak: a session
-    whose wall-clock ``elapsed_seconds`` reached ``SLEEPING_INTERVAL`` ran long enough
-    to skip the next tick, so ≥ threshold in a row warns that the host is likely
-    resource-starved. The overrun-recovery message is suppressed when a failure
-    recovery fires the same tick (the latter already implies normal operation)."""
-    if status == "completed":
-        failure_recovered = runtime.register_session_success()
-        if failure_recovered:
-            logging.info("✅ Trading sessions recovered; data is updating again.", to_telegram=True)
-        if elapsed_seconds >= SLEEPING_INTERVAL:
-            count = runtime.register_session_overrun(SESSION_FAILURE_ALERT_THRESHOLD)
-            if count is not None:
-                logging.error(
-                    f"⚠️ {count} trading sessions in a row overran the {SLEEPING_INTERVAL}s interval "
-                    f"(last took {elapsed_seconds:.0f}s); ticks are being skipped and prices/positions "
-                    "may lag. The host is likely resource-starved.",
-                    to_telegram=True,
-                )
-        elif runtime.register_session_ontime() and not failure_recovered:
-            logging.info(
-                f"✅ Trading session timing back to normal (last took {elapsed_seconds:.0f}s).",
-                to_telegram=True,
-            )
-    elif status == "failed":
-        count = runtime.register_session_failure(SESSION_FAILURE_ALERT_THRESHOLD)
-        if count is not None:
-            detail = f" Last error: {reason}." if reason else ""
-            logging.error(
-                f"⚠️ {count} trading sessions have failed in a row.{detail} Prices and positions are not being updated.",
-                to_telegram=True,
-            )
-
-
-def _persist_pair_state(pair: str, current: dict | None, previous: dict | None) -> bool:
-    """Write a pair's state back if the session changed it. Returns False when the
-    write failed, so the caller can mark the pair failed instead of letting the
-    exception escape the loop."""
-    if current == previous:
-        return True
-    try:
-        if current is None:
-            # Position was dropped in-memory (e.g. _drop_position); remove the DB row.
-            db.delete_trailing_state(pair)
-        else:
-            db.save_trailing_state(pair, current)
-    except Exception:
-        logging.exception(f"Failed to persist state for {pair}.")
-        return False
-    return True
-
-
 def trading_session() -> None:
     global _session_count
 
@@ -110,10 +55,10 @@ def trading_session() -> None:
     app_logger.addHandler(collector)
 
     session_id: int | None = None
-    status = "failed"  # overwritten on success / paused
-    failure_reason: str | None = None
+    status = "failed"  # overwritten on success / pair errors / paused
     current_balance: dict | None = None
     pair_data: dict[str, dict] = {}
+    failed_pairs: list[str] = []  # read by the `finally`, so it must outlive the try
     started_at = now_utc()  # session start; reused for the DB row and the elapsed measure
 
     try:
@@ -129,18 +74,15 @@ def trading_session() -> None:
 
         current_balance = call_with_retry(get_balance)
         if current_balance is None:
-            failure_reason = "could not fetch balance"
             logging.error("Could not fetch balance. Skipping session.\n")
             return
         runtime.update_balance(current_balance)
 
         last_prices = call_with_retry(get_last_prices, PAIRS)
         if last_prices is None:
-            failure_reason = "could not fetch prices"
             logging.error("Could not fetch prices. Skipping session.\n")
             return
 
-        failed_pairs: list[str] = []
         for pair in PAIRS:
             previous_state: dict | None = None
             try:
@@ -172,20 +114,25 @@ def trading_session() -> None:
                 }
 
                 if not TRADING_ENABLED:
-                    # Non-trading replica: record market data, never touch positions.
                     if trailing_state.get(pair):
-                        logging.warning(
-                            f"TRADING_ENABLED is false but {pair} has a stored position; "
-                            "it is NOT being managed (trailing stop frozen)."
-                        )
+                        logging.warning(f"Trading is disabled but {pair} has a stored position; its stop is frozen.")
                     continue
 
-                if is_closing_complete(trailing_state.get(pair)):
-                    db.record_position_closed(pair, trailing_state[pair])
-                    del trailing_state[pair]
-                    logging.info(f"Trailing position removed for {pair}.")
-                elif (trailing_state.get(pair) or {}).get("closing_order_id"):
-                    reprice_closing_order(pair, trailing_state[pair], last_prices)
+                if is_closing(trailing_state.get(pair)):
+                    match manage_close_position(
+                        pair, trailing_state[pair], current_balance, last_prices, trailing_state
+                    ):
+                        case ClosingState.FILLED:
+                            db.record_position_closed(pair, trailing_state[pair])
+                            del trailing_state[pair]
+                            logging.info(f"Trailing position removed for {pair}.")
+                        case ClosingState.UNMANAGED:
+                            # Routed into the consecutive-failure alert rather than a
+                            # per-tick Telegram: an unmanaged pair is a failed pair.
+                            logging.error(f"[{pair}] No exit order rests at Kraken; marking the pair failed.")
+                            failed_pairs.append(pair)
+                        case ClosingState.PENDING:
+                            pass
 
                 if not trailing_state.get(pair):
                     create_position(pair, current_balance, last_prices, current_atr, trailing_state)
@@ -205,22 +152,21 @@ def trading_session() -> None:
         _session_count += 1
         runtime.update_last_run_at(now_utc())
         if failed_pairs:
-            status = "failed"
-            failure_reason = f"pair errors: {', '.join(failed_pairs)}"
-            logging.error(f"======== SESSION COMPLETE WITH ERRORS ({failure_reason}) ========")
+            # The session did complete; only these pairs were skipped.
+            status = "pair_error"
+            logging.error(f"======== SESSION COMPLETE WITH ERRORS (pairs: {', '.join(failed_pairs)}) ========")
         else:
             status = "completed"
             logging.info("======== SESSION COMPLETE ========")
-    except Exception as exc:
+    except Exception:
         logging.exception("Unhandled exception in trading_session")
         status = "failed"
-        failure_reason = failure_reason or f"unhandled exception: {exc}"
         raise
     finally:
         app_logger.removeHandler(collector)
         ended_at = now_utc()
         elapsed_seconds = (ended_at - started_at).total_seconds()
-        _notify_session_outcome(status, failure_reason, elapsed_seconds)
+        _notify_session_outcome(status, elapsed_seconds, failed_pairs)
         if session_id is not None:
             db.finalize_session(
                 session_id=session_id,
@@ -230,3 +176,65 @@ def trading_session() -> None:
                 pair_data=pair_data,
                 log_messages="\n".join(collector.lines) or None,
             )
+
+
+def _persist_pair_state(pair: str, current: dict | None, previous: dict | None) -> bool:
+    """Write a pair's state back if the session changed it; False when the write failed."""
+    if current == previous:
+        return True
+    try:
+        if current is None:
+            db.delete_trailing_state(pair)
+        else:
+            db.save_trailing_state(pair, current)
+    except Exception:
+        logging.exception(f"Failed to persist state for {pair}.")
+        return False
+    return True
+
+
+def _notify_session_outcome(status: str, elapsed_seconds: float, failed_pairs: list[str]) -> None:
+    """One edge-triggered alert per streak — session, pair and duration — and one on recovery."""
+    if status == "paused":
+        return
+
+    if status == "failed":
+        count = runtime.register_session_failure(SESSION_FAILURE_ALERT_THRESHOLD)
+        if count is not None:
+            logging.error(
+                f"⚠️ {count} trading sessions have failed in a row; prices and positions are not being updated.",
+                to_telegram=True,
+            )
+        return
+
+    # The session did its work, whether or not one of its pairs failed.
+    failure_recovered = runtime.register_session_success()
+    if failure_recovered:
+        logging.info("✅ Trading sessions recovered; data is updating again.", to_telegram=True)
+
+    for pair in PAIRS:
+        if pair in failed_pairs:
+            count = runtime.register_pair_failure(pair, SESSION_FAILURE_ALERT_THRESHOLD)
+            if count is not None:
+                logging.error(
+                    f"⚠️ [{pair}] has failed in {count} sessions in a row and is not being managed.",
+                    to_telegram=True,
+                )
+        elif runtime.register_pair_success(pair):
+            logging.info(f"✅ [{pair}] is being managed normally again.", to_telegram=True)
+
+    # Alert if the session took too long, even if it completed successfully.
+    if elapsed_seconds >= SLEEPING_INTERVAL:
+        count = runtime.register_session_overrun(SESSION_FAILURE_ALERT_THRESHOLD)
+        if count is not None:
+            logging.error(
+                f"⚠️ {count} trading sessions in a row overran the {SLEEPING_INTERVAL}s interval "
+                f"(last took {elapsed_seconds:.0f}s); ticks are being skipped and prices/positions "
+                "may lag.",
+                to_telegram=True,
+            )
+    elif runtime.register_session_ontime() and not failure_recovered:
+        logging.info(
+            f"✅ Trading session timing back to normal (last took {elapsed_seconds:.0f}s).",
+            to_telegram=True,
+        )

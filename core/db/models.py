@@ -147,7 +147,7 @@ class TrailingState(Base):
     stop_atr = Column(Numeric(20, 10), nullable=True)
     closing_order_id = Column(Text, nullable=True)
     closing_price = Column(Numeric(20, 10), nullable=True)
-    closing_requested_at = Column(DateTime(timezone=True), nullable=True)
+    stop_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         nullable=False,
@@ -182,7 +182,7 @@ class TrailingState(Base):
             "stop_atr": float(self.stop_atr) if self.stop_atr is not None else None,
             "closing_order_id": self.closing_order_id,
             "closing_price": float(self.closing_price) if self.closing_price is not None else None,
-            "closing_requested_at": self.closing_requested_at,
+            "stop_at": self.stop_at,
             "updated_at": self.updated_at,
         }
 

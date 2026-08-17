@@ -48,6 +48,16 @@ the Deferred card below.
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
 - Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
 
+### Stop-Latched Close
+
+A failed `place_limit_order` used to leave no trace, so the next tick re-entered
+`tick_position` and could widen the stop past the breach or re-arm the trail: an
+API failure revoked a strategy decision. `stop_at` now latches the breach before
+the placement attempt, `is_open` is `not stop_at`, and `manage_close_position`
+owns everything between the breach and the fill.
+
+- Spec: [`specs/stop-latched-close-design.md`](specs/stop-latched-close-design.md)
+
 ---
 
 ## 📋 Planned
@@ -123,7 +133,10 @@ they are not mistaken for work the hardening phases closed.
   (`userref` vs `cl_ord_id`) this account tier and the krakenex path actually
   support. Sizing replacements from `vol - vol_exec` after a cancel-window fill
   is done (`reprice_closing_order` re-queries post-cancel); the `AddOrder`-loss
-  half of the idempotency gap remains.
+  half of the idempotency gap remains. With the `stop_at` latch in place the
+  re-place branch retries a placement every tick until one rests, rather than
+  only while the stop is still breached, so that remaining half is reached more
+  often than before. Same risk class, higher exposure.
 - **`get_order_state` is called three times per closing tick** (scheduler, plus
   the pre-cancel check and the post-cancel re-query inside
   `reprice_closing_order`). Private Kraken calls *are* rate-limited — a per-tier

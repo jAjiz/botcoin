@@ -146,7 +146,7 @@ def test_get_order_state_returns_status_price_and_vol_exec_when_closed(monkeypat
 
     result = kraken.get_order_state("ORD001")
 
-    assert result == kraken.OrderState(status="closed", avg_price=69099.7, vol_exec=0.01)
+    assert result == kraken.OrderState(status=kraken.OrderStatus.CLOSED, avg_price=69099.7, vol_exec=0.01)
 
 
 def test_get_order_state_returns_total_ordered_volume(monkeypatch) -> None:
@@ -165,7 +165,7 @@ def test_get_order_state_returns_total_ordered_volume(monkeypatch) -> None:
 
     result = kraken.get_order_state("ORD001")
 
-    assert result == kraken.OrderState(status="canceled", avg_price=69099.7, vol=0.02, vol_exec=0.01)
+    assert result == kraken.OrderState(status=kraken.OrderStatus.CANCELED, avg_price=69099.7, vol=0.02, vol_exec=0.01)
 
 
 def test_get_order_state_reports_zero_total_volume_when_kraken_omits_it(monkeypatch) -> None:
@@ -199,7 +199,7 @@ def test_get_order_state_returns_status_when_open_regardless_of_price(monkeypatc
 
     # The function reports whatever Kraken sends; it never infers completion
     # from the price itself. Callers must branch on status, not price.
-    assert result == kraken.OrderState(status="open", avg_price=0.0, vol_exec=0.0)
+    assert result == kraken.OrderState(status=kraken.OrderStatus.OPEN, avg_price=0.0, vol_exec=0.0)
 
 
 def test_get_order_state_reports_zero_price_when_canceled(monkeypatch) -> None:
@@ -216,17 +216,54 @@ def test_get_order_state_reports_zero_price_when_canceled(monkeypatch) -> None:
 
     # This is exactly the case that used to be mistaken for a filled order at
     # price 0.0 by the old price-only helper: a canceled order with no fill.
-    assert result == kraken.OrderState(status="canceled", avg_price=0.0, vol_exec=0.0)
+    assert result == kraken.OrderState(status=kraken.OrderStatus.CANCELED, avg_price=0.0, vol_exec=0.0)
 
 
-def test_get_order_state_returns_none_when_order_id_missing_from_result(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("pending", kraken.OrderStatus.PENDING),
+        ("open", kraken.OrderStatus.OPEN),
+        ("closed", kraken.OrderStatus.CLOSED),
+        ("canceled", kraken.OrderStatus.CANCELED),
+        # Both mean the same thing to a caller: off the book, no further fills.
+        ("expired", kraken.OrderStatus.CANCELED),
+    ],
+)
+def test_map_order_status_translates_kraken_vocabulary(raw, expected) -> None:
+    assert kraken.map_order_status(raw) is expected
+
+
+@pytest.mark.parametrize("raw", ["some-status-kraken-invented", "", None])
+def test_map_order_status_reports_anything_unmodelled_as_unknown(raw) -> None:
+    """An unmodelled status must never be guessed at: callers treat UNKNOWN as
+    'do not act', because acting on it could leave two live exits."""
+    assert kraken.map_order_status(raw) is kraken.OrderStatus.UNKNOWN
+
+
+def test_get_order_state_reports_not_found_when_order_id_missing_from_result(monkeypatch) -> None:
+    """Kraken answered and does not know the order. That is a fact about the order,
+    not an API failure, so it must be distinguishable from None."""
     monkeypatch.setattr(
         kraken.api,
         "query_private",
         lambda *args, **kwargs: {"error": [], "result": {}},
     )
 
-    assert kraken.get_order_state("ORD001") is None
+    state = kraken.get_order_state("ORD001")
+
+    assert state is not None
+    assert state.status is kraken.OrderStatus.NOT_FOUND
+
+
+def test_get_order_state_reports_unknown_when_kraken_omits_the_status(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"ORD001": {"price": "1.0", "vol_exec": "1.0"}}},
+    )
+
+    assert kraken.get_order_state("ORD001").status is kraken.OrderStatus.UNKNOWN
 
 
 def test_get_order_state_returns_none_on_api_error(monkeypatch) -> None:
