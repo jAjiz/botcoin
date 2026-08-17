@@ -69,9 +69,9 @@ re-place or means the pair is unmanaged. Lands together with a restructure of th
 closing path into one selector with a single `OrderStatus` dispatch, which also
 drops the reprice tick from three `get_order_state` calls to two.
 
-Ships in two PRs with a live check between them: the exchange behaviour the
-resolver depends on has to be confirmed on the account before anything depends
-on it.
+Ships in one PR. The exchange behaviour the resolver depends on — that Kraken
+accepts the id and that both order-listing endpoints filter by it — was verified
+on the account up front, so there is nothing left to stage.
 
 - Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
 - Plan: [`plans/closing-state-machine-plan.md`](plans/closing-state-machine-plan.md)

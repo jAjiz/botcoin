@@ -1,6 +1,6 @@
 # Closing state machine — idempotent placement and single dispatch
 
-**Status:** Draft — ready for an implementation plan
+**Status:** Ready to implement — plan at [`../plans/closing-state-machine-plan.md`](../plans/closing-state-machine-plan.md)
 **Date:** 2026-08-17
 **Builds on:** [`stop-latched-close-design.md`](stop-latched-close-design.md) — the `stop_at` latch, `ClosingState`, and the `OrderStatus` enum are assumed to be in place.
 **Backlog card:** `docs/BACKLOG.md` → 💤 Deferred → *`cl_ord_id`-based idempotent order placement*
@@ -526,41 +526,45 @@ dict, as `test_place_limit_order_rounds_to_pair_precision` already does).
 - `closing_request_id` round-trips through `save_trailing_state` /
   `load_trailing_state`, and is absent from the dict when the column is `NULL`.
 
-**Only a live account can prove:**
+**Verified on the account, not by tests** (operator, 2026-08-17):
 
-- That Kraken accepts `cl_ord_id` on `AddOrder` for this account's verification
-  tier and does not reject the order.
-- That `ClosedOrders` / `OpenOrders` filtered by `cl_ord_id` actually return the
-  order, and how soon after placement it becomes visible.
+- Kraken accepts `cl_ord_id` on `AddOrder` for this account's verification tier
+  and does not reject the order.
+- `OpenOrders` and `ClosedOrders` filtered by `cl_ord_id` return the order.
+
+This is what the resolver's "absent" inference rests on, and it is why the work
+ships in one PR — see *Rollout*.
+
+**Still unproven, and why neither blocks:**
+
 - Whether `ClosedOrders` with a `cl_ord_id` filter searches beyond its default
-  time window / first page.
-- The real behaviour on a duplicate `cl_ord_id`.
+  page. Irrelevant on the only path that uses it: the resolver runs on the tick
+  after the placement, so the order is among the newest (*Resolved questions* 1).
+  An orphan sweep would have to establish this for itself.
+- The real behaviour on a duplicate `cl_ord_id`. Unreachable by construction —
+  ids are per-attempt UUIDs, so none is ever sent twice, and a reject would arrive
+  as `None` through `_safe_call` anyway.
 
 ## Rollout
 
-Two ordered PRs with a live check between them, no feature flag.
+One PR, no feature flag, no staged gate.
 
-**PR 1 — placement.** `new_cl_ord_id()`, the `place_limit_order` parameter, the
-column and migration, and both call sites writing the id before placing. Nothing
-reads it. The routing in `manage_close_position` is unchanged, so the bot behaves
-exactly as it does today and the id is pure diagnostics.
+An earlier version of this section split the work in two — placement first, the
+resolver after a live check — because one assumption could not be tested from
+inside the code. The resolver reads "Kraken does not have this order" as evidence
+that nothing landed. If the `cl_ord_id` filter were *ignored* rather than applied,
+a filtered call would answer successfully with the wrong content, the resolver
+would clear and re-place, and the result is a second live exit. An API error we
+can detect and freeze on; a confident wrong answer we cannot.
 
-**Live gate between the PRs.** Four checks against one order the bot actually
-places: Kraken accepts it with the `cl_ord_id`; `ClosedOrders` filtered by that id
-returns it once terminal; `OpenOrders` filtered by it returns it while resting;
-and how long it takes to become visible.
+That assumption has since been verified directly against the account (operator,
+2026-08-17): `AddOrder` accepts the `cl_ord_id`, and both `OpenOrders` and
+`ClosedOrders` filtered by it return the order. With the premise checked, the
+split bought nothing but two review cycles, so the work ships in one PR.
 
-The gate is not ceremony. If the filter does not behave as documented, a lookup
-that *succeeds* and returns empty is indistinguishable from a genuine absence —
-the resolver would read "never landed", clear, and place a second exit. That is
-the worst outcome in the system, and it is the one failure mode that cannot be
-made fail-safe from inside the code: an API error we can detect and freeze on, a
-confidently wrong answer we cannot. Everything in PR 2 rests on this behaving as
-the docs say, so it gets confirmed before it is depended on.
-
-**PR 2 — the state machine.** The selector, `_drive_closing_order`, the
-`finalize_close` and `reprice_closing_order` refactors, `find_order_by_cl_ord_id`,
-and the CLAUDE.md updates. All the behaviour change lands here.
+The echoed-id verification in §9 stays regardless. It costs nothing, and it is
+what turns a future regression in that filter into a loud failure instead of a
+silent one.
 
 ## Non-goals
 
@@ -629,6 +633,11 @@ above.
 5. **`CancelOrder` accepts `cl_ord_id`** (operator, 2026-08-17). It does not
    change the design: the txid is in hand wherever a cancel happens, so §7 keeps
    using it and `cl_ord_id` stays confined to the one job only it can do.
+6. **The `cl_ord_id` round trip works end to end on the account** (operator,
+   2026-08-17): the order is accepted with the id, and both `OpenOrders` and
+   `ClosedOrders` filtered by it return it. This is the premise the resolver's
+   "absent" inference rests on. Checking it up front is what collapsed the
+   rollout from two PRs to one — see *Rollout*.
 
 ## Design choices to record in CLAUDE.md
 

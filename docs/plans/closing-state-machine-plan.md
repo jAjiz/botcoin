@@ -11,20 +11,22 @@ dispatch.
 
 **Spec:** [`../specs/closing-state-machine-design.md`](../specs/closing-state-machine-design.md)
 
-**Shape:** two PRs with a live check between them. PR 1 sends and persists the
-id and changes **no** behaviour; PR 2 adds the resolver and the state machine.
-The order is not negotiable — PR 2's resolver treats "Kraken doesn't have it" as
-evidence nothing landed, and that inference is only sound if the endpoints filter
-by `cl_ord_id` the way the docs say. That gets confirmed on a real order before
-anything depends on it.
+**Shape:** one PR, ten tasks. An earlier version staged this in two with a live
+check between them, because the resolver's "Kraken doesn't have it ⇒ nothing
+landed" inference is only sound if the endpoints really filter by `cl_ord_id`.
+That has been verified directly on the account (operator, 2026-08-17), so there
+is nothing left to gate on.
+
+Tasks 1–5 are additive and 6–9 carry the behaviour change. Keep that order: the
+resolver in task 9 reads an id that tasks 4 and 5 must already be minting.
 
 **Base:** `main` at or after `4fc9712` (the `stop_at` latch). The spec lives on
-`docs/closing-state-machine`; cut both feature branches from `main`.
+`docs/closing-state-machine`; cut `feat/closing-state-machine` from `main`.
 
 **Tech stack:** Python 3.12, SQLAlchemy 2 + Alembic, krakenex, pytest.
 
 **Disposable:** this plan is scaffolding for one implementation pass. Delete it
-when PR 2 merges — the spec is the durable record.
+when the PR merges — the spec is the durable record.
 
 ## Commands (from repo root; `PYTHONPATH=.` required)
 
@@ -38,10 +40,11 @@ Note: the system `pytest` is not on PATH in this environment; use the venv
 
 ---
 
-# PR 1 — Placement (`feat/cl-ord-id-placement`)
+# Tasks 1–5 — Placement
 
-Every change is additive. At the end the bot sends and stores an id and logs it;
-nothing reads it, and the routing in `manage_close_position` is untouched.
+Every change here is additive: the bot sends and stores an id and logs it, and
+the routing in `manage_close_position` is untouched. Land them first so the
+resolver has an id to find.
 
 ## Task 1 — `new_cl_ord_id()`
 
@@ -133,10 +136,10 @@ success, and the error message says "not confirmed" instead of "failed to place"
 because that is what a `None` now means. `closing_price` keeps its meaning
 exactly — an estimate until the fill is confirmed.
 
-This is the one place PR 1 leaves state behind that today it would not (a failed
+This is the one place tasks 1–5 leave state behind that today they would not (a failed
 placement now persists `closing_price` and `closing_request_id`). It is still
 inert: nothing reads `closing_price` unless a `closing_order_id` is set, and
-nothing reads `closing_request_id` at all until PR 2.
+nothing reads `closing_request_id` at all until task 9.
 
 **Commit:** `feat(positions): mint a client order id before placing the exit`
 
@@ -149,48 +152,20 @@ nothing reads `closing_request_id` at all until PR 2.
   `pos`, pass it through.
 
 Do **not** drop `closing_order_id` here and do **not** move `pos["volume"]`
-yet — both belong to PR 2, where the resolver exists to cover the state they
+yet — both belong to task 9, where the resolver exists to cover the state they
 create.
 
 **Commit:** `feat(positions): mint a client order id for the replacement order`
 
-## Task 6 — confirm PR 1 is a no-op
-
-- [ ] Full unit suite + ruff, both clean.
-- [ ] Confirm no existing test needed a *behavioural* change to pass — only
-  additions. If one did, the change is not additive and belongs in PR 2.
-- [ ] Confirm coverage stays above the 80% gate.
-
 ---
 
-# Live gate (between the PRs)
+# Tasks 6–9 — The state machine
 
-Deploy PR 1 and let the bot place one real closing order. Then, against the
-account, confirm all four:
+All the behaviour change lands here. After task 5 the suite should still be green
+with no *behavioural* test change — only additions. If one was needed, something
+in tasks 1–5 was not additive; find it before going on.
 
-- [ ] Kraken **accepts** the order with the `cl_ord_id` and does not reject it
-  for this account's verification tier.
-- [ ] `OpenOrders` filtered by that `cl_ord_id` returns **that order and only that
-  order** while it rests.
-- [ ] `ClosedOrders` filtered by it returns it once terminal.
-- [ ] How long after placement it becomes visible in each.
-
-Record the answers in the spec's *Resolved questions*.
-
-**If the filter is ignored rather than applied** — i.e. a filtered call returns
-every order instead of an empty set — stop. PR 2's echoed-id check catches it,
-but the resolver's economics change and the design needs revisiting first.
-
-A throwaway script driving `exchange/kraken.py` directly is the natural vehicle;
-it does not need to be committed.
-
----
-
-# PR 2 — The state machine (`feat/closing-state-machine`)
-
-All the behaviour change lands here.
-
-## Task 7 — `find_order_by_cl_ord_id`
+## Task 6 — `find_order_by_cl_ord_id`
 
 - [ ] **Tests** (`tests/unit/exchange/test_kraken.py`, monkeypatching
   `kraken.api.query_private` and recording which methods were called):
@@ -216,7 +191,7 @@ inside `_safe_call` would send the second method's name on both calls.
 
 **Commit:** `feat(kraken): resolve an order by its client order id`
 
-## Task 8 — the dispatch, `finalize_close`, and the reprice signature
+## Task 7 — the dispatch, `finalize_close`, and the reprice signature
 
 One commit, deliberately. `finalize_close` cannot take an `OrderState` until
 someone fetches it, `reprice_closing_order` cannot drop its guards until the
@@ -247,7 +222,7 @@ in place except the unresolvable statuses.
 
 **Commit:** `refactor(positions): dispatch a closing order's status in one place`
 
-## Task 9 — size the remainder from the order
+## Task 8 — size the remainder from the order
 
 - [ ] **Test**: the dust case — `post_cancel.vol_exec == post_cancel.vol` with a
   **larger** `pos["volume"]` — places nothing and returns `True`, so the next tick
@@ -262,7 +237,7 @@ rejected below `ordermin`, and a finished trade was never recorded.
 
 **Commit:** `fix(positions): size the reprice remainder from the order's own volume`
 
-## Task 10 — branch 2: the unconfirmed path
+## Task 9 — branch 2: the unconfirmed path
 
 - [ ] **Tests** — the three outcomes:
   - **adopted**: txid written to `closing_order_id`, driven on the **same** tick
@@ -287,7 +262,7 @@ recoverable rather than permanently unmanaged.
 
 **Commit:** `feat(positions): resolve a placement whose response was lost`
 
-## Task 11 — documentation
+## Task 10 — documentation
 
 - [ ] `CLAUDE.md`: add the five design choices from the spec's last section, and
   update the `is_closing_complete` / `reprice_closing_order` / `manage_close_position`
@@ -297,7 +272,7 @@ recoverable rather than permanently unmanaged.
   from 📋 Planned to ✅ Shipped.
 - [ ] `docs/CHANGELOG.md`: an entry under `[Unreleased]` — this one ships
   behaviour, unlike the doc-only PRs that skipped it.
-- [ ] Delete this plan.
+- [ ] Delete this plan, and its `- Plan:` link from the backlog card.
 
 **Commit:** `docs: record the closing state machine design choices`
 
