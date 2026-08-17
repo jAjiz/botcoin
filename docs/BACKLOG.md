@@ -57,7 +57,6 @@ the placement attempt, `is_open` is `not stop_at`, and `manage_close_position`
 owns everything between the breach and the fill.
 
 - Spec: [`specs/stop-latched-close-design.md`](specs/stop-latched-close-design.md)
-- Plan: [`plans/stop-latched-close-plan.md`](plans/stop-latched-close-plan.md)
 
 ---
 
