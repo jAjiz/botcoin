@@ -183,11 +183,10 @@ def trading_session() -> None:
                         )
                     continue
 
-                pos = trailing_state.get(pair)
-                if is_closing(pos):
-                    match manage_close_position(pair, pos, current_balance, last_prices, trailing_state):
+                if is_closing(trailing_state.get(pair)):
+                    match manage_close_position(pair, trailing_state[pair], current_balance, last_prices, trailing_state):
                         case ClosingState.FILLED:
-                            db.record_position_closed(pair, pos)
+                            db.record_position_closed(pair, trailing_state[pair])
                             del trailing_state[pair]
                             logging.info(f"Trailing position removed for {pair}.")
                         case ClosingState.UNMANAGED:
