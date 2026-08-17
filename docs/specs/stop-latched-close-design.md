@@ -64,22 +64,30 @@ It means *"the stop was breached and an exit is owed"*. Once set, the position
 is out of `tick_position`'s hands for good; the only remaining work is achieving
 the exit.
 
-The write is a `setdefault` at the top of `close_position`, before any other
-statement in its `try`:
+> Implemented as a plain assignment in `tick_position`, not the `setdefault` in
+> `close_position` this section originally proposed. Same three properties, one
+> fewer indirection — see below.
+
+The write lives in `tick_position`, on the breach branch, immediately before the
+`close_position` call:
 
 ```python
-pos.setdefault("stop_at", now_utc())
+pos["stop_at"] = now_utc()
+logging.info(f"[{pair}] ⛔ Stop price … hitted …", to_telegram=True)
+close_position(pair, pos, last_prices)
 ```
 
-Three properties follow from that placement. It runs before anything that can
-raise, so even an exception on the breach tick leaves the position latched and
-retried. It runs before `place_limit_order`, so a failed placement latches too —
-which is the whole point. And `setdefault` means retries record the *first*
-breach, not the successful attempt, so `stop_at` finally measures what its old
-name always implied.
+Three properties follow. It runs before anything that can raise, so even an
+exception on the breach tick leaves the position latched and retried. It runs
+before `place_limit_order`, so a failed placement latches too — which is the
+whole point. And it cannot overwrite an earlier breach, because `tick_position`
+only runs while `is_open` is `True` and the assignment is what makes it `False`;
+`setdefault` would be dead defensiveness against a path that does not exist.
 
-`tick_position` is unchanged: it still calls `close_position` on the breach, so
-the order still goes out on the same tick.
+Latching at the breach rather than inside `close_position` also keeps the
+decision where it is made: `close_position` becomes a placement primitive that
+takes an already-latched position, which is what lets `manage_close_position`
+reuse it for every retry.
 
 ### 2. `is_open` becomes one condition
 
@@ -101,6 +109,12 @@ would loop forever). Opposite lifecycles cannot share a field, and an explicit
 `stop_at` also survives someone later adding a field to a clearing tuple.
 
 ### 3. `manage_closing_order` — one owner for an owed exit
+
+> **Partly superseded.** Shipped as `manage_close_position` returning a
+> three-value `ClosingState` (`FILLED`/`PENDING`/`UNMANAGED`) instead of a
+> `bool`, and callers gate on `is_closing(pos)`, so the "no `stop_at`" row below
+> no longer exists. `FILLED` also absorbed the finalize branch, which is why the
+> scheduler still performs every DB write. The sub-state reasoning is unchanged.
 
 `reprice_closing_order` is renamed and generalized. It now owns every state
 between the breach and the fill:
@@ -165,7 +179,9 @@ happens.
 ### 4. Failure reporting: `failed_pairs`, not a per-tick message
 
 > **Superseded by §9.** The move away from a per-tick message stands; routing it
-> through the *session* failure streak does not.
+> through the *session* failure streak does not, and neither does the
+> first-attempt gating in the last paragraph — the breach and the placement are
+> two separate messages now, so neither needs a gate.
 
 `close_position`'s placement error drops `to_telegram=True` and becomes a plain
 `logging.error`; `manage_closing_order` returns `False` and the scheduler appends
@@ -425,7 +441,7 @@ re-query exists to prevent.
 | `closing_order_id` stops resolving at Kraken | `NOT_FOUND`/`UNKNOWN`: nothing is touched and the pair is reported `UNMANAGED` every tick, so the per-pair streak alerts (§10). |
 | Order canceled but fully executed | Unchanged — finalized by `is_closing_complete`, row deleted. |
 | Operator cancels the closing order by hand at Kraken | The bot re-places it. Deliberate: the exit is owed until it is filled. Cancelling an exit means removing the position's state, not cancelling its order. |
-| `close_position` raises before placing | Latched by the `setdefault`; retried next tick. |
+| `close_position` raises before placing | Already latched by `tick_position`; retried next tick. |
 | Backtest / optimizer | Unaffected: `trading/engine.py` never fails to place, so the latch never engages and live/simulated behaviour stay identical. |
 
 ## Testing
@@ -500,7 +516,7 @@ Unit tests only, module-level monkeypatching, in the existing style.
   the case above in that no automatic path recovers it — `refresh_position` never
   runs on this branch — so it stays latched until an operator checks Kraken. The
   per-pair alert is the whole mitigation.
-- **A hard process kill between the `setdefault` and the tick's `finally`** loses
+- **A hard process kill between the latch and the tick's `finally`** loses
   the latch, exactly as it loses `closing_order_id` today. Unchanged exposure.
 - **The exit price can be worse than the un-latched behaviour** in the specific
   case where a placement fails and price then recovers. That is the intended
