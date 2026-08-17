@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 import trading.positions_manager as positions_manager
-from exchange.kraken import OrderState, OrderStatus
+from exchange.kraken import OrderLookup, OrderState, OrderStatus
 
 
 def _capture_telegram(monkeypatch) -> list[tuple[str, bool]]:
@@ -604,6 +604,26 @@ def test_drive_closing_order_clears_fields_and_returns_none_on_terminal_unusable
     assert "closing_price" not in pos
     # The exit is still owed: only the dead order's own fields are cleared.
     assert pos["stop_at"] == "2026-07-26T00:00:00+00:00"
+
+
+def test_drive_closing_order_dead_order_alerts_with_the_order_id_and_status(monkeypatch) -> None:
+    """The txid is the only handle an operator has to check this order at Kraken,
+    so it must survive into the message — the fields are cleared right after."""
+    state = OrderState(status=OrderStatus.CANCELED, avg_price=0.0, vol_exec=0.0)
+    monkeypatch.setattr(positions_manager, "finalize_close", lambda *a: False)
+    captured: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        positions_manager.logging, "warning", lambda msg, to_telegram=False: captured.append((msg, to_telegram))
+    )
+
+    pos = {"side": "sell", "closing_order_id": "ORD001", "stop_at": "2026-07-26T00:00:00+00:00"}
+    positions_manager._drive_closing_order("XBTEUR", pos, state, {"XBTEUR": 67000.0})
+
+    assert len(captured) == 1
+    msg, to_telegram = captured[0]
+    assert "ORD001" in msg
+    assert "canceled" in msg
+    assert to_telegram is False
 
 
 # ============================================================================
@@ -1271,7 +1291,7 @@ def test_manage_close_position_adopts_a_recovered_order_and_drives_it_same_tick(
     monkeypatch.setattr(
         positions_manager,
         "find_order_by_cl_ord_id",
-        lambda cl_ord_id: positions_manager.OrderLookup(txid="RECOVERED1", state=recovered_state),
+        lambda cl_ord_id: OrderLookup(txid="RECOVERED1", state=recovered_state),
     )
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: pytest.fail("must not refresh"))
     monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: pytest.fail("must not re-place"))
@@ -1299,7 +1319,7 @@ def test_manage_close_position_adopts_a_recovered_order_that_is_still_open(monke
     monkeypatch.setattr(
         positions_manager,
         "find_order_by_cl_ord_id",
-        lambda cl_ord_id: positions_manager.OrderLookup(txid="RECOVERED2", state=recovered_state),
+        lambda cl_ord_id: OrderLookup(txid="RECOVERED2", state=recovered_state),
     )
     calls: list = []
     monkeypatch.setattr(positions_manager, "reprice_closing_order", lambda *a: calls.append(a) or True)
@@ -1320,7 +1340,7 @@ def test_manage_close_position_clears_and_replaces_when_the_request_never_landed
     monkeypatch.setattr(
         positions_manager,
         "find_order_by_cl_ord_id",
-        lambda cl_ord_id: positions_manager.OrderLookup(txid=None, state=None),
+        lambda cl_ord_id: OrderLookup(txid=None, state=None),
     )
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
     place_calls: list = []
@@ -1391,7 +1411,7 @@ def test_manage_close_position_routes_unconfirmed_without_get_order_state(monkey
     monkeypatch.setattr(
         positions_manager,
         "find_order_by_cl_ord_id",
-        lambda cl_ord_id: positions_manager.OrderLookup(txid=None, state=None),
+        lambda cl_ord_id: OrderLookup(txid=None, state=None),
     )
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
     monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: True)

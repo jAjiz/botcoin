@@ -427,6 +427,47 @@ def test_find_order_by_cl_ord_id_does_not_adopt_a_mismatched_cl_ord_id(monkeypat
     assert result == kraken.OrderLookup(txid=None, state=None)
 
 
+def test_find_order_by_cl_ord_id_prefers_an_open_order_when_several_match(monkeypatch) -> None:
+    """Unreachable with per-attempt ids, so it means an assumption broke. Adopting the
+    terminal one would finalize the trade and orphan the exit that is still resting."""
+
+    def _mock(method, data=None, timeout=None):
+        if method == "ClosedOrders":
+            return {
+                "error": [],
+                "result": {
+                    "closed": {
+                        "TXID_DEAD": {
+                            "status": "canceled",
+                            "price": "0.0",
+                            "vol": "0.5",
+                            "vol_exec": "0.0",
+                            "cl_ord_id": "abc123",
+                        },
+                        "TXID_LIVE": {
+                            "status": "open",
+                            "price": "0.0",
+                            "vol": "0.5",
+                            "vol_exec": "0.0",
+                            "cl_ord_id": "abc123",
+                        },
+                    }
+                },
+            }
+        return {"error": [], "result": {"open": {}}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+    errors: list[str] = []
+    monkeypatch.setattr(kraken.logging, "error", lambda msg: errors.append(msg))
+
+    result = kraken.find_order_by_cl_ord_id("abc123")
+
+    assert result.txid == "TXID_LIVE"
+    assert result.state.status is kraken.OrderStatus.OPEN
+    assert len(errors) == 1
+    assert "abc123" in errors[0]
+
+
 # ============================================================================
 # Cancel order
 # ============================================================================

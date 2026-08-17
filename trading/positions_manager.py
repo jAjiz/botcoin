@@ -5,7 +5,6 @@ import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import new_cl_ord_id, now_utc, round_price
 from exchange.kraken import (
-    OrderLookup,
     OrderState,
     OrderStatus,
     cancel_order,
@@ -208,7 +207,10 @@ def _drive_closing_order(
         return ClosingState.PENDING if reprice_closing_order(pair, pos, state, last_prices) else ClosingState.UNMANAGED
     if finalize_close(pos, state):  # CLOSED or CANCELED
         return ClosingState.FILLED
-    logging.warning(f"[{pair}] Closing order ended as {state.status} with no usable fill; re-placing the exit.")
+    logging.warning(
+        f"[{pair}] Closing order {pos.get('closing_order_id')} ended as {state.status} "
+        "with no usable fill; re-placing the exit."
+    )
     _clear_closing_fields(pos)
     return None
 
@@ -363,7 +365,7 @@ def manage_close_position(
 
     elif cl_ord_id := pos.get("closing_request_id"):
         # Unconfirmed: an AddOrder went out and we never learned what happened to it.
-        found: OrderLookup | None = find_order_by_cl_ord_id(cl_ord_id)
+        found = find_order_by_cl_ord_id(cl_ord_id)
         if found is None:
             return ClosingState.UNMANAGED  # could not ask; decide nothing
         if found.txid:

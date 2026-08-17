@@ -180,11 +180,25 @@ def find_order_by_cl_ord_id(cl_ord_id: str) -> OrderLookup | None:
         )
         if result is None:
             return None
-        for txid, order in result.get(result_key, {}).items():
-            # Verified, not assumed: if Kraken ever ignored the filter, this is
-            # the difference between failing loudly and adopting a stranger's txid.
-            if order.get("cl_ord_id") == cl_ord_id:
-                return OrderLookup(txid=txid, state=_build_order_state(order))
+        # Verified, not assumed: if Kraken ever ignored the filter, this is
+        # the difference between failing loudly and adopting a stranger's txid.
+        matches = [
+            (txid, order) for txid, order in result.get(result_key, {}).items() if order.get("cl_ord_id") == cl_ord_id
+        ]
+        if not matches:
+            continue
+        if len(matches) > 1:
+            # Impossible with per-attempt ids, so it means an assumption broke. Prefer a
+            # resting order: adopting a terminal one while another is still live would
+            # finalize the trade and orphan the resting exit.
+            logging.error(
+                f"{method} returned {len(matches)} orders for cl_ord_id {cl_ord_id} "
+                f"({', '.join(txid for txid, _ in matches)}); adopting an open one if there is one."
+            )
+            open_matches = [m for m in matches if map_order_status(m[1].get("status")) is OrderStatus.OPEN]
+            matches = open_matches or matches
+        txid, order = matches[0]
+        return OrderLookup(txid=txid, state=_build_order_state(order))
     return OrderLookup(txid=None, state=None)
 
 
