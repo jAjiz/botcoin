@@ -1,5 +1,25 @@
 # Stop-latched close — implementation plan
 
+> **Executed.** Kept as the record of intent; the spec is the living document.
+> Four deviations, all decided during implementation or the code review that
+> followed — read the spec, not the code blocks below, for what shipped:
+>
+> - **Task 2** — the latch is a plain assignment in `tick_position`, not a
+>   `setdefault` in `close_position`. `tick_position` only runs while `is_open`,
+>   and the assignment is what makes it false, so `setdefault` guarded a path
+>   that cannot happen. It also keeps `close_position` a placement primitive that
+>   every retry reuses.
+> - **Task 4** — shipped as `manage_close_position` returning a three-value
+>   `ClosingState` instead of `manage_closing_order` returning a `bool`. `FILLED`
+>   absorbed the finalize branch, so the scheduler still performs every DB write.
+> - **Task 5** — the scheduler gates on `is_closing(pos)` and dispatches on the
+>   `ClosingState` with `match`/`case`.
+> - **Untasked work.** The code review on PR #67 added two changes this plan
+>   never anticipated: the alerting redesign (spec §9 — `pair_error`, three
+>   independent streaks, no failure reason) and the Kraken `OrderStatus` enum
+>   (spec §10 — an unresolvable order reports `UNMANAGED` instead of freezing the
+>   pair in silence).
+
 > **For agentic workers:** implement task-by-task using TDD (write the failing test first, watch it fail, then implement). Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** make a breached trailing stop an irrevocable decision, so a failed
