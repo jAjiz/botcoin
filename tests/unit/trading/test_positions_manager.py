@@ -6,6 +6,20 @@ import pytest
 import trading.positions_manager as positions_manager
 from exchange.kraken import OrderState
 
+
+def _capture_telegram(monkeypatch) -> list[tuple[str, bool]]:
+    """Record every log call as (message, to_telegram) so a test can assert what
+    the operator would actually receive."""
+    sent: list[tuple[str, bool]] = []
+    for level in ("info", "warning", "error"):
+        monkeypatch.setattr(
+            positions_manager.logging,
+            level,
+            lambda msg, to_telegram=False: sent.append((msg, to_telegram)),
+        )
+    return sent
+
+
 # ============================================================================
 # Activation price
 # ============================================================================
@@ -257,7 +271,7 @@ def test_close_position_updates_position_on_success(monkeypatch) -> None:
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
 
-    positions_manager.close_position("XBTEUR", pos, prices, first_attempt=True)
+    positions_manager.close_position("XBTEUR", pos, prices)
 
     assert pos["closing_order_id"] == "ORDER123"
     assert pos["closing_price"] == 90.0
@@ -270,7 +284,7 @@ def test_close_position_leaves_position_untouched_when_place_order_fails(monkeyp
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
 
-    assert positions_manager.close_position("XBTEUR", pos, prices, first_attempt=True) is False
+    assert positions_manager.close_position("XBTEUR", pos, prices) is False
     assert "closing_order_id" not in pos
 
 
@@ -284,46 +298,47 @@ def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatc
     prices = {"XBTEUR": 90.0}
 
     # Must not raise: the scheduler has to keep ticking the other pairs.
-    assert positions_manager.close_position("XBTEUR", pos, prices, first_attempt=True) is False
+    assert positions_manager.close_position("XBTEUR", pos, prices) is False
     assert "closing_order_id" not in pos
 
 
-def test_close_position_reports_a_failed_placement_to_telegram_once(monkeypatch) -> None:
-    """The manager retries every tick, so an unconditional Telegram on the
-    placement failure would send one message per tick for the whole outage."""
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
-    captured: list[bool] = []
-    monkeypatch.setattr(positions_manager.logging, "error", lambda msg, to_telegram=False: captured.append(to_telegram))
+def test_close_position_announces_a_successful_placement(monkeypatch) -> None:
+    """Announced on every attempt, including the first: the breach message says the
+    stop fired, this one says an order actually rests at Kraken."""
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: "ORDER123")
+    sent = _capture_telegram(monkeypatch)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=True) is False
-    assert captured == [True]
+    positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0})
 
-    # Same latched position, next tick: the manager passes first_attempt=False.
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=False) is False
-    assert captured == [True, False]
+    assert [m for m, tg in sent if tg and "Placed closing" in m]
 
 
-def test_close_position_does_not_flood_telegram_when_the_close_keeps_raising(monkeypatch) -> None:
-    """A deterministic exception (e.g. place_limit_order indexing an empty txid
-    list) recurs on every retry tick, so the generic handler is gated on
-    first_attempt too. Persistence is covered by the consecutive-failure streak
-    alert."""
+def test_close_position_never_sends_failure_detail_to_telegram(monkeypatch) -> None:
+    """Failure detail stays in the logs; the pair-failure streak does the alerting,
+    so a retry every tick cannot flood Telegram for the length of an outage."""
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args: None)
+    sent = _capture_telegram(monkeypatch)
 
+    pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
+    for _ in range(3):
+        assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
+
+    assert [m for m, tg in sent if tg] == []
+
+
+def test_close_position_never_sends_a_raised_error_to_telegram(monkeypatch) -> None:
     def boom(*_args):
         raise IndexError("list index out of range")
 
     monkeypatch.setattr(positions_manager, "place_limit_order", boom)
-    captured: list[bool] = []
-    monkeypatch.setattr(positions_manager.logging, "error", lambda msg, to_telegram=False: captured.append(to_telegram))
+    sent = _capture_telegram(monkeypatch)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=True) is False
-    assert captured == [True]
+    for _ in range(3):
+        assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
 
-    # Same latched position, next tick: the exception repeats, the message must not.
-    assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}, first_attempt=False) is False
-    assert captured == [True, False]
+    assert [m for m, tg in sent if tg] == []
 
 
 # ============================================================================
@@ -472,7 +487,7 @@ def test_is_closing_complete_dead_order_alerts_with_the_order_id_and_status(monk
     msg, to_telegram = captured[0]
     assert "ORD001" in msg
     assert "canceled" in msg
-    assert to_telegram is True
+    assert to_telegram is False
 
 
 def test_is_closing_complete_finalizes_a_terminal_order_that_was_fully_executed(monkeypatch) -> None:
@@ -575,9 +590,9 @@ def test_is_closing_complete_keeps_the_exit_owed_on_any_unfinalizable_terminal_s
     assert pos["stop_at"] == "2026-07-26T00:00:00+00:00"
     assert "pnl_percent" not in pos
     assert positions_manager.is_open(pos) is False
-    # Must reach Telegram: an exit that neither filled nor cancelled cleanly is
-    # not something any other signal would surface to the operator.
-    assert captured and captured[0][1] is True
+    # Logged, never sent: failure detail goes stale under a streak, so the
+    # per-pair alert does the notifying and the reason stays in the session log.
+    assert captured and captured[0][1] is False
 
 
 # ============================================================================
@@ -724,7 +739,7 @@ def test_reprice_closing_order_noop_when_new_placement_fails_after_cancel(monkey
     assert len(captured) == 1
     msg, to_telegram = captured[0]
     assert "re-place" in msg.lower()
-    assert to_telegram is True
+    assert to_telegram is False
 
 
 def test_reprice_closing_order_returns_when_no_closing_order() -> None:
@@ -868,7 +883,7 @@ def test_reprice_closing_order_alert_names_the_unconfirmed_status(monkeypatch) -
     msg, to_telegram = captured[0]
     assert "OLDORDER" in msg
     assert "open" in msg
-    assert to_telegram is True
+    assert to_telegram is False
 
 
 def test_reprice_closing_order_noop_when_remaining_is_not_positive(monkeypatch) -> None:
@@ -1000,7 +1015,7 @@ def test_tick_position_closes_buy_when_stop_hit(monkeypatch) -> None:
     monkeypatch.setattr(
         positions_manager,
         "close_position",
-        lambda pair, pos, prices, first_attempt: closed.append((pair, first_attempt)),
+        lambda pair, pos, prices: closed.append(pair),
     )
 
     # buy: close when current_price >= stop_price; stop_atr in range
@@ -1010,7 +1025,7 @@ def test_tick_position_closes_buy_when_stop_hit(monkeypatch) -> None:
         "XBTEUR", pos, balance={}, last_prices={"XBTEUR": 96.0}, atr_val=5.0, trailing_state=trailing_state
     )
 
-    assert closed == [("XBTEUR", True)]
+    assert closed == ["XBTEUR"]
     assert pos["stop_at"] is not None
 
 
@@ -1029,7 +1044,7 @@ def test_tick_position_latches_stop_at_and_announces_the_breach_before_closing(m
     monkeypatch.setattr(
         positions_manager,
         "close_position",
-        lambda pair, pos, prices, first_attempt: seen_stop_at.append(pos.get("stop_at")),
+        lambda pair, pos, prices: seen_stop_at.append(pos.get("stop_at")),
     )
 
     pos: dict[str, Any] = {"side": "sell", "volume": 1.0, "trailing_price": 100.0, "stop_price": 95.0, "stop_atr": 5.0}

@@ -78,13 +78,15 @@ def test_trading_session_passes_elapsed_to_notify(monkeypatch):
     _patch_finalize(monkeypatch)
     captured: list[tuple] = []
     monkeypatch.setattr(
-        scheduler, "_notify_session_outcome", lambda status, reason, elapsed: captured.append((status, reason, elapsed))
+        scheduler,
+        "_notify_session_outcome",
+        lambda status, elapsed, failed: captured.append((status, elapsed, failed)),
     )
 
     scheduler.trading_session()
 
-    # Constant clock -> elapsed 0.0, but the (status, reason, elapsed) wiring is exercised.
-    assert captured == [("completed", None, 0.0)]
+    # Constant clock -> elapsed 0.0, but the (status, elapsed, failed_pairs) wiring is exercised.
+    assert captured == [("completed", 0.0, [])]
 
 
 def _setup_one_pair_loop(monkeypatch, *, trailing_state=None):
@@ -213,7 +215,7 @@ def test_trading_session_fails_the_pair_when_the_owed_exit_cannot_be_placed(monk
 
     scheduler.trading_session()
 
-    assert calls[0]["status"] == "failed"
+    assert calls[0]["status"] == "pair_error"
     assert "Could not place the owed exit order" in calls[0]["log_messages"]
 
 
@@ -311,7 +313,7 @@ def test_trading_session_persists_a_closing_order_placed_before_a_failure(monkey
             },
         )
     ]
-    assert calls[0]["status"] == "failed"
+    assert calls[0]["status"] == "pair_error"
 
 
 def test_trading_session_marks_the_pair_failed_when_the_persist_fails(monkeypatch):
@@ -340,7 +342,7 @@ def test_trading_session_marks_the_pair_failed_when_the_persist_fails(monkeypatc
     # Must not escape the loop: the other pairs still need their tick.
     scheduler.trading_session()
 
-    assert calls[0]["status"] == "failed"
+    assert calls[0]["status"] == "pair_error"
     assert "XBTEUR" in calls[0]["log_messages"]
 
 
@@ -373,7 +375,7 @@ def test_trading_session_fails_the_session_when_a_pair_has_no_price_or_atr(monke
 
     scheduler.trading_session()
 
-    assert calls[0]["status"] == "failed"
+    assert calls[0]["status"] == "pair_error"
 
 
 def test_trading_session_recalcs_params_when_config_dirty(monkeypatch):
@@ -441,25 +443,28 @@ def test_trading_session_isolates_a_failing_pair_and_still_processes_the_next(mo
     scheduler.trading_session()
 
     final = calls[0]
-    assert final["status"] == "failed"
+    assert final["status"] == "pair_error"
     # The failing pair never reached the pair_data write; the healthy one did.
     assert "AAAEUR" not in final["pair_data"]
     assert final["pair_data"]["BBBEUR"]["volatility_level"] == "MV"
     assert "Error processing AAAEUR" in final["log_messages"]
 
 
-def test_trading_session_reports_failed_status_with_reason_on_pair_error(monkeypatch):
+def test_trading_session_reports_pair_error_status_and_the_failing_pairs(monkeypatch):
+    """A pair failure does not stop the session, so the session is not `failed`."""
     _setup_two_pair_loop(monkeypatch, failing_pair="AAAEUR")
     _patch_finalize(monkeypatch)
     captured: list[tuple] = []
     monkeypatch.setattr(
-        scheduler, "_notify_session_outcome", lambda status, reason, elapsed: captured.append((status, reason, elapsed))
+        scheduler,
+        "_notify_session_outcome",
+        lambda status, elapsed, failed: captured.append((status, elapsed, failed)),
     )
 
     scheduler.trading_session()
 
-    assert captured[0][0] == "failed"
-    assert captured[0][1] == "pair errors: AAAEUR"
+    assert captured[0][0] == "pair_error"
+    assert captured[0][2] == ["AAAEUR"]
 
 
 def test_trading_session_completes_when_no_pair_fails(monkeypatch):
@@ -489,7 +494,7 @@ def test_trading_session_isolates_pair_when_load_trailing_state_raises(monkeypat
     scheduler.trading_session()
 
     final = calls[0]
-    assert final["status"] == "failed"
+    assert final["status"] == "pair_error"
     assert "AAAEUR" not in final["pair_data"]
     assert final["pair_data"]["BBBEUR"]["volatility_level"] == "MV"
 
@@ -499,6 +504,8 @@ def _reset_alert_state() -> None:
     runtime._shared_data["session_failure_alerted"] = False
     runtime._shared_data["consecutive_session_overruns"] = 0
     runtime._shared_data["session_overrun_alerted"] = False
+    runtime._shared_data["consecutive_pair_failures"] = {}
+    runtime._shared_data["pair_failure_alerted"] = set()
 
 
 def _capture_telegram(monkeypatch) -> list[tuple[str, bool]]:
@@ -514,12 +521,11 @@ def test_notify_session_outcome_alerts_once_on_failure_streak(monkeypatch):
     sent = _capture_telegram(monkeypatch)
 
     for _ in range(5):
-        scheduler._notify_session_outcome("failed", "could not fetch balance", 1.0)
+        scheduler._notify_session_outcome("failed", 1.0, [])
 
     telegram_msgs = [m for m, tg in sent if tg]
     assert len(telegram_msgs) == 1
     assert "3" in telegram_msgs[0]
-    assert "could not fetch balance" in telegram_msgs[0]
 
 
 def test_notify_session_outcome_sends_single_recovery(monkeypatch):
@@ -527,9 +533,9 @@ def test_notify_session_outcome_sends_single_recovery(monkeypatch):
     _reset_alert_state()
     sent = _capture_telegram(monkeypatch)
 
-    scheduler._notify_session_outcome("failed", "boom", 1.0)  # alert
-    scheduler._notify_session_outcome("completed", None, 1.0)  # recovery
-    scheduler._notify_session_outcome("completed", None, 1.0)  # no repeat
+    scheduler._notify_session_outcome("failed", 1.0, [])  # alert
+    scheduler._notify_session_outcome("completed", 1.0, [])  # recovery
+    scheduler._notify_session_outcome("completed", 1.0, [])  # no repeat
 
     telegram_msgs = [m for m, tg in sent if tg]
     assert len(telegram_msgs) == 2
@@ -541,20 +547,97 @@ def test_notify_session_outcome_paused_is_neutral(monkeypatch):
     _reset_alert_state()
     sent = _capture_telegram(monkeypatch)
 
-    scheduler._notify_session_outcome("paused", None, 1.0)
+    scheduler._notify_session_outcome("paused", 1.0, [])
 
     assert sent == []
     assert runtime._shared_data["consecutive_session_failures"] == 0
 
 
-def test_notify_session_outcome_alerts_once_on_overrun_streak(monkeypatch):
+def test_notify_session_outcome_alerts_once_per_failing_pair(monkeypatch):
     monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 3)
-    monkeypatch.setattr(scheduler, "SLEEPING_INTERVAL", 60)
+    monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR", "ETHEUR"])
     _reset_alert_state()
     sent = _capture_telegram(monkeypatch)
 
     for _ in range(5):
-        scheduler._notify_session_outcome("completed", None, 90.0)  # each overran the 60s interval
+        scheduler._notify_session_outcome("pair_error", 1.0, ["XBTEUR"])
+
+    telegram_msgs = [m for m, tg in sent if tg]
+    assert len(telegram_msgs) == 1
+    assert "XBTEUR" in telegram_msgs[0]
+
+
+def test_notify_session_outcome_sends_pair_recovery_naming_the_pair(monkeypatch):
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
+    monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR", "ETHEUR"])
+    _reset_alert_state()
+    sent = _capture_telegram(monkeypatch)
+
+    scheduler._notify_session_outcome("pair_error", 1.0, ["XBTEUR"])  # alert
+    scheduler._notify_session_outcome("completed", 1.0, [])  # recovery
+    scheduler._notify_session_outcome("completed", 1.0, [])  # no repeat
+
+    telegram_msgs = [m for m, tg in sent if tg]
+    assert len(telegram_msgs) == 2
+    assert "XBTEUR" in telegram_msgs[1]
+
+
+def test_notify_session_outcome_alerts_a_second_pair_while_the_first_still_fails(monkeypatch):
+    """The pinning bug this design fixes: an already-alerted pair must not silence
+    a different pair that starts failing later."""
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
+    monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR", "ETHEUR"])
+    _reset_alert_state()
+    sent = _capture_telegram(monkeypatch)
+
+    scheduler._notify_session_outcome("pair_error", 1.0, ["XBTEUR"])
+    scheduler._notify_session_outcome("pair_error", 1.0, ["XBTEUR", "ETHEUR"])
+
+    telegram_msgs = [m for m, tg in sent if tg]
+    assert len(telegram_msgs) == 2
+    assert "ETHEUR" in telegram_msgs[1]
+
+
+def test_notify_session_outcome_telegram_never_carries_a_failure_reason(monkeypatch):
+    """Reasons go stale under a streak that never resets, so they stay in the logs."""
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
+    monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR"])
+    _reset_alert_state()
+    sent = _capture_telegram(monkeypatch)
+
+    scheduler._notify_session_outcome("failed", 1.0, [])
+    scheduler._notify_session_outcome("pair_error", 1.0, ["XBTEUR"])
+
+    alerts = [m for m, tg in sent if tg and m.startswith("⚠️")]
+    assert len(alerts) == 2  # one for the session, one for the pair
+    for msg in alerts:
+        assert "logs" in msg.lower()
+
+
+def test_notify_session_outcome_failed_session_leaves_pair_streaks_untouched(monkeypatch):
+    """No pair ran, so there is nothing to record about any of them."""
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
+    monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR"])
+    _reset_alert_state()
+    runtime._shared_data["consecutive_pair_failures"]["XBTEUR"] = 2
+    runtime._shared_data["pair_failure_alerted"].add("XBTEUR")
+    _capture_telegram(monkeypatch)
+
+    scheduler._notify_session_outcome("failed", 1.0, [])
+
+    assert runtime._shared_data["consecutive_pair_failures"]["XBTEUR"] == 2
+    assert "XBTEUR" in runtime._shared_data["pair_failure_alerted"]
+
+
+def test_notify_session_outcome_alerts_once_on_overrun_streak(monkeypatch):
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 3)
+    monkeypatch.setattr(scheduler, "SLEEPING_INTERVAL", 60)
+    monkeypatch.setattr(scheduler, "PAIRS", [])
+    _reset_alert_state()
+    sent = _capture_telegram(monkeypatch)
+
+    for _ in range(5):
+        scheduler._notify_session_outcome("completed", 90.0, [])  # each overran the 60s interval
 
     telegram_msgs = [m for m, tg in sent if tg]
     assert len(telegram_msgs) == 1
@@ -565,16 +648,31 @@ def test_notify_session_outcome_alerts_once_on_overrun_streak(monkeypatch):
 def test_notify_session_outcome_sends_single_overrun_recovery(monkeypatch):
     monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
     monkeypatch.setattr(scheduler, "SLEEPING_INTERVAL", 60)
+    monkeypatch.setattr(scheduler, "PAIRS", [])
     _reset_alert_state()
     sent = _capture_telegram(monkeypatch)
 
-    scheduler._notify_session_outcome("completed", None, 90.0)  # overran -> alert
-    scheduler._notify_session_outcome("completed", None, 5.0)  # on time -> recovery
-    scheduler._notify_session_outcome("completed", None, 5.0)  # no repeat
+    scheduler._notify_session_outcome("completed", 90.0, [])  # overran -> alert
+    scheduler._notify_session_outcome("completed", 5.0, [])  # on time -> recovery
+    scheduler._notify_session_outcome("completed", 5.0, [])  # no repeat
 
     telegram_msgs = [m for m, tg in sent if tg]
     assert len(telegram_msgs) == 2
     assert "normal" in telegram_msgs[1].lower()
+
+
+def test_notify_session_outcome_pair_error_still_counts_as_overrun(monkeypatch):
+    """Overrun is orthogonal to the outcome: a session that completed its work
+    counts, whether or not one of its pairs failed."""
+    monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 1)
+    monkeypatch.setattr(scheduler, "SLEEPING_INTERVAL", 60)
+    monkeypatch.setattr(scheduler, "PAIRS", ["XBTEUR"])
+    _reset_alert_state()
+    _capture_telegram(monkeypatch)
+
+    scheduler._notify_session_outcome("pair_error", 90.0, ["XBTEUR"])
+
+    assert runtime._shared_data["consecutive_session_overruns"] == 1
 
 
 def test_notify_session_outcome_failed_does_not_count_as_overrun(monkeypatch):
@@ -584,7 +682,7 @@ def test_notify_session_outcome_failed_does_not_count_as_overrun(monkeypatch):
     _capture_telegram(monkeypatch)
 
     # A failed session that also took a long time must not advance the overrun streak.
-    scheduler._notify_session_outcome("failed", "boom", 999.0)
+    scheduler._notify_session_outcome("failed", 999.0, [])
 
     assert runtime._shared_data["consecutive_session_overruns"] == 0
     assert runtime._shared_data["session_overrun_alerted"] is False
@@ -593,6 +691,7 @@ def test_notify_session_outcome_failed_does_not_count_as_overrun(monkeypatch):
 def test_notify_session_outcome_suppresses_overrun_recovery_when_failure_recovers(monkeypatch):
     monkeypatch.setattr(scheduler, "SESSION_FAILURE_ALERT_THRESHOLD", 3)
     monkeypatch.setattr(scheduler, "SLEEPING_INTERVAL", 60)
+    monkeypatch.setattr(scheduler, "PAIRS", [])
     _reset_alert_state()
     # Box was both failing and overrunning: both alerts are active.
     runtime._shared_data["session_failure_alerted"] = True
@@ -602,7 +701,7 @@ def test_notify_session_outcome_suppresses_overrun_recovery_when_failure_recover
     sent = _capture_telegram(monkeypatch)
 
     # First healthy on-time session: only the failure-recovery message should fire.
-    scheduler._notify_session_outcome("completed", None, 5.0)
+    scheduler._notify_session_outcome("completed", 5.0, [])
 
     telegram_msgs = [m for m, tg in sent if tg]
     assert len(telegram_msgs) == 1

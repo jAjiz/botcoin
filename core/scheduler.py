@@ -47,42 +47,66 @@ def call_with_retry[T](func: Callable[..., T], *args: Any) -> T | None:
     return None
 
 
-def _notify_session_outcome(status: str, reason: str | None, elapsed_seconds: float) -> None:
-    """Edge-triggered Telegram alerting: one message when the failure streak hits
-    the threshold, one on recovery, ``paused`` neutral. Touches only runtime and
-    the DB-independent Telegram logger, so it never masks the session's exception.
+def _notify_session_outcome(status: str, elapsed_seconds: float, failed_pairs: list[str]) -> None:
+    """Edge-triggered Telegram alerting over three independent signals: the session,
+    each pair, and session duration. Each sends one message when its streak reaches
+    ``SESSION_FAILURE_ALERT_THRESHOLD`` and one when it recovers — never one per tick.
 
-    On a completed session it also tracks an independent *overrun* streak: a session
-    whose wall-clock ``elapsed_seconds`` reached ``SLEEPING_INTERVAL`` ran long enough
-    to skip the next tick, so ≥ threshold in a row warns that the host is likely
-    resource-starved. The overrun-recovery message is suppressed when a failure
-    recovery fires the same tick (the latter already implies normal operation)."""
-    if status == "completed":
-        failure_recovered = runtime.register_session_success()
-        if failure_recovered:
-            logging.info("✅ Trading sessions recovered; data is updating again.", to_telegram=True)
-        if elapsed_seconds >= SLEEPING_INTERVAL:
-            count = runtime.register_session_overrun(SESSION_FAILURE_ALERT_THRESHOLD)
-            if count is not None:
-                logging.error(
-                    f"⚠️ {count} trading sessions in a row overran the {SLEEPING_INTERVAL}s interval "
-                    f"(last took {elapsed_seconds:.0f}s); ticks are being skipped and prices/positions "
-                    "may lag. The host is likely resource-starved.",
-                    to_telegram=True,
-                )
-        elif runtime.register_session_ontime() and not failure_recovered:
-            logging.info(
-                f"✅ Trading session timing back to normal (last took {elapsed_seconds:.0f}s).",
-                to_telegram=True,
-            )
-    elif status == "failed":
+    No message carries the failure reason. Under a streak that never resets the cause
+    can change while the alert stays latched, so a reason captured at the crossing
+    goes stale and misleads worse than no reason at all; it stays in the session log.
+
+    The pair streak is keyed per pair, so a permanently broken pair cannot silence a
+    pair that starts failing later. A ``failed`` session leaves every pair streak
+    untouched — no pair ran, so there is nothing to record about any of them — and
+    does not count as an overrun. ``paused`` is neutral for all three.
+
+    Touches only runtime and the DB-independent Telegram logger, so it never masks
+    the session's exception."""
+    if status == "paused":
+        return
+
+    if status == "failed":
         count = runtime.register_session_failure(SESSION_FAILURE_ALERT_THRESHOLD)
         if count is not None:
-            detail = f" Last error: {reason}." if reason else ""
             logging.error(
-                f"⚠️ {count} trading sessions have failed in a row.{detail} Prices and positions are not being updated.",
+                f"⚠️ {count} trading sessions have failed in a row; prices and positions are not "
+                "being updated. Check the session logs for the reason.",
                 to_telegram=True,
             )
+        return
+
+    # The session did its work, whether or not one of its pairs failed.
+    failure_recovered = runtime.register_session_success()
+    if failure_recovered:
+        logging.info("✅ Trading sessions recovered; data is updating again.", to_telegram=True)
+
+    for pair in PAIRS:
+        if pair in failed_pairs:
+            count = runtime.register_pair_failure(pair, SESSION_FAILURE_ALERT_THRESHOLD)
+            if count is not None:
+                logging.error(
+                    f"⚠️ [{pair}] has failed in {count} sessions in a row and is not being managed. "
+                    "Check the session logs for the reason.",
+                    to_telegram=True,
+                )
+        elif runtime.register_pair_success(pair):
+            logging.info(f"✅ [{pair}] is being managed normally again.", to_telegram=True)
+
+    if elapsed_seconds >= SLEEPING_INTERVAL:
+        count = runtime.register_session_overrun(SESSION_FAILURE_ALERT_THRESHOLD)
+        if count is not None:
+            logging.error(
+                f"⚠️ {count} trading sessions in a row overran the {SLEEPING_INTERVAL}s interval "
+                f"(last took {elapsed_seconds:.0f}s); ticks are being skipped and prices/positions "
+                "may lag. The host is likely resource-starved.",
+                to_telegram=True,
+            )
+    elif runtime.register_session_ontime() and not failure_recovered:
+        logging.info(
+            f"✅ Trading session timing back to normal (last took {elapsed_seconds:.0f}s).",
+            to_telegram=True,
+        )
 
 
 def _persist_pair_state(pair: str, current: dict | None, previous: dict | None) -> bool:
@@ -111,10 +135,10 @@ def trading_session() -> None:
     app_logger.addHandler(collector)
 
     session_id: int | None = None
-    status = "failed"  # overwritten on success / paused
-    failure_reason: str | None = None
+    status = "failed"  # overwritten on success / pair errors / paused
     current_balance: dict | None = None
     pair_data: dict[str, dict] = {}
+    failed_pairs: list[str] = []  # read by the `finally`, so it must outlive the try
     started_at = now_utc()  # session start; reused for the DB row and the elapsed measure
 
     try:
@@ -130,18 +154,15 @@ def trading_session() -> None:
 
         current_balance = call_with_retry(get_balance)
         if current_balance is None:
-            failure_reason = "could not fetch balance"
             logging.error("Could not fetch balance. Skipping session.\n")
             return
         runtime.update_balance(current_balance)
 
         last_prices = call_with_retry(get_last_prices, PAIRS)
         if last_prices is None:
-            failure_reason = "could not fetch prices"
             logging.error("Could not fetch prices. Skipping session.\n")
             return
 
-        failed_pairs: list[str] = []
         for pair in PAIRS:
             previous_state: dict | None = None
             try:
@@ -184,7 +205,9 @@ def trading_session() -> None:
                     continue
 
                 if is_closing(trailing_state.get(pair)):
-                    match manage_close_position(pair, trailing_state[pair], current_balance, last_prices, trailing_state):
+                    match manage_close_position(
+                        pair, trailing_state[pair], current_balance, last_prices, trailing_state
+                    ):
                         case ClosingState.FILLED:
                             db.record_position_closed(pair, trailing_state[pair])
                             del trailing_state[pair]
@@ -215,22 +238,21 @@ def trading_session() -> None:
         _session_count += 1
         runtime.update_last_run_at(now_utc())
         if failed_pairs:
-            status = "failed"
-            failure_reason = f"pair errors: {', '.join(failed_pairs)}"
-            logging.error(f"======== SESSION COMPLETE WITH ERRORS ({failure_reason}) ========")
+            # The session did complete; only these pairs were skipped.
+            status = "pair_error"
+            logging.error(f"======== SESSION COMPLETE WITH ERRORS (pairs: {', '.join(failed_pairs)}) ========")
         else:
             status = "completed"
             logging.info("======== SESSION COMPLETE ========")
-    except Exception as exc:
+    except Exception:
         logging.exception("Unhandled exception in trading_session")
         status = "failed"
-        failure_reason = failure_reason or f"unhandled exception: {exc}"
         raise
     finally:
         app_logger.removeHandler(collector)
         ended_at = now_utc()
         elapsed_seconds = (ended_at - started_at).total_seconds()
-        _notify_session_outcome(status, failure_reason, elapsed_seconds)
+        _notify_session_outcome(status, elapsed_seconds, failed_pairs)
         if session_id is not None:
             db.finalize_session(
                 session_id=session_id,

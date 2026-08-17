@@ -15,6 +15,8 @@ _shared_data = {
     "session_failure_alerted": False,
     "consecutive_session_overruns": 0,
     "session_overrun_alerted": False,
+    "consecutive_pair_failures": {},  # {pair: count}
+    "pair_failure_alerted": set(),  # pairs already alerted on
 }
 
 
@@ -122,6 +124,31 @@ def register_session_success() -> bool:
         was_alerted = _shared_data["session_failure_alerted"]
         _shared_data["consecutive_session_failures"] = 0
         _shared_data["session_failure_alerted"] = False
+        return was_alerted
+
+
+def register_pair_failure(pair: str, threshold: int) -> int | None:
+    """Count a session in which ``pair`` failed. Return the streak count once (the
+    tick it first reaches ``threshold``), else None, so the caller alerts only once.
+
+    Keyed per pair on purpose: a pair whose failure is permanent holds only its own
+    flag, so a pair that starts failing later still gets its own alert."""
+    with _lock:
+        count = _shared_data["consecutive_pair_failures"].get(pair, 0) + 1
+        _shared_data["consecutive_pair_failures"][pair] = count
+        if count >= threshold and pair not in _shared_data["pair_failure_alerted"]:
+            _shared_data["pair_failure_alerted"].add(pair)
+            return count
+        return None
+
+
+def register_pair_success(pair: str) -> bool:
+    """Reset ``pair``'s failure streak. Return True if we had alerted on it, so the
+    caller sends one recovery message for that pair."""
+    with _lock:
+        _shared_data["consecutive_pair_failures"][pair] = 0
+        was_alerted = pair in _shared_data["pair_failure_alerted"]
+        _shared_data["pair_failure_alerted"].discard(pair)
         return was_alerted
 
 

@@ -1487,7 +1487,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT date_trunc('hour', started_at) AS time, COUNT(*) FILTER (WHERE status = 'completed') AS COMPLETED, COUNT(*) FILTER (WHERE status = 'failed') AS FAILED, COUNT(*) FILTER (WHERE status = 'paused') AS PAUSED FROM sessions WHERE $__timeFilter(started_at) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('hour', started_at) AS time, COUNT(*) FILTER (WHERE status = 'completed') AS COMPLETED, COUNT(*) FILTER (WHERE status = 'pair_error') AS PAIR_ERROR, COUNT(*) FILTER (WHERE status = 'failed') AS FAILED, COUNT(*) FILTER (WHERE status = 'paused') AS PAUSED FROM sessions WHERE $__timeFilter(started_at) GROUP BY 1 ORDER BY 1",
           "refId": "A",
           "sql": {
             "columns": [

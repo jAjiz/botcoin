@@ -164,8 +164,7 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     fully_executed = state.vol > 0 and state.vol_exec >= state.vol
     if (state.status != "closed" and not fully_executed) or not state.avg_price or state.avg_price <= 0:
         logging.warning(
-            f"Closing order {closing_order} ended as {state.status} with no usable fill price; re-placing the exit.",
-            to_telegram=True,
+            f"Closing order {closing_order} ended as {state.status} with no usable fill price; re-placing the exit."
         )
         for key in ("closing_order_id", "closing_price"):
             pos.pop(key, None)
@@ -241,10 +240,10 @@ def tick_position(
         ):
             pos["stop_at"] = now_utc()
             logging.info(
-                f"[{pair}] ⛔ Stop price {round_price(pair, pos['stop_price']):,}€ hitted: placing LIMIT {side.upper()} order | {pos['volume']:.8f} @ {round_price(pair, current_price):,}€",
+                f"[{pair}] ⛔ Stop price {round_price(pair, pos['stop_price']):,}€ hitted: the {side.upper()} exit is now owed.",
                 to_telegram=True,
             )
-            close_position(pair, pos, last_prices, first_attempt=True)
+            close_position(pair, pos, last_prices)
             return
 
         if (side == "sell" and current_price > pos["trailing_price"]) or (
@@ -290,8 +289,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
         status = post_cancel_state.status if post_cancel_state else "unknown"
         logging.warning(
             f"[{pair}] Could not confirm executed volume for canceled order {order_id} (status={status}); "
-            "not placing a replacement. Next tick's terminal-status handling will resize the position.",
-            to_telegram=True,
+            "not placing a replacement. Next tick's terminal-status handling will resize the position."
         )
         return False  # confirmed cancel, no replacement: the pair is unmanaged
 
@@ -314,7 +312,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
 
     new_order = place_limit_order(pair, side, current_price, remaining)
     if not new_order:
-        logging.error("Failed to re-place closing order after cancel.", to_telegram=True)
+        logging.error("Failed to re-place closing order after cancel.")
         return False  # cancelled exit, no replacement: the pair is unmanaged
     pos["volume"] = remaining
     pos.update(
@@ -356,15 +354,17 @@ def manage_close_position(
     if not refresh_position(pair, pos, balance, last_prices, trailing_state):
         return ClosingState.PENDING  # dropped: a resolved pair, not a failure
 
-    placed = close_position(pair, pos, last_prices, first_attempt=False)
+    placed = close_position(pair, pos, last_prices)
     return ClosingState.PENDING if placed else ClosingState.UNMANAGED
 
 
-def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float], first_attempt: bool) -> bool:
+def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]) -> bool:
     """Place the exit order for a position whose ``stop_at`` the caller already
-    latched. ``first_attempt`` gates the placement-failure messages to one Telegram
-    per breach episode, since ``manage_close_position`` retries every tick. Returns
-    True only when an order is resting at Kraken."""
+    latched. Returns True only when an order is resting at Kraken.
+
+    Placement failures are logged, never sent: ``manage_close_position`` retries
+    every tick, so a Telegram here would flood for the length of an outage. The
+    per-pair failure streak alerts instead."""
     try:
         side = pos["side"]
         current_price = last_prices[pair]
@@ -373,8 +373,7 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
         closing_order = place_limit_order(pair, side, current_price, volume)
         if not closing_order:
             logging.error(
-                f"[{pair}] Failed to place the closing order, it remains owed and will be retried every tick.",
-                to_telegram=first_attempt,
+                f"[{pair}] Failed to place the closing order, it remains owed and will be retried every tick."
             )
             return False
 
@@ -385,12 +384,13 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
             }
         )
 
-        if not first_attempt:
-            logging.info(
-                f"[{pair}] 🏁 Placed closing {side.upper()} order at {round_price(pair, current_price):,}€ for {volume:.8f} vol",
-                to_telegram=True,
-            )
+        # Announced on every attempt: the breach message says the stop fired, this
+        # one says an order actually rests at Kraken.
+        logging.info(
+            f"[{pair}] 🏁 Placed closing {side.upper()} order at {round_price(pair, current_price):,}€ for {volume:.8f} vol",
+            to_telegram=True,
+        )
         return True
     except Exception as e:
-        logging.error(f"Failed to close trailing position: {e}", to_telegram=first_attempt)
+        logging.error(f"Failed to close trailing position: {e}")
         return False
