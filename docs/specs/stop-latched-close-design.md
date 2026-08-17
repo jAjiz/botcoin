@@ -367,6 +367,50 @@ dropped, activation reached, stop hit, closing order placed, repriced, partial
 fill during the cancel window, and the close with its PnL. Those are events, not
 failure detail.
 
+### 10. An order Kraken cannot resolve
+
+> Closes the freeze this branch's code review found. Supersedes nothing above; it
+> adds the one exception to §6's clearing rule and the missing `UNMANAGED` route.
+
+`get_order_state` returned `None` for two different things: an API error, and a
+reply in which the txid is simply absent. The closing flow reads both as "ask
+again next tick", so a `closing_order_id` that stops resolving — a txid lost to a
+Kraken-side purge, a wrong account, a corrupted id — latched the pair forever and
+reported `PENDING`, which is exactly the state that never alerts.
+
+**`exchange/kraken.py` becomes the anti-corruption boundary.** An `OrderStatus`
+`StrEnum` (`PENDING` / `OPEN` / `CLOSED` / `CANCELED` / `NOT_FOUND` / `UNKNOWN`)
+plus a public `map_order_status` translator, reusable by any later order lookup.
+Kraken's `expired` folds into `CANCELED`: both mean off the book with no further
+fills, and the distinction never drove a branch. Anything unmodelled becomes
+`UNKNOWN` rather than reaching the strategy as a raw string. `NOT_FOUND` and
+`UNKNOWN` have no Kraken counterpart — they are this wrapper's way of saying
+"answered, unusable". `get_order_state` now returns `None` for the API error
+alone, so a transient outage is distinguishable from an order that will never
+resolve. `OrderState.status` is typed `OrderStatus`, and no code outside the
+module compares status strings.
+
+**The strategy treats both as unmanaged, not as terminal.** `is_closing_complete`
+leaves the fields untouched and returns `False`; `reprice_closing_order` logs and
+returns `False`, so `manage_close_position` returns `UNMANAGED`, the pair reaches
+`failed_pairs`, and §9's per-pair streak alerts. Two decisions:
+
+- **This is the one exception to §6** ("no branch leaves a terminal order's fields
+  in place"). §6's reasoning holds only for statuses we can *call* terminal.
+  Clearing the id here and re-placing could put a second exit against a position
+  that may still have one resting — a double sell is unrecoverable, a frozen pair
+  is not. The objection §6 answers (frozen forever, silently) is answered here by
+  the alert instead, not by acting blind.
+- **It surfaces through `reprice_closing_order`, not `is_closing_complete`.** The
+  finalizer's job is to finalize, and `manage_close_position` already routes a
+  still-set `closing_order_id` into the repricer, so the verdict comes out on the
+  same tick with no extra plumbing and no third return value.
+
+The post-cancel re-query flips from a blocklist to an allowlist: only `CLOSED` or
+`CANCELED` gives a definitive `vol_exec`, so `NOT_FOUND`/`UNKNOWN` bail there too
+rather than sizing a replacement from an unconfirmed `0.0` — the over-sell the
+re-query exists to prevent.
+
 ## Edge cases
 
 | Case | Behaviour |
@@ -378,6 +422,7 @@ failure detail.
 | Latched position falls below `MIN_VALUE` | `refresh_position` drops it, the `finally` deletes the row, the retry loop ends. The manager returns `True` — a drop is not a failure. |
 | A dropped pair reaches `create_position` on the same tick | Possible now that the manager precedes step 5. `create_position` runs its own unforced `calculate_position`, so it may open the **opposite** side (a dropped SELL becoming a BUY) — normal inventory rebalancing, still refused under `MIN_VALUE`, one tick earlier than before. |
 | Order `canceled`/`expired` with a remainder | `is_closing_complete` clears the order fields and keeps `stop_at`; the same tick re-places. |
+| `closing_order_id` stops resolving at Kraken | `NOT_FOUND`/`UNKNOWN`: nothing is touched and the pair is reported `UNMANAGED` every tick, so the per-pair streak alerts (§10). |
 | Order canceled but fully executed | Unchanged — finalized by `is_closing_complete`, row deleted. |
 | Operator cancels the closing order by hand at Kraken | The bot re-places it. Deliberate: the exit is owed until it is filled. Cancelling an exit means removing the position's state, not cancelling its order. |
 | `close_position` raises before placing | Latched by the `setdefault`; retried next tick. |
@@ -402,6 +447,17 @@ Unit tests only, module-level monkeypatching, in the existing style.
   `refresh_position` returns `True` and places nothing.
 - `is_closing_complete` keeps `stop_at` on a terminal-with-remainder outcome
   while still clearing `closing_order_id` and `closing_price`.
+- `NOT_FOUND`/`UNKNOWN` (§10): `is_closing_complete` leaves every field in place,
+  `reprice_closing_order` cancels and places nothing and returns `False`, and
+  `manage_close_position` reports `UNMANAGED` end to end.
+- The post-cancel re-query bails on `NOT_FOUND`/`UNKNOWN` as it does on
+  `PENDING`/`OPEN`.
+
+**`exchange/kraken.py`**
+- `map_order_status` folds `expired` into `CANCELED` and maps anything
+  unmodelled — including an empty or missing status — to `UNKNOWN`.
+- `get_order_state` reports `NOT_FOUND` when the txid is absent from an otherwise
+  successful reply, and `None` only on an API error.
 
 **`core/scheduler.py`**
 - A latched pair with no order id reaches `manage_closing_order` and is skipped
@@ -439,6 +495,11 @@ Unit tests only, module-level monkeypatching, in the existing style.
   makes for a stuck lookup: freezing is safer than un-deciding an exit. It
   surfaces through the per-pair failure alert once the streak reaches the
   threshold (§9), and the breach itself is announced on the tick it happens.
+- **An order Kraken cannot resolve freezes the pair too** (§10), and deliberately
+  so: the alternative is re-placing against a possibly-live exit. It differs from
+  the case above in that no automatic path recovers it — `refresh_position` never
+  runs on this branch — so it stays latched until an operator checks Kraken. The
+  per-pair alert is the whole mitigation.
 - **A hard process kill between the `setdefault` and the tick's `finally`** loses
   the latch, exactly as it loses `closing_order_id` today. Unchanged exposure.
 - **The exit price can be worse than the un-latched behaviour** in the specific
@@ -473,3 +534,11 @@ Unit tests only, module-level monkeypatching, in the existing style.
   goes stale and misleads worse than no reason at all. The detail stays in
   `failure_reason` and `log_messages`. This replaces the existing
   session-failure design-choice bullet, which describes the superseded model.
+- **An order Kraken cannot resolve is reported unmanaged, never guessed at**
+  (§10). Why it is the one exception to the "no branch leaves a terminal order's
+  fields in place" rule (these statuses are not known to be terminal, and a
+  double exit is unrecoverable while a frozen pair is not), and why the verdict
+  comes out of `reprice_closing_order` rather than `is_closing_complete`. Plus a
+  note in the exchange-wrapper section: `kraken.py` is the anti-corruption
+  boundary, `OrderStatus`/`map_order_status` are its vocabulary, and `None` from
+  `get_order_state` now means "could not ask" and nothing else.

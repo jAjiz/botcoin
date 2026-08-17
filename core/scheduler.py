@@ -129,7 +129,7 @@ def trading_session() -> None:
                         case ClosingState.UNMANAGED:
                             # Routed into the consecutive-failure alert rather than a
                             # per-tick Telegram: an unmanaged pair is a failed pair.
-                            logging.error(f"[{pair}] Could not place the owed exit order; marking the pair failed.")
+                            logging.error(f"[{pair}] No exit order rests at Kraken; marking the pair failed.")
                             failed_pairs.append(pair)
                         case ClosingState.PENDING:
                             pass

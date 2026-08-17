@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 
 import trading.positions_manager as positions_manager
-from exchange.kraken import OrderState
+from exchange.kraken import OrderState, OrderStatus
 
 
 def _capture_telegram(monkeypatch) -> list[tuple[str, bool]]:
@@ -406,7 +406,7 @@ def test_is_closing_complete_returns_false_on_api_error(monkeypatch) -> None:
     assert positions_manager.is_closing_complete({"closing_order_id": "ORD001"}) is False
 
 
-@pytest.mark.parametrize("status", ["pending", "open"])
+@pytest.mark.parametrize("status", [OrderStatus.PENDING, OrderStatus.OPEN])
 def test_is_closing_complete_returns_false_while_order_in_flight(monkeypatch, status) -> None:
     monkeypatch.setattr(
         positions_manager,
@@ -423,7 +423,7 @@ def test_is_closing_complete_returns_true_and_updates_pos_when_order_filled(monk
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="closed", avg_price=69099.7, vol_exec=0.01),
+        lambda _: OrderState(status=OrderStatus.CLOSED, avg_price=69099.7, vol_exec=0.01),
     )
 
     pos = {"closing_order_id": "ORD001", "entry_price": 68000.0, "side": "sell"}
@@ -436,7 +436,7 @@ def test_is_closing_complete_pnl_for_buy_side(monkeypatch) -> None:
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="closed", avg_price=67000.0, vol_exec=0.01),
+        lambda _: OrderState(status=OrderStatus.CLOSED, avg_price=67000.0, vol_exec=0.01),
     )
 
     pos = {"closing_order_id": "ORD001", "entry_price": 68000.0, "side": "buy"}
@@ -444,12 +444,11 @@ def test_is_closing_complete_pnl_for_buy_side(monkeypatch) -> None:
     assert pos["pnl_percent"] == round((68000.0 - 67000.0) / 68000.0 * 100, 4)
 
 
-@pytest.mark.parametrize("status", ["canceled", "expired"])
-def test_is_closing_complete_clears_fields_and_keeps_the_exit_owed_when_order_dead(monkeypatch, status) -> None:
+def test_is_closing_complete_clears_fields_and_keeps_the_exit_owed_when_order_dead(monkeypatch) -> None:
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status=status, avg_price=0.0, vol_exec=0.0),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=0.0, vol_exec=0.0),
     )
 
     pos = {
@@ -471,7 +470,7 @@ def test_is_closing_complete_dead_order_alerts_with_the_order_id_and_status(monk
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="canceled", avg_price=68200.0, vol_exec=0.00512345),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=68200.0, vol_exec=0.00512345),
     )
     captured: list[tuple[str, bool]] = []
     monkeypatch.setattr(
@@ -494,7 +493,7 @@ def test_is_closing_complete_finalizes_a_terminal_order_that_was_fully_executed(
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="canceled", avg_price=69099.7, vol=0.01, vol_exec=0.01),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=69099.7, vol=0.01, vol_exec=0.01),
     )
 
     pos = {"side": "sell", "entry_price": 68000.0, "volume": 0.0123, "closing_order_id": "ORD001"}
@@ -511,7 +510,7 @@ def test_is_closing_complete_reopens_position_when_terminal_order_left_a_remaind
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="canceled", avg_price=69099.7, vol=0.02, vol_exec=0.01),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=69099.7, vol=0.02, vol_exec=0.01),
     )
 
     pos = {"side": "sell", "entry_price": 68000.0, "volume": 0.02, "closing_order_id": "ORD001"}
@@ -524,7 +523,7 @@ def test_is_closing_complete_does_not_finalize_fully_executed_order_without_usab
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="canceled", avg_price=0.0, vol=0.01, vol_exec=0.01),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=0.0, vol=0.01, vol_exec=0.01),
     )
 
     pos = {"side": "sell", "entry_price": 68000.0, "volume": 0.01, "closing_order_id": "ORD001"}
@@ -537,7 +536,7 @@ def test_is_closing_complete_announces_a_finalized_terminal_order(monkeypatch) -
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="canceled", avg_price=69099.7, vol=0.01, vol_exec=0.01),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=69099.7, vol=0.01, vol_exec=0.01),
     )
     captured: list[tuple[str, bool]] = []
     monkeypatch.setattr(
@@ -557,9 +556,8 @@ def test_is_closing_complete_announces_a_finalized_terminal_order(monkeypatch) -
 @pytest.mark.parametrize(
     "state",
     [
-        OrderState(status="closed", avg_price=0.0, vol_exec=0.0),
-        OrderState(status="closed", avg_price=None, vol_exec=0.0),
-        OrderState(status="some-status-kraken-invented", avg_price=68200.0, vol_exec=0.5),
+        OrderState(status=OrderStatus.CLOSED, avg_price=0.0, vol_exec=0.0),
+        OrderState(status=OrderStatus.CLOSED, avg_price=None, vol_exec=0.0),
     ],
 )
 def test_is_closing_complete_keeps_the_exit_owed_on_any_unfinalizable_terminal_state(monkeypatch, state) -> None:
@@ -592,9 +590,53 @@ def test_is_closing_complete_keeps_the_exit_owed_on_any_unfinalizable_terminal_s
     assert captured and captured[0][1] is False
 
 
+@pytest.mark.parametrize("status", [OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN])
+def test_is_closing_complete_keeps_the_order_when_kraken_cannot_resolve_it(monkeypatch, status) -> None:
+    """An order Kraken cannot resolve is not known to be terminal, so its fields
+    stay put: clearing them would re-place an exit that may still be live."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status=status, avg_price=68200.0, vol=0.5, vol_exec=0.5),
+    )
+
+    pos = {"side": "sell", "entry_price": 68000.0, "closing_order_id": "ORD001", "closing_price": 68500.0}
+    assert positions_manager.is_closing_complete(pos) is False
+    assert pos["closing_order_id"] == "ORD001"
+    assert pos["closing_price"] == 68500.0
+    assert "pnl_percent" not in pos
+
+
 # ============================================================================
 # reprice_closing_order
 # ============================================================================
+
+
+@pytest.mark.parametrize("status", [OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN])
+def test_reprice_closing_order_reports_unmanaged_when_kraken_cannot_resolve_the_order(monkeypatch, status) -> None:
+    """The freeze this closes: an order that stops resolving used to look like a
+    resting one, so the pair sat latched forever with no alert. Nothing is touched
+    (re-placing blind risks two live exits) but the pair is reported unmanaged."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status=status, avg_price=None, vol_exec=0.0),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: pytest.fail("must not cancel"))
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: pytest.fail("must not place"))
+    sent = _capture_telegram(monkeypatch)
+
+    pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
+    assert positions_manager.reprice_closing_order("XBTEUR", pos, last_prices={"XBTEUR": 105.0}) is False
+
+    assert pos["closing_order_id"] == "OLDORDER"
+    assert pos["closing_price"] == 100.0
+    assert len(sent) == 1
+    msg, to_telegram = sent[0]
+    assert "OLDORDER" in msg
+    assert str(status) in msg
+    # Logged only: the per-pair failure streak owns the alerting.
+    assert to_telegram is False
 
 
 def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
@@ -604,8 +646,8 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
         positions_manager,
         "get_order_state",
         _sequenced_order_states(
-            OrderState(status="open", avg_price=None, vol_exec=0.0),  # pre-cancel check
-            OrderState(status="canceled", avg_price=None, vol=0.5, vol_exec=0.0),  # post-cancel re-query
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),  # pre-cancel check
+            OrderState(status=OrderStatus.CANCELED, avg_price=None, vol=0.5, vol_exec=0.0),  # post-cancel re-query
         ),
     )
     cancel_calls: list[str] = []
@@ -638,7 +680,7 @@ def test_reprice_closing_order_skips_when_partially_filled(monkeypatch) -> None:
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="open", avg_price=100.0, vol_exec=0.2),
+        lambda _: OrderState(status=OrderStatus.OPEN, avg_price=100.0, vol_exec=0.2),
     )
     monkeypatch.setattr(
         positions_manager, "cancel_order", lambda _order_id: pytest.fail("must not cancel a partial fill")
@@ -659,7 +701,7 @@ def test_reprice_closing_order_skips_when_formatted_price_unchanged(monkeypatch)
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="open", avg_price=None, vol_exec=0.0),
+        lambda _: OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
     )
     monkeypatch.setattr(
         positions_manager, "cancel_order", lambda _order_id: pytest.fail("must not cancel an unchanged price")
@@ -681,7 +723,7 @@ def test_reprice_closing_order_noop_when_cancel_fails(monkeypatch) -> None:
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="open", avg_price=None, vol_exec=0.0),
+        lambda _: OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
     )
     monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: False)
     monkeypatch.setattr(
@@ -714,8 +756,8 @@ def test_reprice_closing_order_noop_when_new_placement_fails_after_cancel(monkey
         positions_manager,
         "get_order_state",
         _sequenced_order_states(
-            OrderState(status="open", avg_price=None, vol_exec=0.0),  # pre-cancel check
-            OrderState(status="canceled", avg_price=None, vol=0.5, vol_exec=0.0),  # post-cancel re-query
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),  # pre-cancel check
+            OrderState(status=OrderStatus.CANCELED, avg_price=None, vol=0.5, vol_exec=0.0),  # post-cancel re-query
         ),
     )
     monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
@@ -746,7 +788,7 @@ def test_reprice_closing_order_returns_when_no_closing_order() -> None:
     assert "closing_order_id" not in pos
 
 
-@pytest.mark.parametrize("status", ["closed", "canceled", "expired", "pending"])
+@pytest.mark.parametrize("status", [OrderStatus.CLOSED, OrderStatus.CANCELED, OrderStatus.PENDING])
 def test_reprice_closing_order_only_touches_an_open_order(monkeypatch, status) -> None:
     """Terminal statuses are is_closing_complete's job; a `pending` order has not
     reached the book yet, so cancel/replace would be pure churn."""
@@ -782,8 +824,8 @@ def test_reprice_closing_order_sizes_replacement_to_remainder_on_fill_in_cancel_
         positions_manager,
         "get_order_state",
         _sequenced_order_states(
-            OrderState(status="open", avg_price=None, vol_exec=0.0),  # pre-cancel check
-            OrderState(status="canceled", avg_price=100.0, vol_exec=0.2),  # post-cancel re-query
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),  # pre-cancel check
+            OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol_exec=0.2),  # post-cancel re-query
         ),
     )
     monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
@@ -812,7 +854,7 @@ def test_reprice_closing_order_noop_when_post_cancel_requery_fails(monkeypatch) 
         positions_manager,
         "get_order_state",
         _sequenced_order_states(
-            OrderState(status="open", avg_price=None, vol_exec=0.0),
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
             None,
         ),
     )
@@ -829,7 +871,7 @@ def test_reprice_closing_order_noop_when_post_cancel_requery_fails(monkeypatch) 
     assert pos["volume"] == 0.5
 
 
-@pytest.mark.parametrize("status", ["open", "pending"])
+@pytest.mark.parametrize("status", [OrderStatus.OPEN, OrderStatus.PENDING, OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN])
 def test_reprice_closing_order_noop_when_post_cancel_status_is_not_terminal(monkeypatch, status) -> None:
     """A confirmed cancel does not guarantee the very next QueryOrders already
     reflects the final state. A non-terminal status means the executed volume is
@@ -839,7 +881,7 @@ def test_reprice_closing_order_noop_when_post_cancel_status_is_not_terminal(monk
         positions_manager,
         "get_order_state",
         _sequenced_order_states(
-            OrderState(status="open", avg_price=None, vol_exec=0.0),
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
             OrderState(status=status, avg_price=None, vol_exec=0.0),
         ),
     )
@@ -862,8 +904,8 @@ def test_reprice_closing_order_alert_names_the_unconfirmed_status(monkeypatch) -
         positions_manager,
         "get_order_state",
         _sequenced_order_states(
-            OrderState(status="open", avg_price=None, vol_exec=0.0),
-            OrderState(status="open", avg_price=None, vol_exec=0.0),
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
         ),
     )
     monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
@@ -891,8 +933,8 @@ def test_reprice_closing_order_noop_when_remaining_is_not_positive(monkeypatch) 
         positions_manager,
         "get_order_state",
         _sequenced_order_states(
-            OrderState(status="open", avg_price=None, vol_exec=0.0),
-            OrderState(status="canceled", avg_price=100.0, vol_exec=0.5),
+            OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
+            OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol_exec=0.5),
         ),
     )
     monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: True)
@@ -1179,7 +1221,7 @@ def test_manage_close_position_clears_a_dead_order_and_re_places_it_in_one_call(
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
-        lambda _: OrderState(status="canceled", avg_price=0.0, vol_exec=0.0),
+        lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=0.0, vol_exec=0.0),
     )
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
     monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a: "ORD002")
@@ -1196,3 +1238,28 @@ def test_manage_close_position_clears_a_dead_order_and_re_places_it_in_one_call(
     assert outcome is positions_manager.ClosingState.PENDING
     assert pos["closing_order_id"] == "ORD002"
     assert pos["closing_price"] == 67000.0
+
+
+@pytest.mark.parametrize("status", [OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN])
+def test_manage_close_position_reports_unmanaged_when_the_order_cannot_be_resolved(monkeypatch, status) -> None:
+    """End to end: an unresolvable order used to report PENDING and freeze the pair
+    in silence. It now reports UNMANAGED, so the per-pair streak alerts on it."""
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda _: OrderState(status=status, avg_price=None, vol_exec=0.0),
+    )
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda _order_id: pytest.fail("must not cancel"))
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a: pytest.fail("must not place"))
+
+    pos = {
+        "side": "sell",
+        "volume": 0.5,
+        "entry_price": 68000.0,
+        "stop_at": "2026-07-26T00:00:00+00:00",
+        "closing_order_id": "ORD001",
+        "closing_price": 68500.0,
+    }
+    outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 67000.0}, {})
+    assert outcome is positions_manager.ClosingState.UNMANAGED
+    assert pos["closing_order_id"] == "ORD001"

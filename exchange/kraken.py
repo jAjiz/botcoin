@@ -3,6 +3,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 import krakenex
@@ -92,9 +93,34 @@ def get_balance() -> dict[str, str] | None:
     return _safe_call("balance", lambda: api.query_private("Balance", timeout=KRAKEN_HTTP_TIMEOUT))
 
 
+class OrderStatus(StrEnum):
+    """Kraken's order vocabulary, normalized so callers never parse raw strings."""
+
+    PENDING = "pending"  # accepted, not on the book yet
+    OPEN = "open"  # resting on the book
+    CLOSED = "closed"  # fully executed
+    CANCELED = "canceled"  # canceled or expired: off the book, no further fills
+    NOT_FOUND = "not_found"  # Kraken answered but does not know this order id
+    UNKNOWN = "unknown"  # Kraken reported a status this wrapper does not model
+
+
+_RAW_ORDER_STATUS: dict[str, OrderStatus] = {
+    "pending": OrderStatus.PENDING,
+    "open": OrderStatus.OPEN,
+    "closed": OrderStatus.CLOSED,
+    "canceled": OrderStatus.CANCELED,
+    "expired": OrderStatus.CANCELED,
+}
+
+
+def map_order_status(raw: str | None) -> OrderStatus:
+    """Translate a raw Kraken status; anything unmodelled reads as UNKNOWN."""
+    return _RAW_ORDER_STATUS.get(raw or "", OrderStatus.UNKNOWN)
+
+
 @dataclass(frozen=True)
 class OrderState:
-    status: str
+    status: OrderStatus
     avg_price: float | None
     vol_exec: float
     # The order's own size. Defaults to 0.0 when Kraken omits it, so a
@@ -103,8 +129,11 @@ class OrderState:
 
 
 def get_order_state(order_id: str) -> OrderState | None:
-    """Status + average fill price + ordered/executed volume of an order, or None
-    on API error / unknown order. Callers must branch on ``status`` explicitly —
+    """Status + average fill price + ordered/executed volume of an order.
+
+    ``None`` means only "could not ask" (API error). A reply that does not know the
+    order id is a ``NOT_FOUND`` state, so callers can tell a transient outage from an
+    order that will never resolve. Callers must branch on ``status`` explicitly —
     never infer completion from a bare price (a canceled order reports 0.0)."""
     result = _safe_call(
         "order state",
@@ -113,11 +142,11 @@ def get_order_state(order_id: str) -> OrderState | None:
     if result is None:
         return None
     order = result.get(order_id)
-    if not order or not order.get("status"):
-        return None
+    if not order:
+        return OrderState(status=OrderStatus.NOT_FOUND, avg_price=None, vol_exec=0.0)
     price = order.get("price")
     return OrderState(
-        status=order["status"],
+        status=map_order_status(order.get("status")),
         avg_price=float(price) if price is not None else None,
         vol_exec=float(order.get("vol_exec") or 0.0),
         vol=float(order.get("vol") or 0.0),

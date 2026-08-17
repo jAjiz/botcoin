@@ -216,7 +216,7 @@ def test_trading_session_fails_the_pair_when_the_owed_exit_cannot_be_placed(monk
     scheduler.trading_session()
 
     assert calls[0]["status"] == "pair_error"
-    assert "Could not place the owed exit order" in calls[0]["log_messages"]
+    assert "No exit order rests at Kraken" in calls[0]["log_messages"]
 
 
 def test_trading_session_records_the_closed_position_when_the_fill_is_confirmed(monkeypatch):

@@ -4,9 +4,16 @@ from typing import Any
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import now_utc, round_price
-from exchange.kraken import cancel_order, get_order_state, place_limit_order
+from exchange.kraken import OrderStatus, cancel_order, get_order_state, place_limit_order
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
+
+# Kraken answered but the order cannot be resolved. Never act on these: an order we
+# cannot see is not known to be dead, so clearing its id and re-placing could leave
+# two live exits. The pair is reported unmanaged instead, and a human decides.
+UNRESOLVABLE_STATUSES = (OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN)
+# Only these give a definitive vol_exec: the order can never trade again.
+TERMINAL_STATUSES = (OrderStatus.CLOSED, OrderStatus.CANCELED)
 
 
 class ClosingState(StrEnum):
@@ -156,20 +163,24 @@ def is_closing_complete(pos: dict[str, Any] | None) -> bool:
     if not closing_order:
         return False
     state = get_order_state(closing_order)
-    if state is None or state.status in ("pending", "open"):
+    if state is None or state.status in (OrderStatus.PENDING, OrderStatus.OPEN):
+        return False
+    if state.status in UNRESOLVABLE_STATUSES:
+        # Not known to be terminal, so the fields stay: reprice_closing_order reports
+        # the pair unmanaged on this same tick.
         return False
     # A cancel can race a complete fill: Kraken confirms the cancellation but nothing
     # is left to manage, so it is a finished trade. Measured against the order's own
     # `vol`, never pos["volume"], which can drift from what rests at Kraken.
     fully_executed = state.vol > 0 and state.vol_exec >= state.vol
-    if (state.status != "closed" and not fully_executed) or not state.avg_price or state.avg_price <= 0:
+    if (state.status != OrderStatus.CLOSED and not fully_executed) or not state.avg_price or state.avg_price <= 0:
         logging.warning(
             f"Closing order {closing_order} ended as {state.status} with no usable fill price; re-placing the exit."
         )
         for key in ("closing_order_id", "closing_price"):
             pos.pop(key, None)
         return False
-    if state.status != "closed":
+    if state.status != OrderStatus.CLOSED:
         logging.warning(
             f"Closing order {closing_order} ended as {state.status} but was fully executed "
             f"({state.vol_exec:.8f}); recording it as a completed close.",
@@ -266,7 +277,15 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
     if not order_id:
         return True  # nothing to chase; the re-place branch owns this state
     state = get_order_state(order_id)
-    if state is None or state.status != "open":
+    if state is None:
+        return True  # could not ask; nothing was cancelled, so the order still rests
+    if state.status in UNRESOLVABLE_STATUSES:
+        logging.error(
+            f"[{pair}] Cannot resolve closing order {order_id} (status={state.status}); leaving it untouched — "
+            "re-placing blind could leave two live exits. The pair is unmanaged until this is checked at Kraken."
+        )
+        return False
+    if state.status != OrderStatus.OPEN:
         # A pending order isn't on the book yet, so cancel/replace is pure churn;
         # terminal states are is_closing_complete's job.
         return True
@@ -280,13 +299,13 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], last_prices: dict[str,
 
     # A fill can land between the vol_exec check above and the cancel round trip, so
     # re-query for the definitive vol_exec and size the replacement at the remainder;
-    # re-placing the full volume would over-sell by whatever executed. A non-terminal
-    # status means the read has not caught up with the cancel, so its vol_exec is not
-    # definitive either. Bailing is safe: nothing has been placed, so the position can
+    # re-placing the full volume would over-sell by whatever executed. Only a terminal
+    # status gives a definitive vol_exec — anything else means the read has not caught
+    # up with the cancel. Bailing is safe: nothing has been placed, so the position can
     # never hold two live exits.
     post_cancel_state = get_order_state(order_id)
-    if post_cancel_state is None or post_cancel_state.status in ("pending", "open"):
-        status = post_cancel_state.status if post_cancel_state else "unknown"
+    if post_cancel_state is None or post_cancel_state.status not in TERMINAL_STATUSES:
+        status = post_cancel_state.status if post_cancel_state else "unavailable"
         logging.warning(
             f"[{pair}] Could not confirm executed volume for canceled order {order_id} (status={status}); "
             "not placing a replacement. Next tick's terminal-status handling will resize the position."
