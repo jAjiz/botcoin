@@ -738,6 +738,10 @@ def test_reprice_closing_order_noop_when_cancel_fails(monkeypatch) -> None:
 
 
 def test_reprice_closing_order_noop_when_new_placement_fails_after_cancel(monkeypatch) -> None:
+    """The response for the replacement itself is lost. `closing_order_id` is
+    dropped (the canceled txid carries no more information) and the position is
+    left in the unconfirmed sub-state, which `manage_close_position`'s branch 2
+    resolves next tick — recoverable, unlike a permanently unmanaged pair."""
     monkeypatch.setattr(
         positions_manager,
         "get_order_state",
@@ -752,16 +756,15 @@ def test_reprice_closing_order_noop_when_new_placement_fails_after_cancel(monkey
 
     state = OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0)
     pos = {"side": "sell", "volume": 0.5, "closing_order_id": "OLDORDER", "closing_price": 100.0}
-    # The exit was cancelled and nothing replaced it: the pair is unmanaged.
     assert positions_manager.reprice_closing_order("XBTEUR", pos, state, last_prices={"XBTEUR": 105.0}) is False
 
-    # Position keeps the old, now-canceled order id: the dead-status branch of
-    # _drive_closing_order recovers it next tick.
-    assert pos["closing_order_id"] == "OLDORDER"
-    assert pos["closing_price"] == 100.0
+    assert "closing_order_id" not in pos
+    assert pos["closing_price"] == 105.0
+    assert pos["volume"] == 0.5
+    assert pos["closing_request_id"] is not None
     assert len(captured) == 1
     msg, to_telegram = captured[0]
-    assert "re-place" in msg.lower()
+    assert "not confirmed" in msg.lower()
     assert to_telegram is False
 
 
@@ -1252,3 +1255,147 @@ def test_manage_close_position_reports_unmanaged_when_the_order_cannot_be_resolv
     outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 67000.0}, {})
     assert outcome is positions_manager.ClosingState.UNMANAGED
     assert pos["closing_order_id"] == "ORD001"
+
+
+# ============================================================================
+# manage_close_position — unconfirmed sub-state (closing_request_id)
+# ============================================================================
+
+
+def test_manage_close_position_adopts_a_recovered_order_and_drives_it_same_tick(monkeypatch) -> None:
+    """An id whose AddOrder response was lost resolves via the lookup; if it
+    turns out to already be filled, that is reported on the SAME tick, not a
+    tick later."""
+    monkeypatch.setattr(positions_manager, "get_order_state", lambda _txid: pytest.fail("must not query by txid"))
+    recovered_state = OrderState(status=OrderStatus.CLOSED, avg_price=69099.7, vol_exec=0.01)
+    monkeypatch.setattr(
+        positions_manager,
+        "find_order_by_cl_ord_id",
+        lambda cl_ord_id: positions_manager.OrderLookup(txid="RECOVERED1", state=recovered_state),
+    )
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: pytest.fail("must not refresh"))
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: pytest.fail("must not re-place"))
+    sent = _capture_telegram(monkeypatch)
+
+    pos = {
+        "side": "sell",
+        "entry_price": 68000.0,
+        "volume": 0.01,
+        "stop_at": "2026-07-26T00:00:00+00:00",
+        "closing_request_id": "REQ1",
+    }
+    outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 69000.0}, {})
+
+    assert outcome is positions_manager.ClosingState.FILLED
+    assert pos["closing_order_id"] == "RECOVERED1"
+    assert any("RECOVERED1" in msg and to_telegram for msg, to_telegram in sent)
+
+
+def test_manage_close_position_adopts_a_recovered_order_that_is_still_open(monkeypatch) -> None:
+    """A recovered order that is not yet terminal drives through to reprice on
+    the same tick, exactly like a confirmed order would."""
+    monkeypatch.setattr(positions_manager, "get_order_state", lambda _txid: pytest.fail("must not query by txid"))
+    recovered_state = OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0)
+    monkeypatch.setattr(
+        positions_manager,
+        "find_order_by_cl_ord_id",
+        lambda cl_ord_id: positions_manager.OrderLookup(txid="RECOVERED2", state=recovered_state),
+    )
+    calls: list = []
+    monkeypatch.setattr(positions_manager, "reprice_closing_order", lambda *a: calls.append(a) or True)
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: pytest.fail("must not refresh"))
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: pytest.fail("must not re-place"))
+
+    pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00", "closing_request_id": "REQ1"}
+    outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 105.0}, {})
+
+    assert outcome is positions_manager.ClosingState.PENDING
+    assert pos["closing_order_id"] == "RECOVERED2"
+    assert calls == [("XBTEUR", pos, recovered_state, {"XBTEUR": 105.0})]
+
+
+def test_manage_close_position_clears_and_replaces_when_the_request_never_landed(monkeypatch) -> None:
+    """Genuine evidence nothing landed: the closing fields are cleared, stop_at
+    survives, and a NEW order is placed with a NEW id on the same tick."""
+    monkeypatch.setattr(
+        positions_manager,
+        "find_order_by_cl_ord_id",
+        lambda cl_ord_id: positions_manager.OrderLookup(txid=None, state=None),
+    )
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
+    place_calls: list = []
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda pair, side, price, volume, cl_ord_id=None: place_calls.append(cl_ord_id) or "NEWORDER9",
+    )
+
+    pos = {
+        "side": "sell",
+        "entry_price": 68000.0,
+        "volume": 0.01,
+        "stop_at": "2026-07-26T00:00:00+00:00",
+        "closing_request_id": "OLDREQ",
+    }
+    outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 69000.0}, {})
+
+    assert outcome is positions_manager.ClosingState.PENDING
+    assert pos["closing_order_id"] == "NEWORDER9"
+    assert pos["closing_request_id"] != "OLDREQ"
+    assert place_calls == [pos["closing_request_id"]]
+    # The exit stays owed even though nothing landed for the previous attempt.
+    assert pos["stop_at"] == "2026-07-26T00:00:00+00:00"
+
+
+def test_manage_close_position_reports_unmanaged_on_lookup_error(monkeypatch) -> None:
+    """A lookup failure decides nothing: every field stays exactly as it was, and
+    no placement is attempted."""
+    monkeypatch.setattr(positions_manager, "find_order_by_cl_ord_id", lambda cl_ord_id: None)
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: pytest.fail("must not refresh"))
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: pytest.fail("must not place"))
+
+    pos = {
+        "side": "sell",
+        "entry_price": 68000.0,
+        "volume": 0.01,
+        "stop_at": "2026-07-26T00:00:00+00:00",
+        "closing_request_id": "REQ1",
+    }
+    outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 69000.0}, {})
+
+    assert outcome is positions_manager.ClosingState.UNMANAGED
+    assert pos["closing_request_id"] == "REQ1"
+    assert "closing_order_id" not in pos
+
+
+def test_manage_close_position_routes_confirmed_without_the_lookup(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda txid: OrderState(status=OrderStatus.OPEN, avg_price=None, vol_exec=0.0),
+    )
+    monkeypatch.setattr(
+        positions_manager, "find_order_by_cl_ord_id", lambda *_: pytest.fail("must not look up when confirmed")
+    )
+    monkeypatch.setattr(positions_manager, "reprice_closing_order", lambda *a: True)
+
+    pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00", "closing_order_id": "ORD001"}
+    outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 105.0}, {})
+    assert outcome is positions_manager.ClosingState.PENDING
+
+
+def test_manage_close_position_routes_unconfirmed_without_get_order_state(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager, "get_order_state", lambda *_: pytest.fail("must not query by txid when unconfirmed")
+    )
+    monkeypatch.setattr(
+        positions_manager,
+        "find_order_by_cl_ord_id",
+        lambda cl_ord_id: positions_manager.OrderLookup(txid=None, state=None),
+    )
+    monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
+    monkeypatch.setattr(positions_manager, "close_position", lambda *a, **k: True)
+
+    pos = {"side": "sell", "volume": 0.5, "stop_at": "2026-07-26T00:00:00+00:00", "closing_request_id": "REQ1"}
+    outcome = positions_manager.manage_close_position("XBTEUR", pos, {}, {"XBTEUR": 105.0}, {})
+    assert outcome is positions_manager.ClosingState.PENDING

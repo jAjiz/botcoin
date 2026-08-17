@@ -4,7 +4,15 @@ from typing import Any
 import core.logging as logging
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import new_cl_ord_id, now_utc, round_price
-from exchange.kraken import OrderState, OrderStatus, cancel_order, get_order_state, place_limit_order
+from exchange.kraken import (
+    OrderLookup,
+    OrderState,
+    OrderStatus,
+    cancel_order,
+    find_order_by_cl_ord_id,
+    get_order_state,
+    place_limit_order,
+)
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
 
@@ -321,19 +329,18 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
             to_telegram=True,
         )
 
+    # Written before the call, same as close_position: if the response is lost but the
+    # order landed, the persisted state must already describe it. closing_order_id is
+    # dropped now (not kept) — the canceled txid carries no more information, and keeping
+    # it would hide a possibly-live replacement in the wrong sub-state (see manage_close_position).
     cl_ord_id = new_cl_ord_id()
-    pos["closing_request_id"] = cl_ord_id
+    pos.update({"volume": remaining, "closing_price": current_price, "closing_request_id": cl_ord_id})
+    pos.pop("closing_order_id", None)
     new_order = place_limit_order(pair, side, current_price, remaining, cl_ord_id=cl_ord_id)
     if not new_order:
-        logging.error("Failed to re-place closing order after cancel.")
-        return False  # cancelled exit, no replacement: the pair is unmanaged
-    pos["volume"] = remaining
-    pos.update(
-        {
-            "closing_price": current_price,
-            "closing_order_id": new_order,
-        }
-    )
+        logging.error(f"[{pair}] Closing order replacement not confirmed after cancel; the next tick will resolve it.")
+        return False  # unconfirmed: manage_close_position's unconfirmed sub-state resolves it
+    pos["closing_order_id"] = new_order
     logging.info(
         f"[{pair}] 🔁 Repriced closing {side.upper()} order to {round_price(pair, current_price):,}€",
         to_telegram=True,
@@ -349,12 +356,23 @@ def manage_close_position(
     trailing_state: dict[str, Any],
 ) -> ClosingState:
     """Drive a latched position from the stop breach to the fill; ``FILLED`` reports it, never writes it."""
-    # The nested if stays a separate statement (not merged with `and`): the unconfirmed
-    # sub-state lands as a sibling `elif` here in a later change.
-    if txid := pos.get("closing_order_id"):  # noqa: SIM102
+    if txid := pos.get("closing_order_id"):
         # Confirmed: Kraken gave us this id, so "not found" can only mean unmanaged.
         if (outcome := _drive_closing_order(pair, pos, get_order_state(txid), last_prices)) is not None:
             return outcome
+
+    elif cl_ord_id := pos.get("closing_request_id"):
+        # Unconfirmed: an AddOrder went out and we never learned what happened to it.
+        found: OrderLookup | None = find_order_by_cl_ord_id(cl_ord_id)
+        if found is None:
+            return ClosingState.UNMANAGED  # could not ask; decide nothing
+        if found.txid:
+            pos["closing_order_id"] = found.txid  # it landed after all
+            logging.warning(f"[{pair}] Recovered closing order {found.txid} from its client id.", to_telegram=True)
+            if (outcome := _drive_closing_order(pair, pos, found.state, last_prices)) is not None:
+                return outcome
+        else:
+            _clear_closing_fields(pos)  # it never landed; stop_at survives
 
     # Nothing outstanding — either from the start, or just cleared above.
     # A latched position never reaches tick_position, and a stale volume may be why the last attempt failed.

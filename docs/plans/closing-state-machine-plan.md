@@ -239,18 +239,18 @@ rejected below `ordermin`, and a finished trade was never recorded.
 
 ## Task 9 — branch 2: the unconfirmed path
 
-- [ ] **Tests** — the three outcomes:
+- [x] **Tests** — the three outcomes:
   - **adopted**: txid written to `closing_order_id`, driven on the **same** tick
     (an adopted-and-already-filled order returns `FILLED` immediately);
   - **absent**: closing fields cleared, `stop_at` **kept**, and a new order placed
     with a **new** id on the same tick;
   - **lookup error**: `UNMANAGED`, every field untouched, **no placement**.
-- [ ] **Test**: routing — confirmed sub-state calls `get_order_state` and never
+- [x] **Test**: routing — confirmed sub-state calls `get_order_state` and never
   the lookup; unconfirmed calls the lookup and never `get_order_state`.
-- [ ] **Test**: `refresh_position` is never reached while a lookup is unresolved.
+- [x] **Test**: `refresh_position` is never reached while a lookup is unresolved.
   It can *drop* the position, and dropping one that may have a live order at
   Kraken orphans that order.
-- [ ] **Implement**: the `elif` branch of `manage_close_position` (spec §4), and
+- [x] **Implement**: the `elif` branch of `manage_close_position` (spec §4), and
   in `reprice_closing_order` write `volume` / `closing_price` /
   `closing_request_id` before the call and **drop** `closing_order_id`.
 
