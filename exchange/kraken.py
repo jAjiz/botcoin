@@ -17,8 +17,8 @@ KRAKEN_MIN_CALL_INTERVAL_SECONDS = 1.0
 _rate_limit_lock = threading.Lock()
 _last_public_call_ts = 0.0
 
-# (connect, read) timeout for every call. Must stay finite: krakenex's default of None
-# lets a stalled socket block the single scheduler thread forever (it once did).
+# (connect, read) timeout. Must stay finite: krakenex defaults to None and a stalled
+# socket once blocked the single scheduler thread forever.
 KRAKEN_HTTP_TIMEOUT: tuple[float, float] = (10.0, 30.0)
 
 
@@ -123,18 +123,12 @@ class OrderState:
     status: OrderStatus
     avg_price: float | None
     vol_exec: float
-    # The order's own size. Defaults to 0.0 when Kraken omits it, so a
-    # `vol_exec >= vol` remainder check fails closed on unknown data.
+    # The order's own size. 0.0 when Kraken omits it, so a remainder check fails closed.
     vol: float = 0.0
 
 
 def get_order_state(order_id: str) -> OrderState | None:
-    """Status + average fill price + ordered/executed volume of an order.
-
-    ``None`` means only "could not ask" (API error). A reply that does not know the
-    order id is a ``NOT_FOUND`` state, so callers can tell a transient outage from an
-    order that will never resolve. Callers must branch on ``status`` explicitly —
-    never infer completion from a bare price (a canceled order reports 0.0)."""
+    """An order's status, average fill price and volumes; ``None`` only when the API call failed."""
     result = _safe_call(
         "order state",
         lambda: api.query_private("QueryOrders", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
@@ -154,11 +148,7 @@ def get_order_state(order_id: str) -> OrderState | None:
 
 
 def cancel_order(order_id: str) -> bool:
-    """Cancel an open order. False on API error, and also on a successful response
-    that doesn't confirm a definitive cancellation: ``count: 0`` (nothing was
-    canceled) or ``pending: true`` (queued, the order can still fill). Both mean
-    'still live' — re-placing on either would leave two live exits for one
-    position."""
+    """Cancel an open order; True only on a definitive cancellation (``count > 0``, not ``pending``)."""
     result = _safe_call(
         "cancel order",
         lambda: api.query_private("CancelOrder", {"txid": order_id}, timeout=KRAKEN_HTTP_TIMEOUT),
@@ -183,18 +173,13 @@ def get_last_prices(pairs_dict: dict[str, dict[str, Any]]) -> dict[str, float] |
         try:
             prices[pair] = float(ticker["c"][0])
         except (KeyError, IndexError, TypeError, ValueError) as e:
-            # Parsing runs outside _safe_call and outside the scheduler's per-pair
-            # guard, so an unhandled raise here would kill pricing for every pair.
+            # Outside _safe_call and the scheduler's per-pair guard: a raise here kills every pair.
             logging.warning(f"Ticker entry for {pair} is malformed ({e}); skipping this pair this session.")
     return prices or None
 
 
 def _format_amount(value: float, decimals: int | None) -> str:
-    """Format a price or volume to the pair's Kraken precision.
-
-    When ``decimals`` is unknown (pair metadata not loaded) the value is sent
-    unrounded so we never silently coarsen it — better a possible Kraken reject
-    (handled by ``_safe_call``) than a corrupted order price."""
+    """Format to the pair's Kraken precision; sent unrounded when unknown, never silently coarsened."""
     if decimals is None:
         return str(value)
     return f"{value:.{decimals}f}"
