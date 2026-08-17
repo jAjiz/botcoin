@@ -167,7 +167,7 @@ in tasks 1–5 was not additive; find it before going on.
 
 ## Task 6 — `find_order_by_cl_ord_id`
 
-- [ ] **Tests** (`tests/unit/exchange/test_kraken.py`, monkeypatching
+- [x] **Tests** (`tests/unit/exchange/test_kraken.py`, monkeypatching
   `kraken.api.query_private` and recording which methods were called):
   - hit in `ClosedOrders` → txid + state returned, and **`OpenOrders` is never
     called**;
@@ -177,7 +177,7 @@ in tasks 1–5 was not additive; find it before going on.
   - `ClosedOrders` empty + `OpenOrders` errors → `None` — **the load-bearing
     one**: an error read as absence is the path to a double sell;
   - a returned order whose `cl_ord_id` does not match is **not** adopted.
-- [ ] **Implement** in `exchange/kraken.py`: `OrderLookup`, the lookup, and
+- [x] **Implement** in `exchange/kraken.py`: `OrderLookup`, the lookup, and
   extract the raw-order → `OrderState` construction out of `get_order_state` into
   a shared helper so both paths build it identically.
 

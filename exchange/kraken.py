@@ -127,6 +127,18 @@ class OrderState:
     vol: float = 0.0
 
 
+def _build_order_state(order: dict[str, Any]) -> OrderState:
+    """Build an ``OrderState`` from a raw Kraken order object; shared by every
+    lookup path so they interpret the same fields identically."""
+    price = order.get("price")
+    return OrderState(
+        status=map_order_status(order.get("status")),
+        avg_price=float(price) if price is not None else None,
+        vol_exec=float(order.get("vol_exec") or 0.0),
+        vol=float(order.get("vol") or 0.0),
+    )
+
+
 def get_order_state(order_id: str) -> OrderState | None:
     """An order's status, average fill price and volumes; ``None`` only when the API call failed."""
     result = _safe_call(
@@ -138,13 +150,42 @@ def get_order_state(order_id: str) -> OrderState | None:
     order = result.get(order_id)
     if not order:
         return OrderState(status=OrderStatus.NOT_FOUND, avg_price=None, vol_exec=0.0)
-    price = order.get("price")
-    return OrderState(
-        status=map_order_status(order.get("status")),
-        avg_price=float(price) if price is not None else None,
-        vol_exec=float(order.get("vol_exec") or 0.0),
-        vol=float(order.get("vol") or 0.0),
-    )
+    return _build_order_state(order)
+
+
+@dataclass(frozen=True)
+class OrderLookup:
+    txid: str | None  # None when neither endpoint knows the id
+    state: OrderState | None  # the matched order, ready for the dispatch
+
+
+def find_order_by_cl_ord_id(cl_ord_id: str) -> OrderLookup | None:
+    """Resolve a client order id to Kraken's txid and the order's state.
+
+    ``None`` when the lookup itself failed — the caller must treat that as
+    'unknown', never as 'absent'. ``OrderLookup(txid=None)`` only when BOTH
+    endpoints answered and neither contained the id.
+
+    ``ClosedOrders`` is tried first (the resolver runs the tick after a lost
+    response, on a limit placed at the market price, which most often has
+    already filled), then ``OpenOrders``. No ``start``/``end`` bound is passed
+    to ``ClosedOrders``: any bound computed from our clock could exclude the
+    very order being resolved, and the resolver always runs while the order is
+    among the newest, so the default page is sufficient.
+    """
+    for method, result_key in (("ClosedOrders", "closed"), ("OpenOrders", "open")):
+        result = _safe_call(
+            f"{method} lookup",
+            lambda m=method: api.query_private(m, {"cl_ord_id": cl_ord_id}, timeout=KRAKEN_HTTP_TIMEOUT),
+        )
+        if result is None:
+            return None
+        for txid, order in result.get(result_key, {}).items():
+            # Verified, not assumed: if Kraken ever ignored the filter, this is
+            # the difference between failing loudly and adopting a stranger's txid.
+            if order.get("cl_ord_id") == cl_ord_id:
+                return OrderLookup(txid=txid, state=_build_order_state(order))
+    return OrderLookup(txid=None, state=None)
 
 
 def cancel_order(order_id: str) -> bool:
