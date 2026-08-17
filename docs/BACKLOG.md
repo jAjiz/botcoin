@@ -2,8 +2,7 @@
 
 The working backlog of features for BoTCoin. Each entry is independent and
 self-contained — there is no fixed delivery order. Cards are grouped by status
-and kept brief: the full design and implementation steps live in the linked spec
-and plan.
+and kept brief: the design and the reasoning behind it live in the linked spec.
 
 **Status legend:** ✅ Shipped · 📋 Planned · 💤 Deferred
 
@@ -23,7 +22,6 @@ streak of consecutive failed sessions and once again on recovery — one message
 per episode, not per failed tick.
 
 - Spec: [`specs/session-failure-alerts-design.md`](specs/session-failure-alerts-design.md)
-- Plan: [`plans/session-failure-alerts-plan.md`](plans/session-failure-alerts-plan.md)
 
 ### Dynamic Pair Configuration
 
@@ -34,7 +32,6 @@ effect on the next session without a restart. Shipped with a cleanup collapsing
 `k_act`/`min_margin` from per-side to a single value per pair.
 
 - Spec: [`specs/dynamic-pair-config-design.md`](specs/dynamic-pair-config-design.md)
-- Plan: [`plans/dynamic-pair-config-plan.md`](plans/dynamic-pair-config-plan.md)
 
 ### Code-Review Hardening
 
@@ -42,11 +39,10 @@ Fixes for the defects found in the 2026-07-06 full code review, in three phases:
 the close-lifecycle failure modes that left the bot inoperative without an alert
 (1), process-boundary and secret-scoping hardening (2), and the cleanups — engine
 dedup, the `core/db/` split, ISO date validation (3). No strategy changes — the
-trailing stop remains the only exit. What the review raised and we parked is in
-the Deferred card below.
+trailing stop remains the only exit. What the review parked is now covered by the
+Closing State Machine card.
 
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
-- Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
 
 ### Stop-Latched Close
 
