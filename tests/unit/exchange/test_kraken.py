@@ -524,6 +524,34 @@ def test_place_limit_order_returns_none_on_api_error(monkeypatch) -> None:
     assert result is None
 
 
+def test_place_limit_order_includes_cl_ord_id_when_given(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None, timeout=None):
+        captured["data"] = data
+        return {"error": [], "result": {"txid": ["ORDER456"]}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    kraken.place_limit_order("XBTEUR", "buy", 80000.0, 0.001, cl_ord_id="deadbeef")
+
+    assert captured["data"]["cl_ord_id"] == "deadbeef"
+
+
+def test_place_limit_order_omits_cl_ord_id_key_when_not_given(monkeypatch) -> None:
+    captured: dict = {}
+
+    def _mock(method, data=None, timeout=None):
+        captured["data"] = data
+        return {"error": [], "result": {"txid": ["ORDER456"]}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    kraken.place_limit_order("XBTEUR", "buy", 80000.0, 0.001)
+
+    assert "cl_ord_id" not in captured["data"]
+
+
 # ============================================================================
 # OHLC data
 # ============================================================================

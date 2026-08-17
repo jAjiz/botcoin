@@ -185,23 +185,22 @@ def _format_amount(value: float, decimals: int | None) -> str:
     return f"{value:.{decimals}f}"
 
 
-def place_limit_order(pair: str, side: str, price: float, volume: float) -> str | None:
+def place_limit_order(pair: str, side: str, price: float, volume: float, cl_ord_id: str | None = None) -> str | None:
     meta = config.PAIRS.get(pair, {})
     price_str = _format_amount(price, meta.get("pair_decimals"))
     volume_str = _format_amount(volume, meta.get("lot_decimals"))
+    payload = {
+        "pair": pair,
+        "type": side,
+        "ordertype": "limit",
+        "price": price_str,
+        "volume": volume_str,
+    }
+    if cl_ord_id is not None:
+        payload["cl_ord_id"] = cl_ord_id
     result = _safe_call(
         f"{side.upper()} limit order",
-        lambda: api.query_private(
-            "AddOrder",
-            {
-                "pair": pair,
-                "type": side,
-                "ordertype": "limit",
-                "price": price_str,
-                "volume": volume_str,
-            },
-            timeout=KRAKEN_HTTP_TIMEOUT,
-        ),
+        lambda: api.query_private("AddOrder", payload, timeout=KRAKEN_HTTP_TIMEOUT),
     )
     if result is None:
         return None
