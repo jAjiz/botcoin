@@ -164,6 +164,9 @@ happens.
 
 ### 4. Failure reporting: `failed_pairs`, not a per-tick message
 
+> **Superseded by §9.** The move away from a per-tick message stands; routing it
+> through the *session* failure streak does not.
+
 `close_position`'s placement error drops `to_telegram=True` and becomes a plain
 `logging.error`; `manage_closing_order` returns `False` and the scheduler appends
 the pair to `failed_pairs`.
@@ -274,6 +277,96 @@ This spec makes that one smaller, and it must be revised when it lands:
 
 `closed_positions` is **not** extended; see *Non-goals*.
 
+### 9. Alerting: three independent signals, no error detail
+
+Supersedes §4. Dropping the per-tick message was right; routing pair failures
+into the *session* failure streak was not.
+
+**What breaks in the §4 model.** It conflates three things:
+
+- **A pair failure marks the whole session `failed`.** The per-pair `try/except`
+  exists precisely so one pair does not stop the others — the session did
+  complete its work for every other pair. With two pairs configured, one flaky
+  pair paints half the Grafana Sessions row red.
+- **The alert carries `failure_reason`, captured on the single tick the streak
+  crossed the threshold.** If the cause changes while the streak continues — one
+  pair error resolves and a different one starts — the operator keeps reading the
+  first, now-stale reason and is never told about the second.
+- **The streak's flag is cleared only by a `completed` session.** The latch
+  introduces a class of *permanent* pair failure (API permission revoked, pair
+  suspended at Kraken, an order rejected at a size `refresh_position` never drops
+  below `MIN_VALUE`), so every session can be `failed` forever: one alert, then
+  silence, and no later failure of any *other* pair ever alerts again.
+
+**Status describes the session, not its pairs:**
+
+`running` | `completed` | `pair_error` | `failed` | `paused`
+
+`failed` means the session could not do its work — balance or prices
+unavailable, an unhandled exception, a session row that could not be written.
+`pair_error` means the session completed and one or more pairs were skipped.
+`pair_error` is 10 characters and `sessions.status` is `String(16)` with no check
+constraint, so the new value needs no migration.
+
+**Three independent edge-triggered signals**, each with its own streak in
+`core/runtime.py`, all reusing `SESSION_FAILURE_ALERT_THRESHOLD`:
+
+| Signal | Counts | Resets on |
+| --- | --- | --- |
+| Session failure | consecutive `failed` sessions | a session that is not `failed` |
+| Pair failure (**per pair**) | consecutive sessions in which *that pair* failed | a session in which that pair succeeded |
+| Overrun | consecutive completed sessions with `elapsed >= SLEEPING_INTERVAL` | a completed session under the interval |
+
+Keeping the threshold rather than alerting on the first occurrence is
+deliberate: a single failed tick usually heals on the next one, and at threshold
+1 every transient Kraken hiccup costs two messages — the alert and its recovery
+— for a non-event.
+
+Per-pair keying is what fixes the third bullet above: a permanently broken pair
+holds only its own flag, so a new failure on a different pair still alerts.
+
+A `failed` session leaves every pair streak untouched — neither incremented nor
+reset. No pair ran, so there is nothing to record about any of them.
+
+**Overrun stays out of the status enum.** It is orthogonal to the outcome: a
+session can complete on time, complete late, complete with pair errors on time,
+or complete with pair errors late. Collapsing both axes into one column lets one
+signal mask the other — and the July 2026 CPU-starvation incident produced
+exactly that combination, sessions overrunning *while* pairs began to fail.
+Overrun also needs no column: it is derivable from `ended_at - started_at`.
+
+**No error detail over Telegram.** A message says that something started failing
+or recovered, and never why — the reason can change under a streak that never
+resets, and a stale reason misleads worse than no reason. `failure_reason` and
+`log_messages` keep the detail on the session row, and the message points there.
+Pair messages *do* name the pair: that is a fact about the present, not a
+snapshot, and without it the operator cannot tell which pair recovered.
+
+Recovery is announced per signal and, for pairs, per pair — a pair that starts
+succeeding again is announced even while another keeps failing and the session
+stays `pair_error`.
+
+**What this removes from `positions_manager`.** Four failure-detail messages
+lose `to_telegram`: the unusable-fill-price clear in `is_closing_complete`, the
+unconfirmed post-cancel volume and the failed re-placement in
+`reprice_closing_order`, and the placement failure in `close_position`.
+
+That last one lets **`close_position`'s `first_attempt` parameter disappear**,
+but not on its own: the flag has a second use, suppressing the `🏁 Placed
+closing order` message on the breach tick so it does not duplicate the `⛔ Stop
+price … hitted: placing LIMIT …` line that `tick_position` emits just before.
+Resolve it by splitting the two responsibilities instead of gating them: the
+breach line drops its `placing LIMIT …` tail and announces only the decision,
+and `close_position` announces the placement unconditionally. The breach tick
+then sends two messages that say different things — the stop fired, and an order
+now rests at Kraken — which is strictly better than today, where the single
+message claims a placement it never confirms.
+
+The trading lifecycle keeps every message it has: position created, position
+dropped, activation reached, stop hit, closing order placed, repriced, partial
+fill during the cancel window, and the close with its PnL. Those are events, not
+failure detail.
+
 ## Edge cases
 
 | Case | Behaviour |
@@ -343,8 +436,9 @@ Unit tests only, module-level monkeypatching, in the existing style.
 - **A latched position that can never be placed is frozen** — no resting exit
   and no trailing stop, until `refresh_position` drops it or an operator
   intervenes. This is deliberate and is the same trade the idempotency spec
-  makes for a stuck lookup: freezing is safer than un-deciding an exit. It is
-  visible through the pair-failure alert from the first tick.
+  makes for a stuck lookup: freezing is safer than un-deciding an exit. It
+  surfaces through the per-pair failure alert once the streak reaches the
+  threshold (§9), and the breach itself is announced on the tick it happens.
 - **A hard process kill between the `setdefault` and the tick's `finally`** loses
   the latch, exactly as it loses `closing_order_id` today. Unchanged exposure.
 - **The exit price can be worse than the un-latched behaviour** in the specific
@@ -368,3 +462,14 @@ Unit tests only, module-level monkeypatching, in the existing style.
 - Update the `reprice_closing_order` and `is_closing_complete` lifecycle text:
   a terminal order with a remainder no longer "resumes position management", it
   re-places the exit.
+- **A session's status describes the session, not its pairs** (§9). Why
+  `pair_error` is not `failed` (the per-pair guard exists so the session still
+  completes), why the pair streak is keyed per pair (a permanently broken pair
+  must not swallow a new failure elsewhere), and why overrun stays out of the
+  enum (orthogonal axis; collapsing them lets one signal mask the other).
+- **Telegram alerts carry no failure reason.** One message when a signal starts
+  failing, one when it recovers, and nothing about why: the cause can change
+  under a streak that never resets, so a reason captured at threshold-crossing
+  goes stale and misleads worse than no reason at all. The detail stays in
+  `failure_reason` and `log_messages`. This replaces the existing
+  session-failure design-choice bullet, which describes the superseded model.
