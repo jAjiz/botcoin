@@ -304,8 +304,7 @@ def test_close_position_leaves_position_untouched_when_place_order_fails(monkeyp
 
     assert positions_manager.close_position("XBTEUR", pos, prices) is False
     assert "closing_order_id" not in pos
-    # The request id and estimated price were written before the call, so a
-    # lost response still leaves the attempt recorded; only the id says it was owed.
+    # The request id and estimated price were written before the call, so a lost response still records the attempt.
     assert pos["closing_request_id"] is not None
     assert pos["closing_price"] == 90.0
 
@@ -1308,7 +1307,10 @@ def test_manage_close_position_adopts_a_recovered_order_and_drives_it_same_tick(
 
     assert outcome is positions_manager.ClosingState.FILLED
     assert pos["closing_order_id"] == "RECOVERED1"
-    assert any("RECOVERED1" in msg and to_telegram for msg, to_telegram in sent)
+    # Logged for the session narrative only: the recovery is not an operator alert.
+    assert [(msg, to_telegram) for msg, to_telegram in sent if "RECOVERED1" in msg] == [
+        ("[XBTEUR] Recovered closing order RECOVERED1 from its client id.", False)
+    ]
 
 
 def test_manage_close_position_adopts_a_recovered_order_that_is_still_open(monkeypatch) -> None:

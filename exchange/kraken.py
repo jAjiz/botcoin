@@ -128,8 +128,7 @@ class OrderState:
 
 
 def _build_order_state(order: dict[str, Any]) -> OrderState:
-    """Build an ``OrderState`` from a raw Kraken order object; shared by every
-    lookup path so they interpret the same fields identically."""
+    """Build an ``OrderState`` from a raw Kraken order, so every lookup path reads it identically."""
     price = order.get("price")
     return OrderState(
         status=map_order_status(order.get("status")),
@@ -160,18 +159,9 @@ class OrderLookup:
 
 
 def find_order_by_cl_ord_id(cl_ord_id: str) -> OrderLookup | None:
-    """Resolve a client order id to Kraken's txid and the order's state.
+    """Resolve a client order id to Kraken's txid and state; ``None`` is 'the lookup failed', ``txid=None`` is 'both endpoints answered without it'.
 
-    ``None`` when the lookup itself failed — the caller must treat that as
-    'unknown', never as 'absent'. ``OrderLookup(txid=None)`` only when BOTH
-    endpoints answered and neither contained the id.
-
-    ``ClosedOrders`` is tried first (the resolver runs the tick after a lost
-    response, on a limit placed at the market price, which most often has
-    already filled), then ``OpenOrders``. No ``start``/``end`` bound is passed
-    to ``ClosedOrders``: any bound computed from our clock could exclude the
-    very order being resolved, and the resolver always runs while the order is
-    among the newest, so the default page is sufficient.
+    ``ClosedOrders`` first (a limit at the market price has usually filled), unbounded: any bound from our clock could exclude the order being resolved.
     """
     for method, result_key in (("ClosedOrders", "closed"), ("OpenOrders", "open")):
         result = _safe_call(
@@ -180,17 +170,14 @@ def find_order_by_cl_ord_id(cl_ord_id: str) -> OrderLookup | None:
         )
         if result is None:
             return None
-        # Verified, not assumed: if Kraken ever ignored the filter, this is
-        # the difference between failing loudly and adopting a stranger's txid.
+        # Verified, not assumed: if Kraken ever ignored the filter, this avoids adopting a stranger's txid.
         matches = [
             (txid, order) for txid, order in result.get(result_key, {}).items() if order.get("cl_ord_id") == cl_ord_id
         ]
         if not matches:
             continue
         if len(matches) > 1:
-            # Impossible with per-attempt ids, so it means an assumption broke. Prefer a
-            # resting order: adopting a terminal one while another is still live would
-            # finalize the trade and orphan the resting exit.
+            # Impossible with per-attempt ids; prefer a resting order over finalizing and orphaning a live exit.
             logging.error(
                 f"{method} returned {len(matches)} orders for cl_ord_id {cl_ord_id} "
                 f"({', '.join(txid for txid, _ in matches)}); adopting an open one if there is one."

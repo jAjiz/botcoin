@@ -15,8 +15,7 @@ from exchange.kraken import (
 from trading.inventory_manager import calculate_position
 from trading.parameters_manager import get_k_stop
 
-# Never acted on: an order we cannot see is not known to be dead, so re-placing could
-# leave two live exits. The pair is reported unmanaged instead.
+# Never acted on: an order we cannot see is not known to be dead, so re-placing could leave two live exits.
 UNRESOLVABLE_STATUSES = (OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN)
 # Only these give a definitive vol_exec: the order can never trade again.
 TERMINAL_STATUSES = (OrderStatus.CLOSED, OrderStatus.CANCELED)
@@ -163,12 +162,9 @@ def _clear_closing_fields(pos: dict[str, Any]) -> None:
 
 
 def finalize_close(pos: dict[str, Any], state: OrderState) -> bool:
-    """Interpret an order already known to be terminal: is there a usable fill?
-    Writes the real ``closing_price`` and ``pnl_percent`` when there is. Makes no
-    API call — the caller already fetched ``state``."""
+    """Interpret an order already known to be terminal, writing the real ``closing_price``/``pnl_percent`` on a usable fill."""
     closing_order = pos.get("closing_order_id")
-    # A cancel can race a complete fill, which is a finished trade. Measured against the
-    # order's own `vol`, never pos["volume"], which can drift from what rests at Kraken.
+    # A cancel can race a complete fill. Measured against the order's own `vol`, never the drifting pos["volume"].
     fully_executed = state.vol > 0 and state.vol_exec >= state.vol
     if (state.status != OrderStatus.CLOSED and not fully_executed) or not state.avg_price or state.avg_price <= 0:
         return False
@@ -192,9 +188,7 @@ def finalize_close(pos: dict[str, Any], state: OrderState) -> bool:
 def _drive_closing_order(
     pair: str, pos: dict[str, Any], state: OrderState | None, last_prices: dict[str, float]
 ) -> ClosingState | None:
-    """The single dispatch on a closing order's status. ``None`` means the order
-    is gone and the fields are cleared — the caller falls through to re-place on
-    this same tick."""
+    """The single dispatch on a closing order's status; ``None`` means it is gone and cleared, so re-place this tick."""
     if state is None or state.status is OrderStatus.PENDING:
         return ClosingState.PENDING  # could not ask, or not on the book yet
     if state.status in UNRESOLVABLE_STATUSES:
@@ -285,10 +279,7 @@ def tick_position(
 
 
 def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, last_prices: dict[str, float]) -> bool:
-    """Chase the fill of an open closing order; ``False`` only when it is off the book unreplaced.
-
-    Receives an order already known to be ``OPEN`` — the caller (``_drive_closing_order``)
-    has already handled ``None``, the unresolvable statuses, and anything not ``OPEN``."""
+    """Chase the fill of an order already known to be ``OPEN``; ``False`` only when it is off the book unreplaced."""
     order_id = pos["closing_order_id"]
     if state.vol_exec > 0:
         return True  # executing at its price; don't fragment the fill
@@ -298,9 +289,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
     if not cancel_order(order_id):
         return True  # cancel unconfirmed: the order likely still rests, or filled
 
-    # A fill can land during the cancel round trip, so re-query for the definitive vol_exec
-    # (only a terminal status gives one) and size the replacement at the remainder; the full
-    # volume would over-sell. Bailing is safe: nothing placed, so never two live exits.
+    # A fill can land during the cancel round trip: only a terminal status gives the definitive vol_exec to size from.
     post_cancel_state = get_order_state(order_id)
     if post_cancel_state is None or post_cancel_state.status not in TERMINAL_STATUSES:
         status = post_cancel_state.status if post_cancel_state else "unavailable"
@@ -311,10 +300,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
         return False  # confirmed cancel, no replacement: the pair is unmanaged
 
     side = pos["side"]
-    # Sized from the order's own numbers, never pos["volume"]: place_limit_order rounds to
-    # lot_decimals before sending, so the two can drift by up to one lot tick — sizing from
-    # pos["volume"] turned a fully executed order into an unplaceable dust remainder. Also
-    # fails closed when Kraken omits `vol` (reads 0.0): remaining goes negative, nothing placed.
+    # From the order's own numbers, never pos["volume"] (a lot tick apart after rounding); fails closed when `vol` is 0.0.
     remaining = post_cancel_state.vol - post_cancel_state.vol_exec
     if remaining <= 0:
         logging.info(
@@ -331,10 +317,11 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
             to_telegram=True,
         )
 
-    # Written before the call, same as close_position: if the response is lost but the
-    # order landed, the persisted state must already describe it. closing_order_id is
-    # dropped now (not kept) — the canceled txid carries no more information, and keeping
-    # it would hide a possibly-live replacement in the wrong sub-state (see manage_close_position).
+    # Written before the call (a lost response must still describe the attempt); the canceled txid is dropped, not kept.
+    logging.info(
+        f"[{pair}] 🔁 Repricing closing {side.upper()} order to {round_price(pair, current_price):,}€",
+        to_telegram=True,
+    )
     cl_ord_id = new_cl_ord_id()
     pos.update({"volume": remaining, "closing_price": current_price, "closing_request_id": cl_ord_id})
     pos.pop("closing_order_id", None)
@@ -343,10 +330,6 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
         logging.error(f"[{pair}] Closing order replacement not confirmed after cancel; the next tick will resolve it.")
         return False  # unconfirmed: manage_close_position's unconfirmed sub-state resolves it
     pos["closing_order_id"] = new_order
-    logging.info(
-        f"[{pair}] 🔁 Repriced closing {side.upper()} order to {round_price(pair, current_price):,}€",
-        to_telegram=True,
-    )
     return True
 
 
@@ -370,14 +353,13 @@ def manage_close_position(
             return ClosingState.UNMANAGED  # could not ask; decide nothing
         if found.txid:
             pos["closing_order_id"] = found.txid  # it landed after all
-            logging.warning(f"[{pair}] Recovered closing order {found.txid} from its client id.", to_telegram=True)
+            logging.warning(f"[{pair}] Recovered closing order {found.txid} from its client id.")
             if (outcome := _drive_closing_order(pair, pos, found.state, last_prices)) is not None:
                 return outcome
         else:
             _clear_closing_fields(pos)  # it never landed; stop_at survives
 
-    # Nothing outstanding — either from the start, or just cleared above.
-    # A latched position never reaches tick_position, and a stale volume may be why the last attempt failed.
+    # Nothing outstanding: a latched position never reaches tick_position, and a stale volume may be why the last attempt failed.
     if not refresh_position(pair, pos, balance, last_prices, trailing_state):
         return ClosingState.PENDING  # dropped: a resolved pair, not a failure
 

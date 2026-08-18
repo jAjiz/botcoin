@@ -1,8 +1,6 @@
 """Persist the closing request id on trailing state.
 
-Set before every closing-order placement attempt, alongside closing_order_id.
-Lets a lost AddOrder response be resolved by client id instead of silently
-becoming a second exit.
+Set before every placement attempt, so a lost AddOrder response can be resolved by client id.
 
 Revision ID: 20260817_01
 Revises: 20260812_01
