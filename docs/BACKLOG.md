@@ -2,8 +2,8 @@
 
 The working backlog of features for BoTCoin. Each entry is independent and
 self-contained — there is no fixed delivery order. Cards are grouped by status
-and kept brief: the full design and implementation steps live in the linked spec
-and plan.
+and kept brief: the design and the reasoning behind it live in the linked spec.
+A card being implemented also links a plan, which is deleted once it ships.
 
 **Status legend:** ✅ Shipped · 📋 Planned · 💤 Deferred
 
@@ -23,7 +23,6 @@ streak of consecutive failed sessions and once again on recovery — one message
 per episode, not per failed tick.
 
 - Spec: [`specs/session-failure-alerts-design.md`](specs/session-failure-alerts-design.md)
-- Plan: [`plans/session-failure-alerts-plan.md`](plans/session-failure-alerts-plan.md)
 
 ### Dynamic Pair Configuration
 
@@ -34,7 +33,6 @@ effect on the next session without a restart. Shipped with a cleanup collapsing
 `k_act`/`min_margin` from per-side to a single value per pair.
 
 - Spec: [`specs/dynamic-pair-config-design.md`](specs/dynamic-pair-config-design.md)
-- Plan: [`plans/dynamic-pair-config-plan.md`](plans/dynamic-pair-config-plan.md)
 
 ### Code-Review Hardening
 
@@ -42,11 +40,10 @@ Fixes for the defects found in the 2026-07-06 full code review, in three phases:
 the close-lifecycle failure modes that left the bot inoperative without an alert
 (1), process-boundary and secret-scoping hardening (2), and the cleanups — engine
 dedup, the `core/db/` split, ISO date validation (3). No strategy changes — the
-trailing stop remains the only exit. What the review raised and we parked is in
-the Deferred card below.
+trailing stop remains the only exit. What the review parked is now covered by the
+Closing State Machine card.
 
 - Spec: [`specs/code-review-hardening-design.md`](specs/code-review-hardening-design.md)
-- Plan: [`plans/code-review-hardening-plan.md`](plans/code-review-hardening-plan.md)
 
 ### Stop-Latched Close
 
@@ -57,6 +54,19 @@ the placement attempt, `is_open` is `not stop_at`, and `manage_close_position`
 owns everything between the breach and the fill.
 
 - Spec: [`specs/stop-latched-close-design.md`](specs/stop-latched-close-design.md)
+
+### Closing State Machine & Idempotent Placement
+
+A lost `AddOrder` response used to be indistinguishable from a rejection, so the
+next tick could place a second exit for the same holding. Every order now carries
+a client-chosen `cl_ord_id`, and a closing position routes on whether its
+placement was *confirmed* — which decides whether "Kraken doesn't have it"
+licenses a re-place or means the pair is unmanaged. Landed together with a
+restructure of the closing path into one selector with a single `OrderStatus`
+dispatch, which also dropped the reprice tick from three `get_order_state` calls
+to two.
+
+- Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
 
 ---
 
@@ -94,6 +104,8 @@ Review Follow-ups.
 
 - Spec: _to be written_
 
+---
+
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates
@@ -114,38 +126,6 @@ volatility regime rather than the entire price history.
 stable signal — more than 60 days of OHLC data are required.
 
 - Spec: _to be written_
-
----
-
-## 💤 Deferred
-
-### Deferred out of Code-Review Hardening
-
-Points raised during the code review and consciously parked — recorded here so
-they are not mistaken for work the hardening phases closed.
-
-- **`cl_ord_id`-based idempotent order placement.** Orders are identified only
-  by the `txid` Kraken returns, so the bot cannot ask "did *my* order land?"
-  after a lost `AddOrder` response, nor size a replacement against a fill that
-  landed inside the cancel/replace window. Both end with a position size the bot
-  does not know about. Phase 1 (A5) shipped only the narrower guarantee that an
-  id the bot *has* is never lost. Needs a spec: which client-id mechanism
-  (`userref` vs `cl_ord_id`) this account tier and the krakenex path actually
-  support. Sizing replacements from `vol - vol_exec` after a cancel-window fill
-  is done (`reprice_closing_order` re-queries post-cancel); the `AddOrder`-loss
-  half of the idempotency gap remains. With the `stop_at` latch in place the
-  re-place branch retries a placement every tick until one rests, rather than
-  only while the stop is still breached, so that remaining half is reached more
-  often than before. Same risk class, higher exposure.
-- **`get_order_state` is called three times per closing tick** (scheduler, plus
-  the pre-cancel check and the post-cancel re-query inside
-  `reprice_closing_order`). Private Kraken calls *are* rate-limited — a per-tier
-  counter, ~15–20 with a slow decay — and only the public path is throttled
-  in-process by `_wait_rate_limit`. It fits today because each pair's iteration
-  includes a public OHLC call that forces ≥1 s of spacing, so the counter decays
-  between pairs; a throttled call would degrade to `None` via `_safe_call`, and
-  the post-cancel bail leaves the position without a resting exit for one tick.
-  The scheduler's `OrderState` could be passed down to remove one of the three.
 
 ---
 

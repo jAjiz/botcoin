@@ -127,6 +127,17 @@ class OrderState:
     vol: float = 0.0
 
 
+def _build_order_state(order: dict[str, Any]) -> OrderState:
+    """Build an ``OrderState`` from a raw Kraken order, so every lookup path reads it identically."""
+    price = order.get("price")
+    return OrderState(
+        status=map_order_status(order.get("status")),
+        avg_price=float(price) if price is not None else None,
+        vol_exec=float(order.get("vol_exec") or 0.0),
+        vol=float(order.get("vol") or 0.0),
+    )
+
+
 def get_order_state(order_id: str) -> OrderState | None:
     """An order's status, average fill price and volumes; ``None`` only when the API call failed."""
     result = _safe_call(
@@ -138,13 +149,42 @@ def get_order_state(order_id: str) -> OrderState | None:
     order = result.get(order_id)
     if not order:
         return OrderState(status=OrderStatus.NOT_FOUND, avg_price=None, vol_exec=0.0)
-    price = order.get("price")
-    return OrderState(
-        status=map_order_status(order.get("status")),
-        avg_price=float(price) if price is not None else None,
-        vol_exec=float(order.get("vol_exec") or 0.0),
-        vol=float(order.get("vol") or 0.0),
-    )
+    return _build_order_state(order)
+
+
+@dataclass(frozen=True)
+class OrderLookup:
+    txid: str | None  # None when neither endpoint knows the id
+    state: OrderState | None  # the matched order, ready for the dispatch
+
+
+def find_order_by_cl_ord_id(cl_ord_id: str) -> OrderLookup | None:
+    """Resolve a client order id to Kraken's txid and state; ``None`` is 'the lookup failed', ``txid=None`` is 'both endpoints answered without it'.
+
+    ``OpenOrders`` first: the loop returns on the first endpoint that matches, so a resting order only wins over a terminal one carrying the same id if its endpoint is asked first.
+    Neither call is bounded: any bound from our clock could exclude the very order being resolved.
+    """
+    unresolved = False  # only ever latched: an endpoint we could not read is never evidence of absence
+    for method, result_key in (("OpenOrders", "open"), ("ClosedOrders", "closed")):
+        result = _safe_call(
+            f"{method} lookup",
+            lambda m=method: api.query_private(m, {"cl_ord_id": cl_ord_id}, timeout=KRAKEN_HTTP_TIMEOUT),
+        )
+        if result is None:
+            unresolved = True
+            continue
+        orders = result.get(result_key) or {}
+        matches = [(txid, order) for txid, order in orders.items() if order.get("cl_ord_id") == cl_ord_id]
+        if not matches:
+            if orders:  # rows that don't echo the id: "not ours" and "the echo is gone" are indistinguishable
+                logging.error(f"{method} returned {len(orders)} orders for cl_ord_id {cl_ord_id}, none echoing it.")
+                unresolved = True
+            continue
+        if len(matches) > 1:  # impossible with per-attempt ids; the resting endpoint already went first
+            logging.error(f"{method} returned {len(matches)} matches for cl_ord_id {cl_ord_id}; adopting the first.")
+        txid, order = matches[0]
+        return OrderLookup(txid=txid, state=_build_order_state(order))
+    return None if unresolved else OrderLookup(txid=None, state=None)
 
 
 def cancel_order(order_id: str) -> bool:
@@ -185,23 +225,22 @@ def _format_amount(value: float, decimals: int | None) -> str:
     return f"{value:.{decimals}f}"
 
 
-def place_limit_order(pair: str, side: str, price: float, volume: float) -> str | None:
+def place_limit_order(pair: str, side: str, price: float, volume: float, cl_ord_id: str | None = None) -> str | None:
     meta = config.PAIRS.get(pair, {})
     price_str = _format_amount(price, meta.get("pair_decimals"))
     volume_str = _format_amount(volume, meta.get("lot_decimals"))
+    payload = {
+        "pair": pair,
+        "type": side,
+        "ordertype": "limit",
+        "price": price_str,
+        "volume": volume_str,
+    }
+    if cl_ord_id is not None:
+        payload["cl_ord_id"] = cl_ord_id
     result = _safe_call(
         f"{side.upper()} limit order",
-        lambda: api.query_private(
-            "AddOrder",
-            {
-                "pair": pair,
-                "type": side,
-                "ordertype": "limit",
-                "price": price_str,
-                "volume": volume_str,
-            },
-            timeout=KRAKEN_HTTP_TIMEOUT,
-        ),
+        lambda: api.query_private("AddOrder", payload, timeout=KRAKEN_HTTP_TIMEOUT),
     )
     if result is None:
         return None
