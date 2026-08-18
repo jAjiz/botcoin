@@ -104,6 +104,8 @@ Review Follow-ups.
 
 - Spec: _to be written_
 
+---
+
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates
@@ -122,21 +124,6 @@ volatility regime rather than the entire price history.
 
 **Note:** the plateau heuristic needs a meaningful history range to produce a
 stable signal — more than 60 days of OHLC data are required.
-
-- Spec: _to be written_
-
----
-
-## 💤 Deferred
-
-### Orphan Order Sweep
-
-A hard process kill *between* the `AddOrder` send and the tick's `finally` loses
-the client id before it is persisted, so that order is unrecoverable by id. An
-unfiltered `OpenOrders` sweep, matched against the ids the bot knows, would catch
-it. Deliberately left out of the closing state machine spec: different mechanism,
-different trigger, and its lookup cannot reuse the "always among the newest"
-argument that bounds the resolver's, so it needs its own paging strategy.
 
 - Spec: _to be written_
 
