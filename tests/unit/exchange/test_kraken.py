@@ -295,62 +295,18 @@ def test_get_order_state_passes_http_timeout(monkeypatch) -> None:
 # ============================================================================
 
 
-def test_find_order_by_cl_ord_id_hits_in_closed_orders_without_calling_open_orders(monkeypatch) -> None:
+def _order(status: str, cl_ord_id: str = "abc123", price: str = "0.0") -> dict:
+    return {"status": status, "price": price, "vol": "0.5", "vol_exec": "0.0", "cl_ord_id": cl_ord_id}
+
+
+def test_find_order_by_cl_ord_id_resolves_a_resting_order_without_calling_closed_orders(monkeypatch) -> None:
     calls: list[str] = []
 
     def _mock(method, data=None, timeout=None):
         calls.append(method)
-        if method == "ClosedOrders":
-            return {
-                "error": [],
-                "result": {
-                    "closed": {
-                        "TXID1": {
-                            "status": "closed",
-                            "price": "100.0",
-                            "vol": "0.5",
-                            "vol_exec": "0.5",
-                            "cl_ord_id": "abc123",
-                        }
-                    }
-                },
-            }
-        pytest.fail("OpenOrders must not be called when ClosedOrders already has a hit")
-
-    monkeypatch.setattr(kraken.api, "query_private", _mock)
-
-    result = kraken.find_order_by_cl_ord_id("abc123")
-
-    assert result == kraken.OrderLookup(
-        txid="TXID1",
-        state=kraken.OrderState(status=kraken.OrderStatus.CLOSED, avg_price=100.0, vol=0.5, vol_exec=0.5),
-    )
-    assert calls == ["ClosedOrders"]
-
-
-def test_find_order_by_cl_ord_id_falls_back_to_open_orders_on_miss(monkeypatch) -> None:
-    calls: list[str] = []
-
-    def _mock(method, data=None, timeout=None):
-        calls.append(method)
-        if method == "ClosedOrders":
-            return {"error": [], "result": {"closed": {}}}
         if method == "OpenOrders":
-            return {
-                "error": [],
-                "result": {
-                    "open": {
-                        "TXID2": {
-                            "status": "open",
-                            "price": "0.0",
-                            "vol": "0.5",
-                            "vol_exec": "0.0",
-                            "cl_ord_id": "abc123",
-                        }
-                    }
-                },
-            }
-        pytest.fail(f"unexpected method {method}")
+            return {"error": [], "result": {"open": {"TXID2": _order("open")}}}
+        pytest.fail("ClosedOrders must not be called once the order is found resting")
 
     monkeypatch.setattr(kraken.api, "query_private", _mock)
 
@@ -360,7 +316,48 @@ def test_find_order_by_cl_ord_id_falls_back_to_open_orders_on_miss(monkeypatch) 
         txid="TXID2",
         state=kraken.OrderState(status=kraken.OrderStatus.OPEN, avg_price=0.0, vol=0.5, vol_exec=0.0),
     )
-    assert calls == ["ClosedOrders", "OpenOrders"]
+    assert calls == ["OpenOrders"]
+
+
+def test_find_order_by_cl_ord_id_falls_back_to_closed_orders_on_miss(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def _mock(method, data=None, timeout=None):
+        calls.append(method)
+        if method == "OpenOrders":
+            return {"error": [], "result": {"open": {}}}
+        if method == "ClosedOrders":
+            closed = {"TXID1": {**_order("closed", price="100.0"), "vol_exec": "0.5"}}
+            return {"error": [], "result": {"closed": closed}}
+        pytest.fail(f"unexpected method {method}")
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    result = kraken.find_order_by_cl_ord_id("abc123")
+
+    assert result == kraken.OrderLookup(
+        txid="TXID1",
+        state=kraken.OrderState(status=kraken.OrderStatus.CLOSED, avg_price=100.0, vol=0.5, vol_exec=0.5),
+    )
+    assert calls == ["OpenOrders", "ClosedOrders"]
+
+
+def test_find_order_by_cl_ord_id_prefers_a_resting_order_over_a_dead_one_carrying_the_same_id(monkeypatch) -> None:
+    """Unreachable with per-attempt ids, so it means an assumption broke. Adopting the
+    terminal one would finalize the trade and orphan the exit that is still resting —
+    which is why the resting endpoint is the one asked first."""
+
+    def _mock(method, data=None, timeout=None):
+        if method == "OpenOrders":
+            return {"error": [], "result": {"open": {"TXID_LIVE": _order("open")}}}
+        return {"error": [], "result": {"closed": {"TXID_DEAD": _order("canceled")}}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    result = kraken.find_order_by_cl_ord_id("abc123")
+
+    assert result.txid == "TXID_LIVE"
+    assert result.state.status is kraken.OrderStatus.OPEN
 
 
 def test_find_order_by_cl_ord_id_returns_absent_when_missing_from_both(monkeypatch) -> None:
@@ -375,22 +372,37 @@ def test_find_order_by_cl_ord_id_returns_absent_when_missing_from_both(monkeypat
     assert result == kraken.OrderLookup(txid=None, state=None)
 
 
-def test_find_order_by_cl_ord_id_returns_none_when_closed_orders_errors(monkeypatch) -> None:
+def test_find_order_by_cl_ord_id_returns_none_when_open_orders_errors_and_closed_is_empty(monkeypatch) -> None:
     def _mock(method, data=None, timeout=None):
-        return {"error": ["EGeneral:Invalid"], "result": {}}
+        if method == "OpenOrders":
+            return {"error": ["EGeneral:Invalid"], "result": {}}
+        return {"error": [], "result": {"closed": {}}}
 
     monkeypatch.setattr(kraken.api, "query_private", _mock)
 
     assert kraken.find_order_by_cl_ord_id("abc123") is None
 
 
-def test_find_order_by_cl_ord_id_returns_none_when_open_orders_errors_after_empty_closed(monkeypatch) -> None:
+def test_find_order_by_cl_ord_id_still_asks_closed_orders_when_open_orders_errors(monkeypatch) -> None:
+    """One endpoint failing is not a reason to give up on the other: the answer may be there."""
+
+    def _mock(method, data=None, timeout=None):
+        if method == "OpenOrders":
+            return {"error": ["EGeneral:Invalid"], "result": {}}
+        return {"error": [], "result": {"closed": {"TXID1": {**_order("closed", price="100.0"), "vol_exec": "0.5"}}}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+
+    assert kraken.find_order_by_cl_ord_id("abc123").txid == "TXID1"
+
+
+def test_find_order_by_cl_ord_id_returns_none_when_closed_orders_errors_after_empty_open(monkeypatch) -> None:
     """The load-bearing case: an error must never be read as 'absent' — that is
     the path to a double sell."""
 
     def _mock(method, data=None, timeout=None):
-        if method == "ClosedOrders":
-            return {"error": [], "result": {"closed": {}}}
+        if method == "OpenOrders":
+            return {"error": [], "result": {"open": {}}}
         return {"error": ["EGeneral:Invalid"], "result": {}}
 
     monkeypatch.setattr(kraken.api, "query_private", _mock)
@@ -398,63 +410,47 @@ def test_find_order_by_cl_ord_id_returns_none_when_open_orders_errors_after_empt
     assert kraken.find_order_by_cl_ord_id("abc123") is None
 
 
-def test_find_order_by_cl_ord_id_does_not_adopt_a_mismatched_cl_ord_id(monkeypatch) -> None:
-    """If Kraken ever ignored the filter, the response could carry every order —
-    adopting one without checking would grab a stranger's txid."""
+def test_find_order_by_cl_ord_id_returns_none_when_rows_come_back_without_echoing_the_id(monkeypatch) -> None:
+    """Two things at once: a row carrying someone else's id is never adopted, and rows
+    that do not echo the filtered id are not evidence of absence either — we cannot tell
+    'not ours' from 'the echo is gone', and absent is the answer that clears the fields
+    and re-places. An unreadable answer must freeze instead."""
 
     def _mock(method, data=None, timeout=None):
-        if method == "ClosedOrders":
-            return {
-                "error": [],
-                "result": {
-                    "closed": {
-                        "TXID1": {
-                            "status": "closed",
-                            "price": "100.0",
-                            "vol": "0.5",
-                            "vol_exec": "0.5",
-                            "cl_ord_id": "someone-elses-id",
-                        }
-                    }
-                },
-            }
-        return {"error": [], "result": {"open": {}}}
+        key = "closed" if method == "ClosedOrders" else "open"
+        return {"error": [], "result": {key: {"TXID1": _order("closed", cl_ord_id="someone-elses-id")}}}
 
     monkeypatch.setattr(kraken.api, "query_private", _mock)
+    errors: list[str] = []
+    monkeypatch.setattr(kraken.logging, "error", lambda msg: errors.append(msg))
 
-    result = kraken.find_order_by_cl_ord_id("abc123")
+    assert kraken.find_order_by_cl_ord_id("abc123") is None
+    assert errors
 
-    assert result == kraken.OrderLookup(txid=None, state=None)
 
-
-def test_find_order_by_cl_ord_id_prefers_an_open_order_when_several_match(monkeypatch) -> None:
-    """Unreachable with per-attempt ids, so it means an assumption broke. Adopting the
-    terminal one would finalize the trade and orphan the exit that is still resting."""
+def test_find_order_by_cl_ord_id_still_resolves_when_only_the_other_endpoint_echoes_the_id(monkeypatch) -> None:
+    """An unreadable answer from one endpoint must not hide a clean hit on the other."""
 
     def _mock(method, data=None, timeout=None):
-        if method == "ClosedOrders":
-            return {
-                "error": [],
-                "result": {
-                    "closed": {
-                        "TXID_DEAD": {
-                            "status": "canceled",
-                            "price": "0.0",
-                            "vol": "0.5",
-                            "vol_exec": "0.0",
-                            "cl_ord_id": "abc123",
-                        },
-                        "TXID_LIVE": {
-                            "status": "open",
-                            "price": "0.0",
-                            "vol": "0.5",
-                            "vol_exec": "0.0",
-                            "cl_ord_id": "abc123",
-                        },
-                    }
-                },
-            }
-        return {"error": [], "result": {"open": {}}}
+        if method == "OpenOrders":
+            return {"error": [], "result": {"open": {"TXID_OTHER": {"status": "open", "vol": "0.5"}}}}
+        closed = {"TXID1": {**_order("closed", price="100.0"), "vol_exec": "0.5"}}
+        return {"error": [], "result": {"closed": closed}}
+
+    monkeypatch.setattr(kraken.api, "query_private", _mock)
+    monkeypatch.setattr(kraken.logging, "error", lambda msg: None)
+
+    assert kraken.find_order_by_cl_ord_id("abc123").txid == "TXID1"
+
+
+def test_find_order_by_cl_ord_id_logs_when_several_orders_carry_the_id(monkeypatch) -> None:
+    """Impossible with per-attempt ids: adopting either one is a guess, so the operator
+    must at least find it in the log."""
+
+    def _mock(method, data=None, timeout=None):
+        if method == "OpenOrders":
+            return {"error": [], "result": {"open": {"TXID_A": _order("open"), "TXID_B": _order("open")}}}
+        return {"error": [], "result": {"closed": {}}}
 
     monkeypatch.setattr(kraken.api, "query_private", _mock)
     errors: list[str] = []
@@ -462,8 +458,7 @@ def test_find_order_by_cl_ord_id_prefers_an_open_order_when_several_match(monkey
 
     result = kraken.find_order_by_cl_ord_id("abc123")
 
-    assert result.txid == "TXID_LIVE"
-    assert result.state.status is kraken.OrderStatus.OPEN
+    assert result.txid in {"TXID_A", "TXID_B"}
     assert len(errors) == 1
     assert "abc123" in errors[0]
 

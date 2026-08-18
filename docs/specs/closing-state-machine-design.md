@@ -210,7 +210,7 @@ def manage_close_position(pair, pos, balance, last_prices, trailing_state) -> Cl
             return ClosingState.UNMANAGED          # could not ask; decide nothing
         if found.txid:
             pos["closing_order_id"] = found.txid   # it landed after all
-            logging.warning(f"[{pair}] Recovered closing order {found.txid} from its client id.", to_telegram=True)
+            logging.warning(f"[{pair}] Recovered closing order {found.txid} from its client id.")
             if (outcome := _drive_closing_order(pair, pos, found.state, last_prices)) is not None:
                 return outcome
         else:
@@ -406,13 +406,19 @@ def find_order_by_cl_ord_id(cl_ord_id: str) -> OrderLookup | None:
 Three-valued on purpose, mirroring `get_order_state`'s `OrderState | None`:
 "absent" licenses a re-place, "unknown" must not.
 
-**`ClosedOrders` first, then `OpenOrders`.** The resolver runs on the tick after a
-lost response, on a limit order placed at the market price — which most often has
-already filled. Trying the likely endpoint first makes the common case one call
-instead of two. The ordering is a pure cost choice with no effect on correctness:
-a conclusive "absent" requires both to have succeeded either way, and with
-per-attempt UUIDs an order cannot be in both lists, so there is no precedence
-question to resolve.
+**`OpenOrders` first, then `ClosedOrders`.** The first draft ordered these the
+other way round, on cost: the resolver runs on the tick after a lost response, on
+a limit order placed at the market price — which most often has already filled —
+so trying the likely endpoint first makes the common case one call instead of
+two. That draft called the ordering a pure cost choice "with no effect on
+correctness", on the grounds that per-attempt UUIDs put an order in at most one
+list. But the loop returns on the first endpoint that matches, so the ordering
+*is* the precedence rule: with `ClosedOrders` first, an id appearing in both
+resolves to the dead one and `OpenOrders` is never asked — the wrapper would
+finalize the trade and orphan a live exit, exactly what the multi-match branch
+below exists to prevent. Asking the resting endpoint first makes "prefer a
+resting order" hold across endpoints too, and costs one extra call in the common
+case: cheap, on a path that runs only after a lost response.
 
 **The match is verified, not assumed.** Each returned order carries `cl_ord_id`
 back, and the wrapper checks it before adopting the txid. If Kraken ever ignored
@@ -420,7 +426,25 @@ the filter instead of applying it, the response would not come back empty — it
 would come back with *every* order, and taking "the single key" would adopt an
 unrelated one. The check is free and it is the difference between a wrong
 assumption failing loudly and failing silently. More than one match cannot happen
-with per-attempt UUIDs; if it does, log an error and prefer the open order.
+with per-attempt UUIDs; if it does, log an error and adopt the first — the
+resting order already won by being asked for first.
+
+**Rows that do not echo the id are "unknown", not "absent".** The check above
+fails in the dangerous direction if it only counts matches: an endpoint that
+answers with rows none of which carry the filtered id (the filter ignored, or the
+echo dropped by a response-shape change) would leave the loop with nothing, fall
+through to `OrderLookup(txid=None, state=None)`, and license a re-place against a
+position that may already have an exit resting. Empty result vs.
+non-empty-but-unmatched are therefore distinguished: the first is evidence of
+absence, the second is not.
+
+**One `unresolved` flag, checked only after both endpoints.** An errored endpoint
+and an unreadable one mean the same thing — no answer — so they share a flag, and
+neither returns early. An error is a reason to distrust the *absence*, not a
+reason to stop asking: the order may well be in the other list, and stopping
+would freeze a pair that could have been resolved. The flag is consulted only at
+the end, where it turns "found nothing anywhere" into `None` instead of an
+absence.
 
 **No `start`/`end` bound on the `ClosedOrders` call, deliberately.** `start` is
 documented as *exclusive* and is compared against the order's own timestamps
@@ -491,11 +515,13 @@ dict, as `test_place_limit_order_rounds_to_pair_precision` already does).
 **`exchange/kraken.py`**
 - `place_limit_order` includes `cl_ord_id` in the `AddOrder` payload when given
   and omits the key entirely when `None`.
-- `find_order_by_cl_ord_id`: hit in `ClosedOrders` (no `OpenOrders` call made);
-  miss in `ClosedOrders` + hit in `OpenOrders`; miss in both →
-  `OrderLookup(txid=None)`; `ClosedOrders` errors → `None`; `ClosedOrders` empty +
-  `OpenOrders` errors → `None` (the load-bearing one: an error must never read as
-  "absent"); a returned order whose `cl_ord_id` does not match is not adopted.
+- `find_order_by_cl_ord_id`: hit in `OpenOrders` (no `ClosedOrders` call made);
+  miss in `OpenOrders` + hit in `ClosedOrders`; the same id open in one list and
+  dead in the other → the resting one; miss in both → `OrderLookup(txid=None)`;
+  either endpoint errors with nothing found elsewhere → `None` (the load-bearing
+  one: an error must never read as "absent"); rows that do not echo the id → not
+  adopted, and `None` rather than "absent"; an endpoint that errors or answers
+  unreadably still lets a clean hit on the other one resolve.
 
 **`trading/positions_manager.py`**
 - `manage_close_position` routes on the sub-state: confirmed → `get_order_state`

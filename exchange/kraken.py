@@ -161,32 +161,30 @@ class OrderLookup:
 def find_order_by_cl_ord_id(cl_ord_id: str) -> OrderLookup | None:
     """Resolve a client order id to Kraken's txid and state; ``None`` is 'the lookup failed', ``txid=None`` is 'both endpoints answered without it'.
 
-    ``ClosedOrders`` first (a limit at the market price has usually filled), unbounded: any bound from our clock could exclude the order being resolved.
+    ``OpenOrders`` first: the loop returns on the first endpoint that matches, so a resting order only wins over a terminal one carrying the same id if its endpoint is asked first.
+    Neither call is bounded: any bound from our clock could exclude the very order being resolved.
     """
-    for method, result_key in (("ClosedOrders", "closed"), ("OpenOrders", "open")):
+    unresolved = False  # only ever latched: an endpoint we could not read is never evidence of absence
+    for method, result_key in (("OpenOrders", "open"), ("ClosedOrders", "closed")):
         result = _safe_call(
             f"{method} lookup",
             lambda m=method: api.query_private(m, {"cl_ord_id": cl_ord_id}, timeout=KRAKEN_HTTP_TIMEOUT),
         )
         if result is None:
-            return None
-        # Verified, not assumed: if Kraken ever ignored the filter, this avoids adopting a stranger's txid.
-        matches = [
-            (txid, order) for txid, order in result.get(result_key, {}).items() if order.get("cl_ord_id") == cl_ord_id
-        ]
-        if not matches:
+            unresolved = True
             continue
-        if len(matches) > 1:
-            # Impossible with per-attempt ids; prefer a resting order over finalizing and orphaning a live exit.
-            logging.error(
-                f"{method} returned {len(matches)} orders for cl_ord_id {cl_ord_id} "
-                f"({', '.join(txid for txid, _ in matches)}); adopting an open one if there is one."
-            )
-            open_matches = [m for m in matches if map_order_status(m[1].get("status")) is OrderStatus.OPEN]
-            matches = open_matches or matches
+        orders = result.get(result_key) or {}
+        matches = [(txid, order) for txid, order in orders.items() if order.get("cl_ord_id") == cl_ord_id]
+        if not matches:
+            if orders:  # rows that don't echo the id: "not ours" and "the echo is gone" are indistinguishable
+                logging.error(f"{method} returned {len(orders)} orders for cl_ord_id {cl_ord_id}, none echoing it.")
+                unresolved = True
+            continue
+        if len(matches) > 1:  # impossible with per-attempt ids; the resting endpoint already went first
+            logging.error(f"{method} returned {len(matches)} matches for cl_ord_id {cl_ord_id}; adopting the first.")
         txid, order = matches[0]
         return OrderLookup(txid=txid, state=_build_order_state(order))
-    return OrderLookup(txid=None, state=None)
+    return None if unresolved else OrderLookup(txid=None, state=None)
 
 
 def cancel_order(order_id: str) -> bool:
