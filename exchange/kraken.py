@@ -82,6 +82,7 @@ def build_pairs_map(pairs_dict: dict[str, dict[str, Any]]) -> None:
                 "pair_decimals": info.get("pair_decimals"),
                 "lot_decimals": info.get("lot_decimals"),
                 "cost_decimals": info.get("cost_decimals"),
+                "ordermin": float(info["ordermin"]) if info.get("ordermin") is not None else None,
             }
     if not all(pairs_dict[pair] for pair in pairs_dict):
         missing = [pair for pair in pairs_dict if not pairs_dict[pair]]

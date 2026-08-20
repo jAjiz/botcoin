@@ -71,6 +71,7 @@ def test_build_pairs_map_populates_metadata_and_decimals(monkeypatch) -> None:
                 "pair_decimals": 1,
                 "lot_decimals": 8,
                 "cost_decimals": 5,
+                "ordermin": "0.0001",
             }
         },
     )
@@ -86,7 +87,31 @@ def test_build_pairs_map_populates_metadata_and_decimals(monkeypatch) -> None:
         "pair_decimals": 1,
         "lot_decimals": 8,
         "cost_decimals": 5,
+        "ordermin": 0.0001,
     }
+
+
+def test_build_pairs_map_ordermin_absent_reads_none(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken,
+        "get_asset_pairs",
+        lambda: {
+            "XXBTZEUR": {
+                "altname": "XBTEUR",
+                "wsname": "XBT/EUR",
+                "base": "XXBT",
+                "quote": "ZEUR",
+                "pair_decimals": 1,
+                "lot_decimals": 8,
+                "cost_decimals": 5,
+            }
+        },
+    )
+    pairs_dict: dict[str, dict] = {"XBTEUR": {}}
+
+    kraken.build_pairs_map(pairs_dict)
+
+    assert pairs_dict["XBTEUR"]["ordermin"] is None
 
 
 # ============================================================================
