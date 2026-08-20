@@ -7,7 +7,7 @@ A card being implemented also links a plan, which is deleted once it ships.
 
 **Status legend:** ✅ Shipped · 📋 Planned · 💤 Deferred
 
----
+
 
 ## ✅ Shipped
 
@@ -68,7 +68,7 @@ to two.
 
 - Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
 
----
+
 
 ## 📋 Planned
 
@@ -104,7 +104,9 @@ Review Follow-ups.
 
 - Spec: _to be written_
 
----
+
+
+## 💤 Deferred
 
 ### Trend/Chop Regime Filter
 
@@ -126,7 +128,3 @@ volatility regime rather than the entire price history.
 stable signal — more than 60 days of OHLC data are required.
 
 - Spec: _to be written_
-
----
-
-*Cards move between sections as work ships or is deferred.*
