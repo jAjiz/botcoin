@@ -315,6 +315,20 @@ def test_get_order_state_passes_http_timeout(monkeypatch) -> None:
     assert captured["timeout"] == kraken.KRAKEN_HTTP_TIMEOUT
 
 
+def test_build_order_state_reads_the_fee() -> None:
+    state = kraken._build_order_state(
+        {"status": "closed", "price": "100.0", "vol": "1.0", "vol_exec": "1.0", "fee": "0.26"}
+    )
+
+    assert state.fee == 0.26
+
+
+def test_build_order_state_without_fee_reads_zero() -> None:
+    state = kraken._build_order_state({"status": "closed", "price": "100.0", "vol": "1.0", "vol_exec": "1.0"})
+
+    assert state.fee == 0.0
+
+
 # ============================================================================
 # Order lookup by client order id
 # ============================================================================

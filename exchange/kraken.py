@@ -126,6 +126,8 @@ class OrderState:
     vol_exec: float
     # The order's own size. 0.0 when Kraken omits it, so a remainder check fails closed.
     vol: float = 0.0
+    # The fee actually charged, in quote currency. 0.0 when Kraken omits it.
+    fee: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,7 @@ def _build_order_state(order: dict[str, Any]) -> OrderState:
         avg_price=float(price) if price is not None else None,
         vol_exec=float(order.get("vol_exec") or 0.0),
         vol=float(order.get("vol") or 0.0),
+        fee=float(order.get("fee") or 0.0),
     )
 
 
