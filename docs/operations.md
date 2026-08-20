@@ -58,27 +58,21 @@ docker compose exec telegram env | grep -E "KRAKEN|POSTGRES_PASSWORD"   # empty
 
 ### Running tests
 
+The bare `pytest`/`ruff` commands (and the 80 % coverage gate) are documented in
+[`CLAUDE.md` § Commands](../CLAUDE.md#commands). To run the same commands inside the
+Docker sandbox instead of a local venv — the way CI runs them — wrap them with `docker
+compose -f docker-compose.test.yml run --rm test <command>`, e.g.:
+
 ```bash
-# Unit tests (no external services required)
 docker compose -f docker-compose.test.yml run --rm test pytest tests/unit
 
-# Full suite (starts an ephemeral Postgres)
+# Full suite needs an ephemeral Postgres + extra env vars
 docker compose -f docker-compose.test.yml run --rm \
   -e POSTGRES_PASSWORD=botc \
   -e GRAFANA_DB_PASSWORD=local \
   -e RUN_DB_INTEGRATION=true \
   test pytest tests/
-
-# Lint + format check
-docker compose -f docker-compose.test.yml run --rm test ruff check .
-docker compose -f docker-compose.test.yml run --rm test ruff format --check .
-
-# Auto-fix
-docker compose -f docker-compose.test.yml run --rm test ruff check . --fix
-docker compose -f docker-compose.test.yml run --rm test ruff format .
 ```
-
-The 80 % coverage gate is enforced by `pyproject.toml`.
 
 ---
 
@@ -167,17 +161,22 @@ cadence (`SLEEPING_INTERVAL`, no separate timeout). This only changes *how*
 the already-decided exit gets executed, never *when* to exit: the trailing
 stop remains the only exit mechanism.
 
-Each reprice sends a Telegram notification (`🔁 Repriced closing SELL/BUY
+Each reprice sends a Telegram notification (`🔁 Repricing closing SELL/BUY
 order to <price>€`), so a position sitting in "closing" for several sessions
 without repricing is a sign the price has stopped moving relative to the
 order, not that the bot is stuck. A partially filled order is left alone
 (canceling mid-fill would fragment the position); repricing resumes once the
-partial fill either completes or the order is canceled/expired. If the
-cancel succeeds but the new order placement fails, the position keeps the
-old, now-canceled order id — the next tick's `is_closing_complete` check
-detects the dead order, clears the closing fields, and resumes normal
-position management, and Telegram receives a `Failed to re-place closing
-order after cancel.` alert.
+partial fill either completes or the order is canceled/expired. On a
+successful cancel, the canceled order's id is **dropped** (it carries no more
+information) in favor of a fresh, unconfirmed request id for the
+replacement — so if the replacement placement itself is never confirmed (the
+API call times out or errors), nothing is lost: no Telegram alert fires,
+only a log line (`Closing order replacement not confirmed after cancel; the
+next tick will resolve it.`), and the next tick resolves the outcome by
+looking the request id up at Kraken, recovering the order if it landed or
+re-placing it if it did not. See [`CLAUDE.md` §
+Position lifecycle](../CLAUDE.md#position-lifecycle-tradingpositions_managerpy) for the
+full id-handling mechanics.
 
 ### Per-pair failure isolation
 
@@ -185,11 +184,24 @@ An exception while processing one pair (price/ATR fetch, parameter recalibration
 position open/manage/close) no longer aborts the whole session. The failing pair is
 skipped for that tick — logged as `Error processing <PAIR>; skipping this pair for the
 rest of the session.` in `sessions.log_messages` — while the remaining pairs are still
-processed normally. If any pair failed, the session's status is `failed` (visible in
-the Grafana Sessions row) even though other pairs traded fine that tick; it still
-counts toward the consecutive-failure streak, so a pair that fails every session will
-eventually trigger the Telegram alert (`SESSION_FAILURE_ALERT_THRESHOLD`), whose message
-includes `pair errors: <PAIR1>, <PAIR2>` as the last error once the streak fires.
+processed normally. If any pair failed, the session's status is `pair_error` (visible
+in the Grafana Sessions row), **not** `failed` — the session still did its work for
+every other pair; `failed` is reserved for what stops the session itself.
+
+### Failure and overrun alerts
+
+Three independent, edge-triggered Telegram streaks exist — the session itself, each
+pair, and session duration — each firing **one** warning once its streak reaches
+`SESSION_FAILURE_ALERT_THRESHOLD` (default 3) consecutive failures, and **one**
+recovery message on the next success. No alert names a reason; check
+`sessions.log_messages` (Grafana Sessions row) for that. See [`CLAUDE.md` §
+Design choices](../CLAUDE.md#design-choices) for why the alerts are shaped this way.
+
+| Streak | Fires when | Alert text | Recovery text |
+|---|---|---|---|
+| Session failure | The session itself failed N times in a row | `⚠️ N trading sessions have failed in a row; prices and positions are not being updated.` | `✅ Trading sessions recovered; data is updating again.` |
+| Per-pair failure | One pair failed N sessions in a row | `⚠️ [PAIR] has failed in N sessions in a row and is not being managed.` | `✅ [PAIR] is being managed normally again.` |
+| Session overrun | A completed/`pair_error` session's wall-clock met or exceeded `SLEEPING_INTERVAL` N times in a row | `⚠️ N trading sessions in a row overran the Ts interval (last took Xs); ticks are being skipped and prices/positions may lag.` | `✅ Trading session timing back to normal (last took Xs).` |
 
 ### Trading tools — backtest & optimizer
 

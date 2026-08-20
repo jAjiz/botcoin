@@ -65,9 +65,7 @@ After a strong adverse move, a plan re-anchors its activation toward the current
 
 ### Position closure
 
-`close_position` places a limit order and records the approximate `closing_price` (at order placement time). `finalize_close` interprets an order the caller has already fetched and already established as terminal — it does not poll `QueryOrders` itself; `_drive_closing_order` does the fetching and the status dispatch. When the fill is confirmed, `finalize_close` overwrites `closing_price` with the real fill price and computes `pnl_percent`. PnL is valid only after `finalize_close` returns `True`.
-
-An order that ends `canceled` or `expired` but whose executed volume covers the whole order (`vol_exec >= vol`) is finalized the same way: a cancel that raced a complete fill leaves nothing to manage, so it is recorded as a completed close rather than reopened for management. Any terminal order that still has a remainder clears its closing fields instead, and the position resumes management on the same tick.
+`close_position` places a limit order and records the approximate `closing_price` (at order placement time); if the market moves before it fills, later sessions cancel and re-place it at the then-current price. `finalize_close` overwrites `closing_price` with the real fill and computes `pnl_percent` once the fill is confirmed — PnL is valid only after that. See [`docs/operations.md` § Closing order repricing](operations.md#closing-order-repricing) for what an operator sees, and [`CLAUDE.md` § Position lifecycle](../CLAUDE.md#position-lifecycle-tradingpositions_managerpy) for the exact order-id and status-dispatch mechanics.
 
 `pnl_percent` is **timing alpha, not economic profit**. It measures the execution price against `entry_price` — the price when the rebalance plan was created — so it reports how much better the trailing layer did than rebalancing immediately. `entry_price` is a reference, not a cost basis: nothing was ever bought at it. From the fee change onward it is **net** of the real Kraken fee (recorded in `closed_positions.fee_eur`); rows closed before that are gross, so the series is not homogeneous across that point.
 
@@ -75,9 +73,9 @@ An order that ends `canceled` or `expired` but whose executed volume covers the 
 
 ## Volatility classification
 
-ATR is classified into five levels using percentile boundaries precomputed from each pair's OHLC history:
+`ATR/close` — a dimensionless ratio, so the levels survive price drift — is classified into five levels using percentile boundaries of that ratio, precomputed from each pair's OHLC history:
 
-| Level | ATR range | Description |
+| Level | ATR/close ratio range | Description |
 |---|---|---|
 | LL | < P20 | Very Low Volatility |
 | LV | P20–P50 | Low Volatility |
@@ -85,7 +83,7 @@ ATR is classified into five levels using percentile boundaries precomputed from 
 | HV | P80–P95 | High Volatility |
 | HH | > P95 | Very High Volatility |
 
-`get_volatility_level(pair, atr)` in `trading/parameters_manager.py` performs this classification against the current pair's ATR percentile boundaries.
+`get_volatility_level(pair, atr_val, close)` in `trading/parameters_manager.py` performs this classification against the current pair's `ATR/close` percentile boundaries.
 
 ---
 
@@ -128,10 +126,7 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 
 ## Constraints and invariants
 
-- The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch. Adding one is a strategy change and must be discussed explicitly.
-- A position whose stop has fired (`stop_at` latched) is **not open** — `tick_position` must not run on it, whether or not a closing order was ever placed (the scheduler enforces this via step ordering).
-- `closing_price` is an estimate until fill confirmation, and it is only present once an order actually rests at Kraken: `close_position` writes it when a placement succeeds, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. A breach whose placement failed, or whose order died terminally without a usable fill, has `stop_at` latched and no `closing_price` at all — the exit is owed, but nothing has been quoted for it yet. `finalize_close` performs the final write with the real fill price and computes `pnl_percent`; any read before it returns `True` is reading an estimate.
-- `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Every caller that does not handle `None` will silently corrupt state.
+These invariants are owned by [`CLAUDE.md` § Architecture](../CLAUDE.md#architecture) (trailing stop as sole exit, `is_open`/`stop_at`, `closing_price` as estimate-until-`finalize_close`, `_safe_call` returning `None`) — this document defers to that copy rather than repeating it.
 
 ---
 
