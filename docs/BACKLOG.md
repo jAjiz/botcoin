@@ -68,10 +68,6 @@ to two.
 
 - Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
 
-
-
-## 📋 Planned
-
 ### Strategy Review Follow-ups
 
 Six items from the 2026-07-06 trading-strategy review, in one spec: the order
@@ -85,6 +81,10 @@ live and engine together); the MIN_MARGIN profit floor, the real meaning of
 pass removes the duplication that has already left `operations.md` stale.
 
 - Spec: [`specs/strategy-review-followups-design.md`](specs/strategy-review-followups-design.md)
+
+
+
+## 📋 Planned
 
 
 
