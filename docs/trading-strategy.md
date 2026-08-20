@@ -129,10 +129,11 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 
 ---
 
-## Strategy review (2026-07-06)
+## Strategy review follow-ups
 
-A full review of the strategy's economic logic, edge assumptions and structural
-risks — including the real semantics of `pnl_percent` (timing alpha, not
-economic profit), the MIN_MARGIN profit-floor guarantee, the K_ACT↔K_STOP loss
-floor, fee sensitivity, and the absolute-ATR classification bias — lives in
-[`specs/trading-strategy-review.md`](specs/trading-strategy-review.md).
+The 2026-07-06 review of the strategy's economic logic and structural risks —
+the real semantics of `pnl_percent` (timing alpha, not economic profit), the
+MIN_MARGIN profit-floor guarantee, fee sensitivity, and the absolute-ATR
+classification bias — is carried forward as a planned work item in
+[`specs/strategy-review-followups-design.md`](specs/strategy-review-followups-design.md).
+The review itself is in git history.
