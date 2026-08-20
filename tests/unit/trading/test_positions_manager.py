@@ -1002,6 +1002,26 @@ def test_reprice_closing_order_places_nothing_when_kraken_omits_the_orders_vol(m
     assert pos["volume"] == 0.5
 
 
+def test_reprice_does_not_place_a_remainder_below_ordermin(monkeypatch) -> None:
+    monkeypatch.setitem(config.PAIRS, "XBTEUR", {"ordermin": 0.0001, "pair_decimals": 1})
+    placed: list = []
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda *a, **k: True)
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda *a, **k: OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol_exec=0.99995, vol=1.0),
+    )
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: placed.append(a))
+    pos = {"side": "sell", "volume": 1.0, "closing_order_id": "TX1", "closing_price": 90.0}
+
+    result = positions_manager.reprice_closing_order(
+        "XBTEUR", pos, OrderState(status=OrderStatus.OPEN, avg_price=90.0, vol_exec=0.0, vol=1.0), {"XBTEUR": 100.0}
+    )
+
+    assert placed == []
+    assert result is True
+
+
 # ============================================================================
 # tick_position
 # ============================================================================

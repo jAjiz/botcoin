@@ -321,13 +321,14 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
     side = pos["side"]
     # From the order's own numbers, never pos["volume"] (a lot tick apart after rounding); fails closed when `vol` is 0.0.
     remaining = post_cancel_state.vol - post_cancel_state.vol_exec
-    if remaining <= 0:
+    if remaining <= 0 or _below_ordermin(pair, remaining):
+        reason = "no remainder" if remaining <= 0 else "remainder below ordermin"
         logging.info(
-            f"[{pair}] Closing order {order_id} left no remainder after cancel "
+            f"[{pair}] Closing order {order_id} left {reason} after cancel "
             f"(vol_exec={post_cancel_state.vol_exec:.8f} of {post_cancel_state.vol:.8f}); "
             "not placing a replacement."
         )
-        return True  # fully executed during the cancel window; branch 1 finalizes it next tick
+        return True  # nothing placeable left; branch 1 finalizes it next tick
     if post_cancel_state.vol_exec > 0:
         logging.warning(
             f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
