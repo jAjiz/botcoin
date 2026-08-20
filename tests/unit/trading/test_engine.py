@@ -12,8 +12,7 @@ import trading.engine as engine
 
 _LEVELS = ("LL", "LV", "MV", "HV", "HH")
 
-# One full round trip with no fee: buy 100 -> sell 108 -> buy 92 -> sell 118.
-# ATR is 2.0 and every K_STOP is 1.0, so each stop sits 2.0 from the trailed extreme.
+# No-fee round trip: buy 100 -> sell 108 -> buy 92 -> sell 118. ATR=2.0, K_STOP=1.0; stop sits 2.0 from trailed extreme.
 _ROUND_TRIP = [
     (100.0, 100.0, 100.0),  # k_act=0 activates at once; trailing 100, stop 98
     (110.0, 105.0, 108.0),  # trailing 110, stop 108; low 105 <= 108 -> sell @108
@@ -81,8 +80,7 @@ def _cfg(
     ],
 )
 def test_lookup_k_stop_returns_the_k_of_the_classified_level(atr: float, expected: float) -> None:
-    # At close=100 these ATRs read as ratios 0.005/0.02/0.04/0.06/0.08 against the
-    # thresholds (.01,.03,.05,.07), so each one lands on a different level.
+    # ATRs 0.005/0.02/0.04/0.06/0.08 (close=100) vs thresholds (.01,.03,.05,.07): each lands on a different level.
     cfg = _cfg(k_sell=dict(zip(_LEVELS, (1.0, 2.0, 3.0, 4.0, 5.0), strict=True)))
     assert engine.lookup_k_stop(cfg, "sell", atr, 100.0) == expected
 
@@ -207,8 +205,7 @@ def test_bars_without_a_valid_atr_are_skipped(atr: list[float], expected_ops: in
 def test_activation_reanchors_only_once_price_drifts_a_full_distance_away(
     rows: list[tuple[float, float, float]], expected_exit: float
 ) -> None:
-    # k_act=1.0 and ATR=2.0, so both the activation distance and the re-anchor
-    # threshold are 2.0. Without re-anchoring the first frame never activates.
+    # k_act=1.0, ATR=2.0: both thresholds are 2.0; without re-anchoring the first frame never activates.
     ops = engine.simulate_operations(_df(rows), _cfg(k_act=1.0))
 
     assert len(ops) == 2
@@ -241,8 +238,7 @@ def test_activation_reanchors_only_once_price_drifts_a_full_distance_away(
 def test_atr_drift_beyond_the_limit_recalculates_activation_and_stop(
     k_act: float, rows: list[tuple[float, float, float]], expected_exit: float
 ) -> None:
-    # The stored ATR (2.0) sits outside the second bar's +/-20% band around 1.0, so
-    # both prices are re-derived. Held at 2.0 neither frame produces an exit.
+    # ATR (2.0) sits outside the +/-20% band around 1.0, so both prices re-derive; held flat, neither bar exits.
     ops = engine.simulate_operations(_df(rows, atr=[2.0, 1.0]), _cfg(k_act=k_act))
 
     assert len(ops) == 2
