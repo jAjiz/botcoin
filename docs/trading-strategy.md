@@ -85,8 +85,6 @@ After a strong adverse move, a plan re-anchors its activation toward the current
 
 `get_volatility_level(pair, atr_val, close)` in `trading/parameters_manager.py` performs this classification against the current pair's `ATR/close` percentile boundaries.
 
-As of 2026-08-20 this classification is by `ATR/close`; before that it was by absolute ATR. The percentile boundaries are the same shape, but a given ATR/close ratio can resolve to a different level than the equivalent absolute ATR did, so effective stop distances — and therefore trade frequency and the per-trade `pnl_percent` distribution — shift across the cutover. This is the intended effect of the change (see `docs/specs/strategy-review-followups-design.md` § 4), not a regression.
-
 ---
 
 ## K_STOP calibration
@@ -129,14 +127,3 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 ## Constraints and invariants
 
 These invariants are owned by [`CLAUDE.md` § Architecture](../CLAUDE.md#architecture) (trailing stop as sole exit, `is_open`/`stop_at`, `closing_price` as estimate-until-`finalize_close`, `_safe_call` returning `None`) — this document defers to that copy rather than repeating it.
-
----
-
-## Strategy review follow-ups
-
-The 2026-07-06 review of the strategy's economic logic and structural risks —
-the real semantics of `pnl_percent` (timing alpha, not economic profit), the
-MIN_MARGIN profit-floor guarantee, fee sensitivity, and the absolute-ATR
-classification bias — is carried forward as a planned work item in
-[`specs/strategy-review-followups-design.md`](specs/strategy-review-followups-design.md).
-The review itself is in git history.
