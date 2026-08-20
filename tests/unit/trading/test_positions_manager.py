@@ -488,6 +488,35 @@ def test_finalize_close_pnl_for_buy_side() -> None:
     assert pos["pnl_percent"] == round((68000.0 - 67000.0) / 68000.0 * 100, 4)
 
 
+def test_finalize_close_nets_the_fee_into_pnl(monkeypatch) -> None:
+    pos = {"side": "sell", "entry_price": 100.0, "volume": 1.0, "closing_order_id": "TX1"}
+    state = OrderState(status=OrderStatus.CLOSED, avg_price=110.0, vol_exec=1.0, vol=1.0, fee=2.0)
+
+    assert positions_manager.finalize_close(pos, state) is True
+    # gross +10.00%, fee 2.0 EUR on a 100.0 EUR entry notional = 2.00%
+    assert pos["pnl_percent"] == 8.0
+    assert pos["fee_eur"] == 2.0
+
+
+def test_finalize_close_without_a_fee_leaves_pnl_gross() -> None:
+    pos = {"side": "sell", "entry_price": 100.0, "volume": 1.0, "closing_order_id": "TX1"}
+    state = OrderState(status=OrderStatus.CLOSED, avg_price=110.0, vol_exec=1.0, vol=1.0)
+
+    assert positions_manager.finalize_close(pos, state) is True
+    assert pos["pnl_percent"] == 10.0
+    assert pos["fee_eur"] == 0.0
+
+
+def test_finalize_close_fee_uses_the_executed_volume_on_a_raced_cancel() -> None:
+    pos = {"side": "sell", "entry_price": 100.0, "volume": 1.0, "closing_order_id": "TX1"}
+    state = OrderState(status=OrderStatus.CANCELED, avg_price=110.0, vol_exec=2.0, vol=2.0, fee=4.0)
+
+    assert positions_manager.finalize_close(pos, state) is True
+    # volume is overwritten to 2.0 first, so the notional is 200.0 and the fee is 2.00%
+    assert pos["volume"] == 2.0
+    assert pos["pnl_percent"] == 8.0
+
+
 def test_finalize_close_finalizes_a_terminal_order_that_was_fully_executed() -> None:
     """A cancel can race a complete fill: Kraken labels the order `canceled` but
     nothing is left to manage. That is a finished trade — finalize it instead of
