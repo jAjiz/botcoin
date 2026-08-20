@@ -109,26 +109,6 @@ volatility regime rather than the entire price history.
 **Note:** the plateau heuristic needs a meaningful history range to produce a
 stable signal — more than 60 days of OHLC data are required.
 
-**Note (relative-ATR follow-ups, from the Strategy Review Follow-ups card's
-volatility-classification change):**
-
-1. The July 2026 optimizer search grids were derived under absolute-ATR
-   classification and need re-validation before any config derived under them
-   is deployed.
-2. `closed_positions` rows written before the ATR/close cutover were
-   classified under the old absolute-ATR scheme, so volatility-level
-   comparisons across the cutover are not like-for-like.
-3. `market_analyzer.analyze_structural_noise` still buckets historical K-values
-   by absolute-ATR percentiles (computed locally, independent of
-   `config.PAIRS`), while live/backtest lookup now classifies the *current*
-   moment by ATR/close percentiles. The two partitions diverge whenever price
-   drifts — a spot check on a synthetic 500-bar frame showed only ~49%
-   agreement between the two bucketings. The K-values themselves stay valid
-   (`K = deviation / ATR` is already scale-free per spec §4), but the
-   partition that groups them into levels is not the same partition now used
-   to look them up. Whichever of this card and a K_STOP-specific fix lands
-   first should make the two partitions consistent.
-
 - Spec: _to be written_
 
 ### Portfolio-vs-Hold Benchmark
