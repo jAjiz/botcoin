@@ -122,7 +122,7 @@ volatility-classification change):**
    by absolute-ATR percentiles (computed locally, independent of
    `config.PAIRS`), while live/backtest lookup now classifies the *current*
    moment by ATR/close percentiles. The two partitions diverge whenever price
-   drifts — a spot check on the engine's golden fixture showed only ~49%
+   drifts — a spot check on a synthetic 500-bar frame showed only ~49%
    agreement between the two bucketings. The K-values themselves stay valid
    (`K = deviation / ATR` is already scale-free per spec §4), but the
    partition that groups them into levels is not the same partition now used
