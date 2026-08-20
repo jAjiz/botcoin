@@ -243,9 +243,13 @@ frame (`trading/engine.py:204,241`).
 calibration snapshot — never in the database — so they recalculate on the next
 `calculate_trading_parameters` run. Nothing stored needs converting.
 
-**K_STOP calibration is untouched.** The K-values are already scale-free
-(`K = deviation / ATR`), so only the level a given moment maps to changes, not the
-distributions themselves.
+**K_STOP calibration is untouched — and that is a scope exclusion, not a proof of
+equivalence.** The K-values themselves are scale-free (`K = deviation / ATR`), but
+the *partition* that groups historical K-values into levels is a separate thing
+from the values, and it did not change: `analyze_structural_noise` still buckets
+each pivot event by absolute-ATR percentiles, while the live/backtest lookup now
+resolves the current moment by ATR/close percentiles. The two partitions diverge
+whenever price drifts; this is tracked as a follow-up in `docs/BACKLOG.md`.
 
 ### Consequences to carry
 
