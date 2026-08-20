@@ -47,6 +47,8 @@ activation_distance = K_STOP × ATR + MIN_MARGIN × entry_price
 
 `K_ACT` and `MIN_MARGIN` are single values per pair, shared by both sides (the earlier per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` variants were removed). `K_STOP` remains per-side because it is derived from pivot analysis, which naturally differs between uptrends and downtrends.
 
+Under MIN_MARGIN activation the activation distance is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails `K_STOP × ATR` behind the best price seen since activation. An activated position therefore cannot exit worse than `MIN_MARGIN × entry_price` away from entry: **MIN_MARGIN is a minimum profit floor on activated trades**, not merely a distance parameter. Under K_ACT activation (`K_ACT × ATR`) no such floor exists — the stop can trail back through the entry price — which is why the two modes are not interchangeable.
+
 ### Trailing-stop mechanics
 
 Once the market price crosses the activation price:
@@ -59,11 +61,15 @@ Once the market price crosses the activation price:
 
 If ATR changes by more than `ATR_DESV_LIMIT` (default 20 %) between sessions, both the activation price (pre-activation) and the stop price (post-activation) are recalculated with the new ATR. This prevents the stop from becoming stale in a volatility regime shift.
 
+After a strong adverse move, a plan re-anchors its activation toward the current price and executes into the first bounce, recording a large negative `pnl_percent` against the original reference. This is deliberate: for a rebalancer, executing late beats never executing. It is also the main source of the worst recorded per-trade numbers, so those are the mechanism working as designed rather than a defect.
+
 ### Position closure
 
-`close_position` places a limit order and records the approximate `closing_price` (at order placement time). `is_closing_complete` polls the Kraken `QueryOrders` endpoint; when the fill is confirmed, it overwrites `closing_price` with the real fill price and computes `pnl_percent`. PnL is valid only after `is_closing_complete` returns `True`.
+`close_position` places a limit order and records the approximate `closing_price` (at order placement time). `finalize_close` interprets an order the caller has already fetched and already established as terminal — it does not poll `QueryOrders` itself; `_drive_closing_order` does the fetching and the status dispatch. When the fill is confirmed, `finalize_close` overwrites `closing_price` with the real fill price and computes `pnl_percent`. PnL is valid only after `finalize_close` returns `True`.
 
 An order that ends `canceled` or `expired` but whose executed volume covers the whole order (`vol_exec >= vol`) is finalized the same way: a cancel that raced a complete fill leaves nothing to manage, so it is recorded as a completed close rather than reopened for management. Any terminal order that still has a remainder clears its closing fields instead, and the position resumes management on the same tick.
+
+`pnl_percent` is **timing alpha, not economic profit**. It measures the execution price against `entry_price` — the price when the rebalance plan was created — so it reports how much better the trailing layer did than rebalancing immediately. `entry_price` is a reference, not a cost basis: nothing was ever bought at it. From the fee change onward it is **net** of the real Kraken fee (recorded in `closed_positions.fee_eur`); rows closed before that are gross, so the series is not homogeneous across that point.
 
 ---
 
@@ -124,7 +130,7 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 
 - The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch. Adding one is a strategy change and must be discussed explicitly.
 - A position whose stop has fired (`stop_at` latched) is **not open** — `tick_position` must not run on it, whether or not a closing order was ever placed (the scheduler enforces this via step ordering).
-- `closing_price` is an estimate until fill confirmation, and it is only present once an order actually rests at Kraken: `close_position` writes it when a placement succeeds, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. A breach whose placement failed, or whose order died terminally without a usable fill, has `stop_at` latched and no `closing_price` at all — the exit is owed, but nothing has been quoted for it yet. `is_closing_complete` performs the final write with the real fill price and computes `pnl_percent`; any read before it returns `True` is reading an estimate.
+- `closing_price` is an estimate until fill confirmation, and it is only present once an order actually rests at Kraken: `close_position` writes it when a placement succeeds, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. A breach whose placement failed, or whose order died terminally without a usable fill, has `stop_at` latched and no `closing_price` at all — the exit is owed, but nothing has been quoted for it yet. `finalize_close` performs the final write with the real fill price and computes `pnl_percent`; any read before it returns `True` is reading an estimate.
 - `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Every caller that does not handle `None` will silently corrupt state.
 
 ---
