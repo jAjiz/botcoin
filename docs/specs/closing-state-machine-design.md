@@ -603,7 +603,8 @@ silent one.
   "always among the newest" guarantee does not transfer.
 - Making `pos["volume"]` match the submitted order by construction. §7 sizes the
   remainder from the exchange's numbers, which removes the drift from *this* path;
-  the general fix is the *Exchange-Synchronized Order Amounts* backlog card.
+  the general fix is §1 of
+  [`strategy-review-followups-design.md`](strategy-review-followups-design.md).
 - Any change to `record_position_closed`, PnL, or the meaning of `closing_price`
   as an estimate until the fill is confirmed.
 - Migrating away from `krakenex`, or adding a retry/backoff layer.

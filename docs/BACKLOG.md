@@ -74,35 +74,17 @@ to two.
 
 ### Strategy Review Follow-ups
 
-Actionable, non-strategy items from the 2026-07-06 trading-strategy review:
-record the real Kraken fee of each fill alongside `pnl_percent` and add a live
-"portfolio vs holding the target allocation" benchmark (Grafana); make
-`fee_pct` non-optional in the optimizer/backtest (default to the real fee tier,
-add a slippage term); capture Kraken's `ordermin` in the pairs map and enforce
-it when sizing/closing positions. The review's strategy-level recommendations
-(relative-ATR volatility classification, bounding the K_ACT↔K_STOP loss floor)
-stay in the spec as discussion items — they change trading behaviour and need
-an explicit decision first.
+Six items from the 2026-07-06 trading-strategy review, in one spec: the order
+boundary returns the amounts it actually submitted and captures Kraken's
+`ordermin`; the real fee of each fill is recorded and netted into `pnl_percent`;
+Grafana's cumulative panel switches to notional-weighted EUR, since summing raw
+percentages can show a rising line through a losing period; volatility
+classification moves from absolute ATR to ATR/close (the one behaviour change,
+live and engine together); the MIN_MARGIN profit floor, the real meaning of
+`pnl_percent` and the re-anchoring trade-off get documented; and a consolidation
+pass removes the duplication that has already left `operations.md` stale.
 
-- Spec: [`specs/trading-strategy-review.md`](specs/trading-strategy-review.md)
-
-### Exchange-Synchronized Order Amounts
-
-`place_limit_order` formats `price`/`volume` to the pair's Kraken precision but
-returns only the txid, so callers never learn what was actually submitted.
-`pos["volume"]` therefore drifts from the order resting at Kraken (and from the
-`Numeric(28, 10)` column): `reprice_closing_order` stores a raw float
-subtraction while a rounded value goes on the wire. Have the boundary return the
-normalized amounts it sent and store those, so state matches the exchange by
-construction rather than by a rounding convention kept in sync by hand.
-
-Scope: order volumes and submitted order prices. ATR fields (`activation_atr`,
-`stop_atr`) stay full precision — rounding them to `pair_decimals` degrades
-ATR-drift detection on low-value pairs (see the rounding Design choice in
-`CLAUDE.md`). Touches the same pairs map as the `ordermin` capture in Strategy
-Review Follow-ups.
-
-- Spec: _to be written_
+- Spec: [`specs/strategy-review-followups-design.md`](specs/strategy-review-followups-design.md)
 
 
 
@@ -126,5 +108,20 @@ volatility regime rather than the entire price history.
 
 **Note:** the plateau heuristic needs a meaningful history range to produce a
 stable signal — more than 60 days of OHLC data are required.
+
+- Spec: _to be written_
+
+### Portfolio-vs-Hold Benchmark
+
+Answer the question `pnl_percent` structurally cannot: is the bot beating simply
+holding the target allocation? Because `entry_price` is a plan reference and not
+a cost basis, every close can post a positive `pnl_percent` while the portfolio
+falls behind holding — the bot sells an overweight into a rally, the asset keeps
+climbing, and the fiat sits idle.
+
+Deferred on cost, not on value: nothing records portfolio value over time
+(`bot_control.latest_balance` is a snapshot overwritten every session), so this
+needs a time series, and external deposits and withdrawals must be modelled or
+the comparison silently lies the first time the operator moves EUR.
 
 - Spec: _to be written_
