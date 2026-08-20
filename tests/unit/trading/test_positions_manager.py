@@ -5,6 +5,7 @@ import pytest
 
 import exchange.kraken as kraken
 import trading.positions_manager as positions_manager
+from core import config
 from core.utils import now_utc
 from exchange.kraken import OrderLookup, OrderState, OrderStatus
 
@@ -150,6 +151,16 @@ def test_create_position_builds_state_from_calculated_values(monkeypatch) -> Non
     assert trailing_state["XBTEUR"]["created_at"] == _now
 
 
+def test_create_position_skipped_when_volume_below_ordermin(monkeypatch, caplog) -> None:
+    monkeypatch.setitem(config.PAIRS, "XBTEUR", {"ordermin": 0.0001})
+    monkeypatch.setattr(positions_manager, "calculate_position", lambda *a, **k: ("sell", 5000.0))
+    trailing_state: dict = {}
+
+    positions_manager.create_position("XBTEUR", {}, {"XBTEUR": 100_000_000.0}, 1.0, trailing_state)
+
+    assert trailing_state == {}
+
+
 # ============================================================================
 # Full precision (small-value pairs like USDCEUR)
 # ============================================================================
@@ -256,6 +267,18 @@ def test_refresh_position_drops_position_and_returns_false_when_below_min_value(
         last_prices={"XBTEUR": 100.0},
         trailing_state=trailing_state,
     )
+
+    assert result is False
+    assert "XBTEUR" not in trailing_state
+
+
+def test_refresh_position_drops_when_remaining_below_ordermin(monkeypatch) -> None:
+    monkeypatch.setitem(config.PAIRS, "XBTEUR", {"ordermin": 0.0001})
+    monkeypatch.setattr(positions_manager, "calculate_position", lambda *a, **k: ("sell", 5000.0))
+    pos = {"side": "sell", "volume": 0.00001, "stop_at": now_utc()}
+    trailing_state = {"XBTEUR": pos}
+
+    result = positions_manager.refresh_position("XBTEUR", pos, {}, {"XBTEUR": 100_000_000.0}, trailing_state)
 
     assert result is False
     assert "XBTEUR" not in trailing_state

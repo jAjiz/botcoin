@@ -2,6 +2,7 @@ from enum import StrEnum
 from typing import Any
 
 import core.logging as logging
+from core import config
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import new_cl_ord_id, now_utc, round_price
 from exchange.kraken import (
@@ -19,6 +20,12 @@ from trading.parameters_manager import get_k_stop
 UNRESOLVABLE_STATUSES = (OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN)
 # Only these give a definitive vol_exec: the order can never trade again.
 TERMINAL_STATUSES = (OrderStatus.CLOSED, OrderStatus.CANCELED)
+
+
+def _below_ordermin(pair: str, volume: float) -> bool:
+    """True when Kraken would reject this size. Unknown ordermin never blocks a trade."""
+    ordermin = config.PAIRS.get(pair, {}).get("ordermin")
+    return ordermin is not None and volume < ordermin
 
 
 class ClosingState(StrEnum):
@@ -45,6 +52,13 @@ def create_position(
     volume = value / current_price if current_price else 0.0
     if volume <= 0:
         logging.info(f"Cannot create {side.upper()} position: volume {volume:.8f} <= 0")
+        return
+
+    if _below_ordermin(pair, volume):
+        logging.info(
+            f"Cannot create {side.upper()} position: volume {volume:.8f} < Kraken ordermin "
+            f"{config.PAIRS[pair]['ordermin']:.8f}"
+        )
         return
 
     activation_price = calculate_activation_price(pair, side, current_price, atr_val)
@@ -139,6 +153,11 @@ def refresh_position(
     volume = value / current_price if current_price else 0.0
     if volume <= 0:
         _drop_position(f"volume {volume:.8f} <= 0")
+        return False
+
+    if _below_ordermin(pair, volume):
+        # A latched exit below ordermin can never be placed; the residual is untradeable by definition.
+        _drop_position(f"volume {volume:.8f} < Kraken ordermin {config.PAIRS[pair]['ordermin']:.8f}")
         return False
 
     pos["volume"] = int(volume * 1e8) / 1e8
