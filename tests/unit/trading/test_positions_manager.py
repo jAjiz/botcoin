@@ -495,7 +495,7 @@ def test_finalize_close_nets_the_fee_into_pnl(monkeypatch) -> None:
     assert positions_manager.finalize_close(pos, state) is True
     # gross +10.00%, fee 2.0 EUR on a 100.0 EUR entry notional = 2.00%
     assert pos["pnl_percent"] == 8.0
-    assert pos["fee_eur"] == 2.0
+    assert pos["fee"] == 2.0
 
 
 def test_finalize_close_without_a_fee_leaves_pnl_gross() -> None:
@@ -504,7 +504,7 @@ def test_finalize_close_without_a_fee_leaves_pnl_gross() -> None:
 
     assert positions_manager.finalize_close(pos, state) is True
     assert pos["pnl_percent"] == 10.0
-    assert pos["fee_eur"] == 0.0
+    assert pos["fee"] == 0.0
 
 
 def test_finalize_close_fee_uses_the_executed_volume_on_a_raced_cancel() -> None:

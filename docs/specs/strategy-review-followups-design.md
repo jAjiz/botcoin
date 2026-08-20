@@ -119,18 +119,21 @@ the non-obvious part: a reader expecting an entry fee and an exit fee will look
 for a second one that does not exist.
 
 `OrderState` gains a `fee` field, populated by `_build_order_state` from Kraken's
-`fee` (quote currency, so EUR here) — it is the anti-corruption boundary, so the
+`fee` (in the pair's quote currency — EUR for every pair the bot currently trades,
+but the field is not named after it) — it is the anti-corruption boundary, so the
 field is read there and nowhere else. `closed_positions` gains a **nullable**
-`fee_eur` column. Nullable is load-bearing: it is how a reader distinguishes a
+`fee` column. Nullable is load-bearing: it is how a reader distinguishes a
 gross historical row from a net one, and there is no backfill because the data was
-never fetched.
+never fetched. Kraken's `AssetPairs` also returns `fee_volume_currency`, naming
+which currency a pair's fee is charged in; it is not stored, since the bot is
+EUR-only in practice and the extra column would have no reader.
 
 `finalize_close` expresses the fee as a percentage of the **entry notional**
 (`entry_price × volume`) so the units match what `pnl_percent` already measures
 against, and subtracts it:
 
 ```
-fee_pct     = fee_eur / (entry_price * volume) * 100
+fee_pct     = fee / (entry_price * volume) * 100
 pnl_percent = gross_pnl_percent - fee_pct
 ```
 
@@ -179,8 +182,8 @@ Grafana SQL only — no schema change, no new writes. Every input column already
 exists on `closed_positions`.
 
 **Ordering matters with §2.** Once `pnl_percent` is net of the fee, this
-expression is *already* net; subtracting `fee_eur` again would double-count it.
-`fee_eur` is for attribution — how much went to Kraken — never a second
+expression is *already* net; subtracting `fee` again would double-count it.
+`fee` is for attribution — how much went to Kraken — never a second
 subtraction.
 
 The **PnL per close** panel keeps showing percentages: per trade, a percentage is
@@ -375,7 +378,7 @@ one-line why, with the full reasoning left in the spec it came from.
   decision; §5 documents the asymmetry without constraining it.
 - Making `fee_pct` non-optional in the optimizer/backtest. Related to §2, separate
   surface.
-- Backfilling `fee_eur` for historical closes. The data was never fetched.
+- Backfilling `fee` for historical closes. The data was never fetched.
 - Any change to the trailing stop as the only exit mechanism.
 
 ## Testing

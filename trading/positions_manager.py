@@ -202,7 +202,7 @@ def finalize_close(pos: dict[str, Any], state: OrderState) -> bool:
     entry_notional = entry * float(pos.get("volume") or 0.0)
     fee_pct = (state.fee / entry_notional * 100) if entry_notional > 0 else 0.0
     pos["closing_price"] = closing_price
-    pos["fee_eur"] = state.fee
+    pos["fee"] = state.fee
     pos["pnl_percent"] = round(pnl - fee_pct, 4)
     logging.info(f"💸 Position closed: {pnl - fee_pct:+.2f}% result (fee {state.fee:.2f}€)", to_telegram=True)
     return True

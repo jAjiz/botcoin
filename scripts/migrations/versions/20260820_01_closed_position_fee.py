@@ -19,8 +19,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("closed_positions", sa.Column("fee_eur", sa.Numeric(20, 10), nullable=True))
+    op.add_column("closed_positions", sa.Column("fee", sa.Numeric(20, 10), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("closed_positions", "fee_eur")
+    op.drop_column("closed_positions", "fee")

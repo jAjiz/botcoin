@@ -621,16 +621,16 @@ def test_record_position_closed_optional_fields_populated(monkeypatch):
 
 
 def test_record_position_closed_persists_the_fee(monkeypatch):
-    """fee_eur (Task 6's finalize_close output) must pass through to the insert."""
+    """fee (Task 6's finalize_close output) must pass through to the insert."""
     session = FakeSession()
     patch_get_session(monkeypatch, session)
 
-    data = _make_closed_position_data(fee_eur=Decimal("1.23"))
+    data = _make_closed_position_data(fee=Decimal("1.23"))
     record_position_closed("XBTEUR", data)
 
     params = session.executed_statements[0].compile().params
-    assert params["fee_eur"] is not None
-    assert float(params["fee_eur"]) == 1.23
+    assert params["fee"] is not None
+    assert float(params["fee"]) == 1.23
 
 
 def test_record_position_closed_raises_on_db_error(monkeypatch):
