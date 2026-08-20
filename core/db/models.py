@@ -97,6 +97,7 @@ class ClosedPosition(Base):
     closing_order_id = Column(Text, nullable=False, unique=True)
     closed_at = Column(DateTime(timezone=True), nullable=False)
     pnl_percent = Column(Numeric(10, 4), nullable=False)
+    fee_eur = Column(Numeric(20, 10), nullable=True)
     inserted_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC))
 
     __table_args__ = (
@@ -126,6 +127,7 @@ class ClosedPosition(Base):
             "closing_order_id": self.closing_order_id,
             "closed_at": self.closed_at,
             "pnl_percent": float(self.pnl_percent),
+            "fee_eur": float(self.fee_eur) if self.fee_eur is not None else None,
         }
 
 
