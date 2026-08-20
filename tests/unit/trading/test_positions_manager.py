@@ -45,7 +45,7 @@ def test_calculate_activation_price_uses_k_stop_and_margin_fallback(monkeypatch)
         "TRADING_PARAMS",
         {"XBTEUR": {"K_ACT": None, "MIN_MARGIN": 0.1}},
     )
-    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 2.0)
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 2.0)
 
     result = positions_manager.calculate_activation_price("XBTEUR", "buy", 100.0, 5.0)
 
@@ -108,7 +108,7 @@ def test_reanchor_activation_price_updates_buy_when_gap_exceeds_expected(monkeyp
 
 
 def test_update_stop_price_updates_position_fields(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 1.5)
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 1.5)
 
     pos = {"side": "sell"}
     positions_manager.update_stop_price("XBTEUR", pos, trailing_price=120.0, atr_val=4.0)
@@ -211,7 +211,7 @@ def test_reanchor_activation_price_preserves_full_precision(monkeypatch) -> None
 
 
 def test_update_stop_price_preserves_full_precision(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 0.5)
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 0.5)
 
     pos = {"side": "sell"}
     positions_manager.update_stop_price("USDCEUR", pos, trailing_price=1.23456, atr_val=0.0008)

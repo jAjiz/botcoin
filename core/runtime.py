@@ -66,20 +66,21 @@ def update_pair_calibration(
     pair: str,
     up_events: list[dict[str, Any]],
     down_events: list[dict[str, Any]],
-    atr_p20: float,
-    atr_p50: float,
-    atr_p80: float,
-    atr_p95: float,
+    atr_ratio_p20: float,
+    atr_ratio_p50: float,
+    atr_ratio_p80: float,
+    atr_ratio_p95: float,
     row_count: int,
 ) -> None:
+    """Snapshot a pair's calibration. The percentiles are of ATR/close, not of ATR."""
     with _lock:
         _shared_data["pair_calibration"][pair] = {
             "up_events": up_events,
             "down_events": down_events,
-            "atr_p20": atr_p20,
-            "atr_p50": atr_p50,
-            "atr_p80": atr_p80,
-            "atr_p95": atr_p95,
+            "atr_ratio_p20": atr_ratio_p20,
+            "atr_ratio_p50": atr_ratio_p50,
+            "atr_ratio_p80": atr_ratio_p80,
+            "atr_ratio_p95": atr_ratio_p95,
             "row_count": row_count,
             "computed_at": now_utc(),
         }

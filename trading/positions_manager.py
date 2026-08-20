@@ -85,7 +85,7 @@ def calculate_activation_distance(pair: str, side: str, reference_price: float, 
     if k_act is not None:
         return float(k_act) * atr_val  # K_ACT = 0 means immediate activation
 
-    k_stop = get_k_stop(pair, side, atr_val)
+    k_stop = get_k_stop(pair, side, atr_val, reference_price)
     min_margin = float(TRADING_PARAMS[pair]["MIN_MARGIN"])
     return k_stop * atr_val + min_margin * reference_price
 
@@ -117,7 +117,7 @@ def reanchor_activation_price(pair: str, pos: dict[str, Any], current_price: flo
 
 
 def calculate_stop_price(pair: str, side: str, trailing_price: float, atr_val: float) -> float:
-    k_stop = get_k_stop(pair, side, atr_val)
+    k_stop = get_k_stop(pair, side, atr_val, trailing_price)
     stop_distance = k_stop * atr_val
 
     stop_price = trailing_price - stop_distance if side == "sell" else trailing_price + stop_distance

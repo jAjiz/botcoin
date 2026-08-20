@@ -37,11 +37,11 @@ def test_calculate_trading_parameters_populates_calibration_cache(monkeypatch, s
     assert len(cal["up_events"]) > 0
     assert len(cal["down_events"]) > 0
 
-    # ATR percentiles match what was written to the globals.
-    assert cal["atr_p20"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_20pct"])
-    assert cal["atr_p50"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_50pct"])
-    assert cal["atr_p80"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_80pct"])
-    assert cal["atr_p95"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_95pct"])
+    # ATR/close percentiles match what was written to the globals.
+    assert cal["atr_ratio_p20"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_ratio_p20"])
+    assert cal["atr_ratio_p50"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_ratio_p50"])
+    assert cal["atr_ratio_p80"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_ratio_p80"])
+    assert cal["atr_ratio_p95"] == pytest.approx(parameters_manager.PAIRS[pair]["atr_ratio_p95"])
 
     assert cal["row_count"] == len(sample_dataframe)
     assert cal["computed_at"] is not None

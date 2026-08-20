@@ -21,7 +21,10 @@ _FIXTURES_DIR = Path(__file__).parents[1] / "fixtures"
 
 
 def _df(rows: list[tuple[float, float, float]], atr: float = 2.0) -> pd.DataFrame:
-    """Build an OHLC frame from (high, low, close) rows with a constant ATR."""
+    """Build an OHLC frame from (high, low, close) rows with a constant ATR.
+
+    Closes sit around 100, so an ATR of 2.0 reads as a 0.02 ATR/close ratio against
+    the ratio percentiles ``_cfg`` supplies."""
     return pd.DataFrame(
         {
             "dtime": [f"t{i}" for i in range(len(rows))],
@@ -34,7 +37,7 @@ def _df(rows: list[tuple[float, float, float]], atr: float = 2.0) -> pd.DataFram
 
 
 def _cfg(
-    percentiles: tuple[float, float, float, float] = (1.0, 3.0, 5.0, 7.0),
+    percentiles: tuple[float, float, float, float] = (0.01, 0.03, 0.05, 0.07),
     k_buy: dict[str, float | None] | None = None,
     k_sell: dict[str, float | None] | None = None,
     k_act: float | None = 0.0,
@@ -46,10 +49,10 @@ def _cfg(
     return engine.EngineConfig(
         pair="T",
         calibration=engine.PairCalibration(
-            atr_p20=percentiles[0],
-            atr_p50=percentiles[1],
-            atr_p80=percentiles[2],
-            atr_p95=percentiles[3],
+            atr_ratio_p20=percentiles[0],
+            atr_ratio_p50=percentiles[1],
+            atr_ratio_p80=percentiles[2],
+            atr_ratio_p95=percentiles[3],
             k_stop_buy=kb,
             k_stop_sell=ks,
         ),
@@ -63,7 +66,7 @@ def _cfg(
 
 
 def test_first_operation_is_buy_at_first_valid_row() -> None:
-    # ATR=2.0 with thresholds (1,3,5,7) => level LV, K_STOP 1.0.
+    # ATR=2.0 at close=100 => ratio 0.02; thresholds (.01,.03,.05,.07) => level LV, K_STOP 1.0.
     df = _df([(100.0, 100.0, 100.0), (110.0, 105.0, 108.0)])
     ops = engine.simulate_operations(df, _cfg())
 
@@ -125,35 +128,35 @@ def test_returns_empty_when_no_valid_atr() -> None:
 
 
 def test_lookup_k_stop_direct_hit() -> None:
-    # ATR=2.5 with thresholds (1,2,3,4) => level MV.
-    cfg = _cfg(percentiles=(1.0, 2.0, 3.0, 4.0), k_sell={**dict.fromkeys(_LEVELS, None), "MV": 1.7})
-    assert engine.lookup_k_stop(cfg, "sell", 2.5) == 1.7
+    # ATR=2.5 at close=100 => ratio 0.025; thresholds (.01,.02,.03,.04) => level MV.
+    cfg = _cfg(percentiles=(0.01, 0.02, 0.03, 0.04), k_sell={**dict.fromkeys(_LEVELS, None), "MV": 1.7})
+    assert engine.lookup_k_stop(cfg, "sell", 2.5, 100.0) == 1.7
 
 
 def test_lookup_k_stop_falls_back_to_opposite_side() -> None:
     cfg = _cfg(
-        percentiles=(1.0, 2.0, 3.0, 4.0),
+        percentiles=(0.01, 0.02, 0.03, 0.04),
         k_sell=dict.fromkeys(_LEVELS, None),
         k_buy={**dict.fromkeys(_LEVELS, None), "MV": 3.3},
     )
-    assert engine.lookup_k_stop(cfg, "sell", 2.5) == 3.3
+    assert engine.lookup_k_stop(cfg, "sell", 2.5, 100.0) == 3.3
 
 
 def test_lookup_k_stop_falls_back_to_neighbor_level() -> None:
     # MV missing on both sides; nearest same-side neighbor present is HV.
     cfg = _cfg(
-        percentiles=(1.0, 2.0, 3.0, 4.0),
+        percentiles=(0.01, 0.02, 0.03, 0.04),
         k_sell={**dict.fromkeys(_LEVELS, None), "HV": 2.5},
         k_buy=dict.fromkeys(_LEVELS, None),
     )
-    assert engine.lookup_k_stop(cfg, "sell", 2.5) == 2.5
+    assert engine.lookup_k_stop(cfg, "sell", 2.5, 100.0) == 2.5
 
 
 def test_lookup_k_stop_returns_none_when_all_missing() -> None:
     cfg = _cfg(
-        percentiles=(1.0, 2.0, 3.0, 4.0), k_sell=dict.fromkeys(_LEVELS, None), k_buy=dict.fromkeys(_LEVELS, None)
+        percentiles=(0.01, 0.02, 0.03, 0.04), k_sell=dict.fromkeys(_LEVELS, None), k_buy=dict.fromkeys(_LEVELS, None)
     )
-    assert engine.lookup_k_stop(cfg, "sell", 2.5) is None
+    assert engine.lookup_k_stop(cfg, "sell", 2.5, 100.0) is None
 
 
 # --- reanchor_activation_price -----------------------------------------------
@@ -202,14 +205,18 @@ def test_reanchor_noop_when_within_distance() -> None:
 
 def golden_cfg() -> engine.EngineConfig:
     """Config recorded alongside the golden fixture. K values differ per level and
-    per side (with gaps) so the snapshot exercises the lookup_k_stop fallbacks."""
+    per side (with gaps) so the snapshot exercises the lookup_k_stop fallbacks.
+
+    The percentiles are ATR/close ratios; the golden frame prices around 100, so
+    they are the pre-ratio thresholds (0.40/0.60/0.90/1.20) divided by that scale,
+    and they still spread the frame's bars across all five levels."""
     return engine.EngineConfig(
         pair="GOLD",
         calibration=engine.PairCalibration(
-            atr_p20=0.40,
-            atr_p50=0.60,
-            atr_p80=0.90,
-            atr_p95=1.20,
+            atr_ratio_p20=0.004,
+            atr_ratio_p50=0.006,
+            atr_ratio_p80=0.009,
+            atr_ratio_p95=0.012,
             k_stop_buy={"LL": 1.1, "LV": 1.4, "MV": None, "HV": 2.2, "HH": 2.8},
             k_stop_sell={"LL": 1.0, "LV": None, "MV": 1.9, "HV": 2.1, "HH": None},
         ),

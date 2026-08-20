@@ -97,7 +97,7 @@ def _setup_one_pair_loop(monkeypatch, *, trailing_state=None):
     monkeypatch.setattr(scheduler, "get_last_prices", lambda _pairs: {"XBTEUR": 50000.0})
     monkeypatch.setattr(scheduler, "get_current_atr", lambda _pair: 100.0)
     monkeypatch.setattr(scheduler, "calculate_trading_parameters", lambda _pair: None)
-    monkeypatch.setattr(scheduler, "get_volatility_level", lambda _pair, _atr: "MV")
+    monkeypatch.setattr(scheduler, "get_volatility_level", lambda _pair, _atr, _close: "MV")
     monkeypatch.setattr(runtime, "update_balance", lambda _b: None)
     monkeypatch.setattr(runtime, "update_pair_data", lambda *a, **k: None)
     monkeypatch.setattr(runtime, "update_last_run_at", lambda _ts: None)
@@ -422,7 +422,7 @@ def _setup_two_pair_loop(monkeypatch, *, failing_pair: str = "AAAEUR") -> None:
     monkeypatch.setattr(scheduler, "get_current_atr", lambda _pair: 10.0)
     monkeypatch.setattr(scheduler, "calculate_trading_parameters", lambda _pair: None)
 
-    def _vol_level(pair, _atr):
+    def _vol_level(pair, _atr, _close):
         if pair == failing_pair:
             raise RuntimeError("boom")
         return "MV"

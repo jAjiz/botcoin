@@ -1,7 +1,9 @@
 import pytest
 
+import trading.engine as engine
 import trading.market_analyzer as market_analyzer
 import trading.parameters_manager as parameters_manager
+from trading.engine import PairCalibration
 
 
 def test_calculate_k_stops_uses_percentiles_and_rounds_up(monkeypatch) -> None:
@@ -25,19 +27,54 @@ def test_get_volatility_level_maps_atr_to_expected_bucket(monkeypatch) -> None:
         "PAIRS",
         {
             "XBTEUR": {
-                "atr_20pct": 10,
-                "atr_50pct": 20,
-                "atr_80pct": 30,
-                "atr_95pct": 40,
+                "atr_ratio_p20": 0.010,
+                "atr_ratio_p50": 0.020,
+                "atr_ratio_p80": 0.030,
+                "atr_ratio_p95": 0.040,
             }
         },
     )
 
-    assert parameters_manager.get_volatility_level("XBTEUR", 5) == "LL"
-    assert parameters_manager.get_volatility_level("XBTEUR", 15) == "LV"
-    assert parameters_manager.get_volatility_level("XBTEUR", 25) == "MV"
-    assert parameters_manager.get_volatility_level("XBTEUR", 35) == "HV"
-    assert parameters_manager.get_volatility_level("XBTEUR", 45) == "HH"
+    close = 1000.0
+    assert parameters_manager.get_volatility_level("XBTEUR", 5, close) == "LL"
+    assert parameters_manager.get_volatility_level("XBTEUR", 15, close) == "LV"
+    assert parameters_manager.get_volatility_level("XBTEUR", 25, close) == "MV"
+    assert parameters_manager.get_volatility_level("XBTEUR", 35, close) == "HV"
+    assert parameters_manager.get_volatility_level("XBTEUR", 45, close) == "HH"
+
+
+def test_live_and_engine_classify_identically(monkeypatch) -> None:
+    monkeypatch.setitem(
+        parameters_manager.PAIRS,
+        "XBTEUR",
+        {"atr_ratio_p20": 0.001, "atr_ratio_p50": 0.002, "atr_ratio_p80": 0.004, "atr_ratio_p95": 0.008},
+    )
+    cal = PairCalibration(
+        atr_ratio_p20=0.001,
+        atr_ratio_p50=0.002,
+        atr_ratio_p80=0.004,
+        atr_ratio_p95=0.008,
+        k_stop_buy={},
+        k_stop_sell={},
+    )
+
+    for atr, close in [(50.0, 100_000.0), (250.0, 100_000.0), (500.0, 100_000.0), (1000.0, 100_000.0)]:
+        assert parameters_manager.get_volatility_level("XBTEUR", atr, close) == engine._vol_level_from_atr(
+            atr, close, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
+        )
+
+
+def test_same_relative_volatility_classifies_the_same_at_any_price(monkeypatch) -> None:
+    monkeypatch.setitem(
+        parameters_manager.PAIRS,
+        "XBTEUR",
+        {"atr_ratio_p20": 0.001, "atr_ratio_p50": 0.002, "atr_ratio_p80": 0.004, "atr_ratio_p95": 0.008},
+    )
+
+    # 0.3% of price in both cases: the same market condition at two price levels.
+    assert parameters_manager.get_volatility_level("XBTEUR", 30.0, 10_000.0) == parameters_manager.get_volatility_level(
+        "XBTEUR", 300.0, 100_000.0
+    )
 
 
 def test_get_k_stop_uses_fallbacks_when_current_level_missing(monkeypatch) -> None:
@@ -47,10 +84,10 @@ def test_get_k_stop_uses_fallbacks_when_current_level_missing(monkeypatch) -> No
         "PAIRS",
         {
             "XBTEUR": {
-                "atr_20pct": 10,
-                "atr_50pct": 20,
-                "atr_80pct": 30,
-                "atr_95pct": 40,
+                "atr_ratio_p20": 0.010,
+                "atr_ratio_p50": 0.020,
+                "atr_ratio_p80": 0.030,
+                "atr_ratio_p95": 0.040,
             }
         },
     )
@@ -67,8 +104,8 @@ def test_get_k_stop_uses_fallbacks_when_current_level_missing(monkeypatch) -> No
         },
     )
 
-    # ATR=35 => HV. Missing on sell side, so it should fallback to HH (neighbor).
-    value = parameters_manager.get_k_stop("XBTEUR", "sell", 35)
+    # ATR=35 at close=1000 => ratio 0.035 => HV. Missing on sell side, so it should fallback to HH (neighbor).
+    value = parameters_manager.get_k_stop("XBTEUR", "sell", 35, 1000.0)
 
     assert value == 5.5
 
@@ -106,11 +143,11 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
 
     parameters_manager.calculate_trading_parameters(pair, infoLog=False)
 
-    # ATR percentiles from the fixture's atr column
-    assert parameters_manager.PAIRS[pair]["atr_20pct"] == pytest.approx(1.5)
-    assert parameters_manager.PAIRS[pair]["atr_50pct"] == pytest.approx(2.5)
-    assert parameters_manager.PAIRS[pair]["atr_80pct"] == pytest.approx(3.5)
-    assert parameters_manager.PAIRS[pair]["atr_95pct"] == pytest.approx(4.5)
+    # ATR/close percentiles from the fixture's atr and close columns
+    assert parameters_manager.PAIRS[pair]["atr_ratio_p20"] == pytest.approx(0.0146493, rel=1e-5)
+    assert parameters_manager.PAIRS[pair]["atr_ratio_p50"] == pytest.approx(0.0255102, rel=1e-5)
+    assert parameters_manager.PAIRS[pair]["atr_ratio_p80"] == pytest.approx(0.0361801, rel=1e-5)
+    assert parameters_manager.PAIRS[pair]["atr_ratio_p95"] == pytest.approx(0.0463853, rel=1e-5)
 
     # K_STOP sell side (from real uptrend events, 2 events X 5 vol levels)
     sell = parameters_manager.TRADING_PARAMS[pair]["K_STOP"]["sell"]

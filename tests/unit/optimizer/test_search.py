@@ -52,10 +52,10 @@ def _calibration() -> dict:
     return {
         "up_events": [{"volatility_levels": {"LV": {"k_value": 1.5}, "MV": {"k_value": 2.0}}}],
         "down_events": [{"volatility_levels": {"LV": {"k_value": 1.2}, "MV": {"k_value": 1.8}}}],
-        "atr_p20": 1.0,
-        "atr_p50": 2.0,
-        "atr_p80": 3.0,
-        "atr_p95": 4.0,
+        "atr_ratio_p20": 0.01,
+        "atr_ratio_p50": 0.02,
+        "atr_ratio_p80": 0.03,
+        "atr_ratio_p95": 0.04,
     }
 
 
@@ -144,7 +144,7 @@ def test_run_optimize_no_global_mutation(monkeypatch) -> None:
         _PAIR,
         {"K_ACT": "1.0", "MIN_MARGIN": "0.005"},
     )
-    monkeypatch.setitem(config.PAIRS, _PAIR, {"atr_20pct": 1.0, "atr_50pct": 2.0})
+    monkeypatch.setitem(config.PAIRS, _PAIR, {"atr_ratio_p20": 0.01, "atr_ratio_p50": 0.02})
 
     before_tp = copy.deepcopy(config.TRADING_PARAMS[_PAIR])
     before_pairs = copy.deepcopy(config.PAIRS[_PAIR])
