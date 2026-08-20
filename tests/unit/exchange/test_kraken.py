@@ -675,7 +675,7 @@ def test_place_limit_order_returns_order_id_on_success(monkeypatch) -> None:
 
     result = kraken.place_limit_order("XBTEUR", "buy", 80000.0, 0.001)
 
-    assert result == "ORDER456"
+    assert result.txid == "ORDER456"
 
 
 def test_place_limit_order_rounds_to_pair_precision(monkeypatch) -> None:
@@ -748,6 +748,31 @@ def test_place_limit_order_omits_cl_ord_id_key_when_not_given(monkeypatch) -> No
     kraken.place_limit_order("XBTEUR", "buy", 80000.0, 0.001)
 
     assert "cl_ord_id" not in captured["data"]
+
+
+def test_place_limit_order_returns_the_submitted_amounts(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {"txid": ["ORDER456"]}},
+    )
+    monkeypatch.setitem(config.PAIRS, "USDCEUR", {"pair_decimals": 4, "lot_decimals": 8})
+
+    placed = kraken.place_limit_order("USDCEUR", "sell", 1.031274, 12.123456789)
+
+    assert placed.txid == "ORDER456"
+    assert placed.price == 1.0313
+    assert placed.volume == 12.12345679
+
+
+def test_place_limit_order_returns_none_when_txid_is_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        kraken.api,
+        "query_private",
+        lambda *args, **kwargs: {"error": [], "result": {}},
+    )
+
+    assert kraken.place_limit_order("XBTEUR", "buy", 80000.0, 0.001) is None
 
 
 # ============================================================================

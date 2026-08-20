@@ -3,7 +3,9 @@ from typing import Any
 
 import pytest
 
+import exchange.kraken as kraken
 import trading.positions_manager as positions_manager
+from core.utils import now_utc
 from exchange.kraken import OrderLookup, OrderState, OrderStatus
 
 
@@ -265,7 +267,11 @@ def test_refresh_position_drops_position_and_returns_false_when_below_min_value(
 
 
 def test_close_position_updates_position_on_success(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: "ORDER123")
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *args, **kwargs: kraken.PlacedOrder(txid="ORDER123", price=90.0, volume=1.0),
+    )
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
@@ -285,7 +291,7 @@ def test_close_position_mints_and_writes_the_request_id_before_placing(monkeypat
     def fake_place_limit_order(pair, side, price, volume, cl_ord_id=None):
         captured["pos_closing_request_id"] = pos.get("closing_request_id")
         captured["cl_ord_id"] = cl_ord_id
-        return "ORDER123"
+        return kraken.PlacedOrder(txid="ORDER123", price=price, volume=volume)
 
     monkeypatch.setattr(positions_manager, "place_limit_order", fake_place_limit_order)
 
@@ -325,7 +331,11 @@ def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatc
 
 def test_close_position_announces_a_successful_placement(monkeypatch) -> None:
     """Announced on every attempt, including the first after the breach."""
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: "ORDER123")
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *args, **kwargs: kraken.PlacedOrder(txid="ORDER123", price=90.0, volume=1.0),
+    )
     sent = _capture_telegram(monkeypatch)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
@@ -358,6 +368,19 @@ def test_close_position_never_sends_a_raised_error_to_telegram(monkeypatch) -> N
         assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
 
     assert [m for m, tg in sent if tg] == []
+
+
+def test_close_position_stores_the_submitted_volume(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *a, **k: kraken.PlacedOrder(txid="TX1", price=1.0313, volume=12.12345679),
+    )
+    pos = {"side": "sell", "volume": 12.123456789, "entry_price": 1.0, "stop_at": now_utc()}
+
+    assert positions_manager.close_position("USDCEUR", pos, {"USDCEUR": 1.031274}) is True
+    assert pos["volume"] == 12.12345679
+    assert pos["closing_price"] == 1.0313
 
 
 # ============================================================================
@@ -647,7 +670,8 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
         positions_manager,
         "place_limit_order",
         lambda pair, side, price, volume, cl_ord_id=None: (
-            place_calls.append((pair, side, price, volume, cl_ord_id)) or "NEWORDER1"
+            place_calls.append((pair, side, price, volume, cl_ord_id))
+            or kraken.PlacedOrder(txid="NEWORDER1", price=price, volume=volume)
         ),
     )
 
@@ -687,7 +711,7 @@ def test_reprice_closing_order_mints_a_new_id_for_the_replacement(monkeypatch) -
     def fake_place_limit_order(pair, side, price, volume, cl_ord_id=None):
         captured["pos_closing_request_id"] = pos.get("closing_request_id")
         captured["cl_ord_id"] = cl_ord_id
-        return "NEWORDER1"
+        return kraken.PlacedOrder(txid="NEWORDER1", price=price, volume=volume)
 
     monkeypatch.setattr(positions_manager, "place_limit_order", fake_place_limit_order)
 
@@ -802,7 +826,8 @@ def test_reprice_closing_order_sizes_replacement_to_remainder_on_fill_in_cancel_
         positions_manager,
         "place_limit_order",
         lambda pair, side, price, volume, cl_ord_id=None: (
-            place_calls.append((pair, side, price, volume)) or "NEWORDER2"
+            place_calls.append((pair, side, price, volume))
+            or kraken.PlacedOrder(txid="NEWORDER2", price=price, volume=volume)
         ),
     )
 
@@ -1235,7 +1260,11 @@ def test_manage_close_position_clears_a_dead_order_and_re_places_it_in_one_call(
         lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=0.0, vol_exec=0.0),
     )
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: "ORD002")
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *a, **k: kraken.PlacedOrder(txid="ORD002", price=67000.0, volume=0.5),
+    )
 
     pos = {
         "side": "sell",
@@ -1349,7 +1378,9 @@ def test_manage_close_position_clears_and_replaces_when_the_request_never_landed
     monkeypatch.setattr(
         positions_manager,
         "place_limit_order",
-        lambda pair, side, price, volume, cl_ord_id=None: place_calls.append(cl_ord_id) or "NEWORDER9",
+        lambda pair, side, price, volume, cl_ord_id=None: (
+            place_calls.append(cl_ord_id) or kraken.PlacedOrder(txid="NEWORDER9", price=price, volume=volume)
+        ),
     )
 
     pos = {

@@ -128,6 +128,15 @@ class OrderState:
     vol: float = 0.0
 
 
+@dataclass(frozen=True)
+class PlacedOrder:
+    """What Kraken accepted: the txid, and the price/volume as actually submitted."""
+
+    txid: str
+    price: float
+    volume: float
+
+
 def _build_order_state(order: dict[str, Any]) -> OrderState:
     """Build an ``OrderState`` from a raw Kraken order, so every lookup path reads it identically."""
     price = order.get("price")
@@ -226,7 +235,9 @@ def _format_amount(value: float, decimals: int | None) -> str:
     return f"{value:.{decimals}f}"
 
 
-def place_limit_order(pair: str, side: str, price: float, volume: float, cl_ord_id: str | None = None) -> str | None:
+def place_limit_order(
+    pair: str, side: str, price: float, volume: float, cl_ord_id: str | None = None
+) -> PlacedOrder | None:
     meta = config.PAIRS.get(pair, {})
     price_str = _format_amount(price, meta.get("pair_decimals"))
     volume_str = _format_amount(volume, meta.get("lot_decimals"))
@@ -246,8 +257,12 @@ def place_limit_order(pair: str, side: str, price: float, volume: float, cl_ord_
     if result is None:
         return None
     new_order = result.get("txid", [None])[0]
+    if not new_order:
+        # A PlacedOrder is always truthy; without this an id-less response reads as success.
+        logging.error(f"AddOrder for {pair} returned no txid; treating the outcome as unknown.")
+        return None
     logging.info(f"Created LIMIT {side.upper()} order {new_order} | {volume_str} @ {price_str}€")
-    return new_order
+    return PlacedOrder(txid=new_order, price=float(price_str), volume=float(volume_str))
 
 
 def fetch_ohlc_data(pair: str, interval: int, since: int | None = None) -> tuple[pd.DataFrame, int] | None:

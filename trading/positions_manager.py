@@ -325,11 +325,11 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
     cl_ord_id = new_cl_ord_id()
     pos.update({"volume": remaining, "closing_price": current_price, "closing_request_id": cl_ord_id})
     pos.pop("closing_order_id", None)
-    new_order = place_limit_order(pair, side, current_price, remaining, cl_ord_id=cl_ord_id)
-    if not new_order:
+    placed = place_limit_order(pair, side, current_price, remaining, cl_ord_id=cl_ord_id)
+    if placed is None:
         logging.error(f"[{pair}] Closing order replacement not confirmed after cancel; the next tick will resolve it.")
         return False  # unconfirmed: manage_close_position's unconfirmed sub-state resolves it
-    pos["closing_order_id"] = new_order
+    pos.update({"closing_order_id": placed.txid, "closing_price": placed.price, "volume": placed.volume})
     return True
 
 
@@ -376,11 +376,11 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
 
         cl_ord_id = new_cl_ord_id()
         pos.update({"closing_request_id": cl_ord_id, "closing_price": current_price})
-        closing_order = place_limit_order(pair, side, current_price, volume, cl_ord_id=cl_ord_id)
-        if not closing_order:
+        placed = place_limit_order(pair, side, current_price, volume, cl_ord_id=cl_ord_id)
+        if placed is None:
             logging.error(f"[{pair}] Closing order not confirmed; it remains owed and will be resolved next tick.")
             return False
-        pos["closing_order_id"] = closing_order
+        pos.update({"closing_order_id": placed.txid, "closing_price": placed.price, "volume": placed.volume})
 
         # Announced on every attempt: the breach says the stop fired, this says an order rests.
         logging.info(
