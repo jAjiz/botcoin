@@ -149,6 +149,22 @@ def test_round_trip_alternates_sides_and_compounds_cum_pnl() -> None:
     assert [op.cum_pnl for op in ops] == pytest.approx([0.0, 8.0, 24.0, 59.0434783])
 
 
+def test_an_exit_row_reports_the_k_stop_of_its_own_level() -> None:
+    # The stop fires 10 below the bar price, and the p50 boundary sits between the two
+    # ratios: the bar reads LV (2/100) while the execution price reads MV (2/90).
+    cfg = _cfg(
+        percentiles=(0.01, 0.021, 0.05, 0.07),
+        k_sell={"LL": 1.0, "LV": 5.0, "MV": 3.0, "HV": 4.0, "HH": 2.0},
+    )
+    rows = [(100.0, 100.0, 100.0), (100.0, 80.0, 100.0)]
+
+    exit_op = engine.simulate_operations(_df(rows), cfg)[1]
+
+    assert exit_op.price == 90.0
+    assert exit_op.vol == "LV"
+    assert exit_op.k_stop == 5.0
+
+
 def test_entry_and_exit_legs_record_their_own_fee() -> None:
     ops = engine.simulate_operations(_df(_ROUND_TRIP[:2]), _cfg(), fee_rate=0.01)
 

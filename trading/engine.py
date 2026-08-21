@@ -67,15 +67,11 @@ def _pnl_abs(prev_side: str, prev_price: float, curr_price: float) -> float:
     return prev_price - curr_price
 
 
-def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float, close: float) -> float | None:
-    """Resolve K_STOP for a side/ATR: same side, then opposite side, then the nearest
-    neighbouring levels on the same side. Reproduces parameters_manager.get_k_stop's
-    fallback logic but reads cfg.calibration instead of TRADING_PARAMS."""
+def _k_for_level(cfg: EngineConfig, side: str, vol: str) -> float | None:
+    """Resolve K_STOP for a side and an already-classified level: same side, then opposite
+    side, then the nearest neighbouring levels on the same side. Reproduces
+    parameters_manager.get_k_stop's fallback logic but reads cfg.calibration."""
     cal = cfg.calibration
-    vol = _vol_level_from_atr(
-        atr_val, close, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
-    )
-
     same = cal.k_stop_sell if side == "sell" else cal.k_stop_buy
     opp = cal.k_stop_buy if side == "sell" else cal.k_stop_sell
 
@@ -96,6 +92,15 @@ def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float, close: float) ->
                     return k_stop
 
     return None
+
+
+def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float, close: float) -> float | None:
+    """Resolve K_STOP for a side/ATR, classifying `close` into a level first."""
+    cal = cfg.calibration
+    vol = _vol_level_from_atr(
+        atr_val, close, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
+    )
+    return _k_for_level(cfg, side, vol)
 
 
 def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float) -> float:
@@ -132,7 +137,6 @@ def _record_stop_exit(
     exec_price: float,
     dtime: str,
     vol: str,
-    atr: float,
     fee_rate: float,
     cum_pnl: float,
 ) -> float:
@@ -148,7 +152,8 @@ def _record_stop_exit(
     if pnl_pct is not None:
         cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
         cum_pnl = (cum_factor - 1.0) * 100.0
-    k_used = lookup_k_stop(cfg, side, atr, exec_price) or 0.0
+    # Keyed on the level this very row reports, so the two can never describe different moments.
+    k_used = _k_for_level(cfg, side, vol) or 0.0
     ops.append(
         Operation(
             idx=len(ops) + 1,
@@ -212,7 +217,7 @@ def simulate_operations(
     first_price = _price_of(first_row, has_close, has_open)
     first_time = str(first_row.dtime)
     first_vol = _vol_level_from_atr(first_atr, first_price, ratio_20, ratio_50, ratio_80, ratio_95)
-    first_k = lookup_k_stop(cfg, "buy", first_atr, first_price) or 0.0
+    first_k = _k_for_level(cfg, "buy", first_vol) or 0.0
     first_fee = float(first_price) * float(fee_rate)
     # The entry fee is an immediate negative return of fee_rate * 100 percent.
     cum_pnl -= float(fee_rate) * 100.0
@@ -304,7 +309,7 @@ def simulate_operations(
             continue
 
         exec_price = stop_px
-        cum_pnl = _record_stop_exit(ops, cfg, side, exec_price, dtime, vol, atr, fee_rate, cum_pnl)
+        cum_pnl = _record_stop_exit(ops, cfg, side, exec_price, dtime, vol, fee_rate, cum_pnl)
 
         if max_ops is not None and len(ops) >= max_ops:
             break
