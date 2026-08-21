@@ -127,7 +127,17 @@ def test_activation_price_uses_k_act_when_set_else_k_stop_plus_min_margin(
     k_act: float | None, side: str, expected: float
 ) -> None:
     cfg = _cfg(k_act=k_act, min_margin=0.01)
-    assert engine.activation_price(cfg, side, 100.0, 2.0) == pytest.approx(expected)
+    assert engine.activation_price(cfg, side, 100.0, 2.0, 100.0) == pytest.approx(expected)
+
+
+def test_stop_price_anchors_on_the_trailing_price_but_classifies_with_close() -> None:
+    # With ATR 2.0 the trailing price reads LV (2/100) while the close reads MV (2/60).
+    cfg = _cfg(
+        percentiles=(0.01, 0.03, 0.05, 0.07),
+        k_sell={"LL": 1.0, "LV": 2.0, "MV": 5.0, "HV": 4.0, "HH": 3.0},
+    )
+
+    assert engine.stop_price(cfg, "sell", 100.0, 2.0, 60.0) == pytest.approx(90.0)
 
 
 # --- simulate_operations ---------------------------------------------------

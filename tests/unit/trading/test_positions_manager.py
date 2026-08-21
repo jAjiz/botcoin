@@ -34,7 +34,7 @@ def test_calculate_activation_price_uses_k_act_when_defined(monkeypatch) -> None
         {"XBTEUR": {"K_ACT": 2.0, "MIN_MARGIN": 0.01}},
     )
 
-    result = positions_manager.calculate_activation_price("XBTEUR", "sell", 100.0, 5.0)
+    result = positions_manager.calculate_activation_price("XBTEUR", "sell", 100.0, 5.0, 100.0)
 
     assert result == 110.0
 
@@ -47,7 +47,7 @@ def test_calculate_activation_price_uses_k_stop_and_margin_fallback(monkeypatch)
     )
     monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 2.0)
 
-    result = positions_manager.calculate_activation_price("XBTEUR", "buy", 100.0, 5.0)
+    result = positions_manager.calculate_activation_price("XBTEUR", "buy", 100.0, 5.0, 100.0)
 
     # distance = 2*5 + 0.1*100 = 20
     assert result == 80.0
@@ -57,10 +57,22 @@ def test_update_activation_price_updates_position_fields(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_args: 87.5)
 
     pos = {"side": "buy", "entry_price": 100.0}
-    positions_manager.update_activation_price("XBTEUR", pos, atr_val=3.0)
+    positions_manager.update_activation_price("XBTEUR", pos, atr_val=3.0, current_price=99.0)
 
     assert pos["activation_price"] == 87.5
     assert pos["activation_atr"] == 3.0
+
+
+def test_update_activation_price_classifies_with_the_current_price(monkeypatch) -> None:
+    seen: list[float] = []
+    monkeypatch.setattr(positions_manager, "TRADING_PARAMS", {"XBTEUR": {"K_ACT": None, "MIN_MARGIN": 0.0}})
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: seen.append(close) or 1.0)
+
+    pos = {"side": "sell", "entry_price": 100.0}
+    positions_manager.update_activation_price("XBTEUR", pos, atr_val=2.0, current_price=140.0)
+
+    assert seen == [140.0]  # the level follows the market, not the old entry
+    assert pos["activation_price"] == 102.0  # the distance still anchors on entry_price
 
 
 def test_reanchor_activation_price_returns_false_when_gap_within_expected(monkeypatch) -> None:
@@ -111,7 +123,7 @@ def test_update_stop_price_updates_position_fields(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 1.5)
 
     pos = {"side": "sell"}
-    positions_manager.update_stop_price("XBTEUR", pos, trailing_price=120.0, atr_val=4.0)
+    positions_manager.update_stop_price("XBTEUR", pos, trailing_price=120.0, atr_val=4.0, current_price=118.0)
 
     assert pos["trailing_price"] == 120.0
     assert pos["stop_price"] == 114.0
@@ -193,7 +205,7 @@ def test_update_activation_price_preserves_full_precision(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_args: 1.0234567)
 
     pos = {"side": "buy", "entry_price": 1.0001}
-    positions_manager.update_activation_price("USDCEUR", pos, atr_val=0.00081234)
+    positions_manager.update_activation_price("USDCEUR", pos, atr_val=0.00081234, current_price=1.0002)
 
     assert pos["activation_price"] == 1.0234567
     assert pos["activation_atr"] == 0.00081234
@@ -214,7 +226,7 @@ def test_update_stop_price_preserves_full_precision(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 0.5)
 
     pos = {"side": "sell"}
-    positions_manager.update_stop_price("USDCEUR", pos, trailing_price=1.23456, atr_val=0.0008)
+    positions_manager.update_stop_price("USDCEUR", pos, trailing_price=1.23456, atr_val=0.0008, current_price=1.234)
 
     # stop = 1.23456 - 0.5 * 0.0008 = 1.23416
     assert pos["stop_price"] == pytest.approx(1.23416)
@@ -270,6 +282,17 @@ def test_refresh_position_drops_position_and_returns_false_when_below_min_value(
 
     assert result is False
     assert "XBTEUR" not in trailing_state
+
+
+def test_update_stop_price_classifies_with_the_current_price(monkeypatch) -> None:
+    seen: list[float] = []
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: seen.append(close) or 1.0)
+
+    pos = {"side": "sell"}
+    positions_manager.update_stop_price("XBTEUR", pos, trailing_price=120.0, atr_val=2.0, current_price=110.0)
+
+    assert seen == [110.0]  # the level follows the market, not the favourable extreme
+    assert pos["stop_price"] == 118.0  # the stop still anchors on the trailing price
 
 
 def test_refresh_position_drops_when_remaining_below_ordermin(monkeypatch) -> None:
@@ -1074,7 +1097,7 @@ def test_tick_position_recalibrates_activation_when_atr_out_of_range(monkeypatch
     monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.1)
     monkeypatch.setattr(positions_manager, "reanchor_activation_price", lambda *_: False)
 
-    def fake_update_activation(pair, pos, atr) -> None:
+    def fake_update_activation(pair, pos, atr, close) -> None:
         pos["activation_price"] = 80.0
         pos["activation_atr"] = atr
 
@@ -1097,7 +1120,7 @@ def test_tick_position_recalibrates_then_reanchors_when_both_conditions_met(monk
 
     update_order: list[str] = []
 
-    def fake_update_activation(pair, pos, atr) -> None:
+    def fake_update_activation(pair, pos, atr, close) -> None:
         update_order.append("atr_recalib")
         pos["activation_price"] = 88.0
         pos["activation_atr"] = atr
@@ -1132,7 +1155,7 @@ def test_tick_position_activates_sell_when_price_reaches_activation(monkeypatch)
     monkeypatch.setattr(
         positions_manager,
         "update_stop_price",
-        lambda pair, pos, price, atr: pos.update({"trailing_price": price, "stop_price": price - 5}),
+        lambda pair, pos, price, atr, close: pos.update({"trailing_price": price, "stop_price": price - 5}),
     )
     monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
 
@@ -1206,7 +1229,7 @@ def test_tick_position_updates_trailing_when_sell_price_moves_up(monkeypatch) ->
     monkeypatch.setattr(
         positions_manager,
         "update_stop_price",
-        lambda pair, pos, price, atr: updated_prices.append(price),
+        lambda pair, pos, price, atr, close: updated_prices.append(price),
     )
 
     # sell: update trailing when current_price > trailing_price; stop_atr in range, stop not hit
@@ -1223,7 +1246,7 @@ def test_tick_position_recalibrates_stop_when_stop_atr_out_of_range(monkeypatch)
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *_: True)
     monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.1)
 
-    def fake_update_stop(pair, pos, price, atr) -> None:
+    def fake_update_stop(pair, pos, price, atr, close) -> None:
         pos["stop_price"] = 70.0
         pos["stop_atr"] = atr
 

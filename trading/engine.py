@@ -68,9 +68,7 @@ def _pnl_abs(prev_side: str, prev_price: float, curr_price: float) -> float:
 
 
 def _k_for_level(cfg: EngineConfig, side: str, vol: str) -> float | None:
-    """Resolve K_STOP for a side and an already-classified level: same side, then opposite
-    side, then the nearest neighbouring levels on the same side. Reproduces
-    parameters_manager.get_k_stop's fallback logic but reads cfg.calibration."""
+    """Resolve K_STOP for an already-classified level: same side, then opposite, then nearest neighbours."""
     cal = cfg.calibration
     same = cal.k_stop_sell if side == "sell" else cal.k_stop_buy
     opp = cal.k_stop_buy if side == "sell" else cal.k_stop_sell
@@ -103,23 +101,25 @@ def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float, close: float) ->
     return _k_for_level(cfg, side, vol)
 
 
-def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float) -> float:
+def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float, close: float) -> float:
+    """``reference_price`` anchors the distance; ``close`` classifies the level."""
     k_act = cfg.k_act
     if k_act is not None:
         return float(k_act) * atr_val
-    k_stop = lookup_k_stop(cfg, side, atr_val, reference_price) or 0.0
+    k_stop = lookup_k_stop(cfg, side, atr_val, close) or 0.0
     return float(k_stop) * atr_val + (cfg.min_margin * reference_price)
 
 
-def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float) -> float:
-    distance = activation_distance(cfg, side, entry_price, atr_val)
+def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float, close: float) -> float:
+    distance = activation_distance(cfg, side, entry_price, atr_val, close)
     if side == "sell":
         return entry_price + distance
     return entry_price - distance
 
 
-def stop_price(cfg: EngineConfig, side: str, trailing_price: float, atr_val: float) -> float:
-    k_stop = lookup_k_stop(cfg, side, atr_val, trailing_price) or 0.0
+def stop_price(cfg: EngineConfig, side: str, trailing_price: float, atr_val: float, close: float) -> float:
+    """``trailing_price`` anchors the stop; ``close`` classifies the level."""
+    k_stop = lookup_k_stop(cfg, side, atr_val, close) or 0.0
     stop_distance = float(k_stop) * atr_val
     if side == "sell":
         return trailing_price - stop_distance
@@ -140,11 +140,7 @@ def _record_stop_exit(
     fee_rate: float,
     cum_pnl: float,
 ) -> float:
-    """Append the exit leg for ``side`` and return the updated cumulative PnL.
-
-    Both sides book an exit identically — only the recorded ``side`` differs — so
-    the body lives here once instead of being mirrored in the sell/buy branches.
-    """
+    """Append the exit leg for ``side`` and return the updated cumulative PnL; both sides book it identically."""
     prev = ops[-1]
     fee = float(exec_price) * float(fee_rate)
     pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
@@ -260,21 +256,21 @@ def simulate_operations(
         atr_limit_min = atr * (1 - cfg.atr_desv_limit)
 
         if activation_px is None:
-            activation_px = activation_price(cfg, side, entry_price, atr)
+            activation_px = activation_price(cfg, side, entry_price, atr, price)
             activation_atr = atr
 
         if not active:
             if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
-                activation_px = activation_price(cfg, side, entry_price, atr)
+                activation_px = activation_price(cfg, side, entry_price, atr, price)
                 activation_atr = atr
 
             # Re-anchor toward the current price when it has drifted too far. Mirrors
             # positions_manager.reanchor_activation_price: uses the stored
             # activation_atr, not the current bar ATR.
-            exp_dist = activation_distance(cfg, side, price, activation_atr)
+            exp_dist = activation_distance(cfg, side, price, activation_atr, price)
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
             if gap > exp_dist:
-                activation_px = activation_price(cfg, side, price, activation_atr)
+                activation_px = activation_price(cfg, side, price, activation_atr, price)
 
             # A sell activates when the bar's high crosses up through the
             # activation price and then trails the highs; a buy is the mirror.
@@ -283,7 +279,7 @@ def simulate_operations(
                 continue
             active = True
             trailing_price = high if side == "sell" else low
-            stop_px = stop_price(cfg, side, trailing_price, atr)
+            stop_px = stop_price(cfg, side, trailing_price, atr, price)
             stop_atr = atr
 
         if (
@@ -292,7 +288,7 @@ def simulate_operations(
             and stop_atr is not None
             and (stop_atr < atr_limit_min or stop_atr > atr_limit_max)
         ):
-            stop_px = stop_price(cfg, side, trailing_price, atr)
+            stop_px = stop_price(cfg, side, trailing_price, atr, price)
             stop_atr = atr
 
         # Trail the favourable extreme (highs for a sell, lows for a buy), then
@@ -301,7 +297,7 @@ def simulate_operations(
         improved = extreme > trailing_price if side == "sell" else extreme < trailing_price
         if improved:
             trailing_price = extreme
-            stop_px = stop_price(cfg, side, trailing_price, atr)
+            stop_px = stop_price(cfg, side, trailing_price, atr, price)
             stop_atr = atr
 
         stop_hit = low <= stop_px if side == "sell" else high >= stop_px

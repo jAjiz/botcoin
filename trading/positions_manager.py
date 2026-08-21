@@ -61,7 +61,7 @@ def create_position(
         )
         return
 
-    activation_price = calculate_activation_price(pair, side, current_price, atr_val)
+    activation_price = calculate_activation_price(pair, side, current_price, atr_val, current_price)
     stored_volume = int(volume * 1e8) / 1e8
 
     trailing_state[pair] = {
@@ -79,27 +79,28 @@ def create_position(
     )
 
 
-def calculate_activation_distance(pair: str, side: str, reference_price: float, atr_val: float) -> float:
+def calculate_activation_distance(pair: str, side: str, reference_price: float, atr_val: float, close: float) -> float:
+    """``reference_price`` anchors the distance; ``close`` classifies the level, and is always the current price."""
     k_act = TRADING_PARAMS[pair]["K_ACT"]
 
     if k_act is not None:
         return float(k_act) * atr_val  # K_ACT = 0 means immediate activation
 
-    k_stop = get_k_stop(pair, side, atr_val, reference_price)
+    k_stop = get_k_stop(pair, side, atr_val, close)
     min_margin = float(TRADING_PARAMS[pair]["MIN_MARGIN"])
     return k_stop * atr_val + min_margin * reference_price
 
 
-def calculate_activation_price(pair: str, side: str, entry_price: float, atr_val: float) -> float:
-    activation_distance = calculate_activation_distance(pair, side, entry_price, atr_val)
+def calculate_activation_price(pair: str, side: str, entry_price: float, atr_val: float, close: float) -> float:
+    activation_distance = calculate_activation_distance(pair, side, entry_price, atr_val, close)
     activation_price = entry_price + activation_distance if side == "sell" else entry_price - activation_distance
     return activation_price
 
 
-def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float) -> None:
+def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float, current_price: float) -> None:
     side = pos["side"]
     entry_price = pos["entry_price"]
-    activation_price = calculate_activation_price(pair, side, entry_price, atr_val)
+    activation_price = calculate_activation_price(pair, side, entry_price, atr_val, current_price)
 
     pos.update({"activation_price": activation_price, "activation_atr": atr_val})
 
@@ -107,26 +108,29 @@ def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float) -> N
 def reanchor_activation_price(pair: str, pos: dict[str, Any], current_price: float) -> bool:
     side = pos["side"]
     atr_val = pos["activation_atr"]
-    expected_distance = calculate_activation_distance(pair, side, current_price, atr_val)
+    expected_distance = calculate_activation_distance(pair, side, current_price, atr_val, current_price)
     gap = pos["activation_price"] - current_price if side == "sell" else current_price - pos["activation_price"]
     if gap <= expected_distance:
         return False
 
-    pos["activation_price"] = calculate_activation_price(pair, side, current_price, atr_val)
+    pos["activation_price"] = calculate_activation_price(pair, side, current_price, atr_val, current_price)
     return True
 
 
-def calculate_stop_price(pair: str, side: str, trailing_price: float, atr_val: float) -> float:
-    k_stop = get_k_stop(pair, side, atr_val, trailing_price)
+def calculate_stop_price(pair: str, side: str, trailing_price: float, atr_val: float, close: float) -> float:
+    """``trailing_price`` anchors the stop; ``close`` classifies the level."""
+    k_stop = get_k_stop(pair, side, atr_val, close)
     stop_distance = k_stop * atr_val
 
     stop_price = trailing_price - stop_distance if side == "sell" else trailing_price + stop_distance
     return stop_price
 
 
-def update_stop_price(pair: str, pos: dict[str, Any], trailing_price: float, atr_val: float) -> None:
+def update_stop_price(
+    pair: str, pos: dict[str, Any], trailing_price: float, atr_val: float, current_price: float
+) -> None:
     side = pos["side"]
-    stop_price = calculate_stop_price(pair, side, trailing_price, atr_val)
+    stop_price = calculate_stop_price(pair, side, trailing_price, atr_val, current_price)
 
     pos.update({"trailing_price": trailing_price, "stop_price": stop_price, "stop_atr": atr_val})
 
@@ -251,7 +255,7 @@ def tick_position(
 
     if not trailing_active:
         if pos["activation_atr"] < atr_limit_min or pos["activation_atr"] > atr_limit_max:
-            update_activation_price(pair, pos, atr_val)
+            update_activation_price(pair, pos, atr_val, current_price)
             logging.info(
                 f"♻️ Recalibrate {side.upper()} position: activation price to {round_price(pair, pos['activation_price']):,}€."
             )
@@ -269,14 +273,14 @@ def tick_position(
                 f"[{pair}] ⚡ Activation price {round_price(pair, pos['activation_price']):,}€ reached for {side.upper()} position.",
                 to_telegram=True,
             )
-            update_stop_price(pair, pos, current_price, atr_val)
+            update_stop_price(pair, pos, current_price, atr_val, current_price)
             logging.info(
                 f"📈 Update {side.upper()} position: new trailing price {round_price(pair, pos['trailing_price']):,}€ | stop {round_price(pair, pos['stop_price']):,}€"
             )
 
     else:
         if pos["stop_atr"] < atr_limit_min or pos["stop_atr"] > atr_limit_max:
-            update_stop_price(pair, pos, pos["trailing_price"], atr_val)
+            update_stop_price(pair, pos, pos["trailing_price"], atr_val, current_price)
             logging.info(
                 f"♻️ Recalibrate {side.upper()} position: stop price to {round_price(pair, pos['stop_price']):,}€."
             )
@@ -295,7 +299,7 @@ def tick_position(
         if (side == "sell" and current_price > pos["trailing_price"]) or (
             side == "buy" and current_price < pos["trailing_price"]
         ):
-            update_stop_price(pair, pos, current_price, atr_val)
+            update_stop_price(pair, pos, current_price, atr_val, current_price)
             logging.info(
                 f"📈 Update {side.upper()} position: new trailing price {round_price(pair, pos['trailing_price']):,}€ | stop {round_price(pair, pos['stop_price']):,}€"
             )
