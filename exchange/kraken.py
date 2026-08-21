@@ -259,7 +259,8 @@ def place_limit_order(
     )
     if result is None:
         return None
-    new_order = result.get("txid", [None])[0]
+    txids = result.get("txid") or []
+    new_order = txids[0] if txids else None
     if not new_order:
         # A PlacedOrder is always truthy; without this an id-less response reads as success.
         logging.error(f"AddOrder for {pair} returned no txid; treating the outcome as unknown.")
