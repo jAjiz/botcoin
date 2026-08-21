@@ -1031,7 +1031,7 @@ def test_reprice_closing_order_places_nothing_when_kraken_omits_the_orders_vol(m
     assert pos["volume"] == 0.5
 
 
-def test_reprice_does_not_place_a_remainder_below_ordermin(monkeypatch) -> None:
+def test_reprice_reports_unmanaged_when_the_remainder_is_below_ordermin(monkeypatch) -> None:
     monkeypatch.setitem(config.PAIRS, "XBTEUR", {"ordermin": 0.0001, "pair_decimals": 1})
     placed: list = []
     monkeypatch.setattr(positions_manager, "cancel_order", lambda *a, **k: True)
@@ -1048,7 +1048,7 @@ def test_reprice_does_not_place_a_remainder_below_ordermin(monkeypatch) -> None:
     )
 
     assert placed == []
-    assert result is True
+    assert result is False  # the cancel was confirmed and nothing rests at Kraken
 
 
 # ============================================================================
