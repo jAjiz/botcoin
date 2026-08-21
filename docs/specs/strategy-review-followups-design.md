@@ -280,13 +280,15 @@ whenever price drifts; this is tracked as a follow-up in `docs/BACKLOG.md`.
 Three things the code does that no document states, all to
 [`../trading-strategy.md`](../trading-strategy.md):
 
-**The MIN_MARGIN guarantee.** Under MIN_MARGIN activation the activation distance
-is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails `K_STOP × ATR`
-behind the best price seen. An activated position therefore cannot exit worse than
-`MIN_MARGIN × entry_price` from entry — MIN_MARGIN is a **minimum profit floor on
-activated trades**, not merely a distance parameter. Under K_ACT activation
-(`K_ACT × ATR`) no such floor exists, which is why the two modes are not
-interchangeable.
+**The MIN_MARGIN activation margin.** Under MIN_MARGIN activation the activation
+distance is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails
+`K_STOP × ATR` behind the best price seen. The two terms cancel at the instant of
+activation, so the first stop sits `MIN_MARGIN × entry_price` beyond entry —
+MIN_MARGIN is a **profit margin at activation**, not merely a distance parameter.
+Under K_ACT activation (`K_ACT × ATR`) there is no such margin, which is why the
+two modes are not interchangeable. Document it as an activation-time property, not
+as a floor on the exit: re-anchoring measures the margin from `current_price`, and
+an ATR (or `K_STOP`) increase widens the stop distance past it.
 
 **The real semantics of `pnl_percent`.** Timing alpha against the plan-creation
 reference, not economic profit; `entry_price` is not a cost basis; net of the Kraken

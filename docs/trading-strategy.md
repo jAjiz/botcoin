@@ -47,7 +47,12 @@ activation_distance = K_STOP × ATR + MIN_MARGIN × entry_price
 
 `K_ACT` and `MIN_MARGIN` are single values per pair, shared by both sides (the earlier per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` variants were removed). `K_STOP` remains per-side because it is derived from pivot analysis, which naturally differs between uptrends and downtrends.
 
-Under MIN_MARGIN activation the activation distance is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails `K_STOP × ATR` behind the best price seen since activation. An activated position therefore cannot exit worse than `MIN_MARGIN × entry_price` away from entry: **MIN_MARGIN is a minimum profit floor on activated trades**, not merely a distance parameter. Under K_ACT activation (`K_ACT × ATR`) no such floor exists — the stop can trail back through the entry price — which is why the two modes are not interchangeable.
+Under MIN_MARGIN activation the activation distance is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails `K_STOP × ATR` behind the best price seen since activation. The two terms cancel at the instant of activation, so the first stop sits exactly `MIN_MARGIN × entry_price` beyond entry: **MIN_MARGIN sets a profit margin at activation**, not merely a distance parameter. Under K_ACT activation (`K_ACT × ATR`) there is no such margin — the first stop can already sit at or through the entry price — which is why the two modes are not interchangeable.
+
+That margin holds at activation only. It is **not** a floor on the exit, because two mechanisms move the stop back through it:
+
+- **Re-anchoring** recalculates the activation from `current_price` instead of `entry_price` (see Recalibration below), so the margin is measured against the new reference and the exit can land well under entry.
+- **ATR recalibration** recalculates the stop from a larger ATR (or a larger `K_STOP`) while the trailing price has not advanced, which widens the stop distance past the margin.
 
 ### Trailing-stop mechanics
 
