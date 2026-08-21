@@ -202,7 +202,7 @@ def finalize_close(pos: dict[str, Any], state: OrderState) -> bool:
     entry = pos["entry_price"]
     side = pos["side"]
     pnl = (closing_price - entry) / entry * 100 if side == "sell" else (entry - closing_price) / entry * 100
-    # One fee per position: the closing order is the only real exchange order in its life.
+    # Only this order's fee: a fill that landed during an earlier cancel window is not reconciled either.
     entry_notional = entry * float(pos.get("volume") or 0.0)
     fee_pct = (state.fee / entry_notional * 100) if entry_notional > 0 else 0.0
     pos["closing_price"] = closing_price
@@ -348,7 +348,7 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
         logging.warning(
             f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
             f"{post_cancel_state.vol_exec:.8f} of {post_cancel_state.vol:.8f} executed; replacement sized to "
-            f"{remaining:.8f}.",
+            f"{remaining:.8f}. Its {post_cancel_state.fee:.4f} fee stays out of the recorded close.",
             to_telegram=True,
         )
 
