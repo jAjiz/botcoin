@@ -8,7 +8,6 @@ import core.logging as logging
 import core.runtime as runtime
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
-from trading.engine import PairCalibration
 from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 
 
@@ -92,19 +91,6 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
         atr_ratio_p80=float(PAIRS[pair]["atr_ratio_p80"]),
         atr_ratio_p95=float(PAIRS[pair]["atr_ratio_p95"]),
         row_count=len(df),
-    )
-
-
-def build_calibration(pair: str) -> PairCalibration:
-    """Build a PairCalibration from current globals. Used by the API to seed
-    EngineConfig from live state without re-running analyze_structural_noise."""
-    return PairCalibration(
-        atr_ratio_p20=float(PAIRS[pair]["atr_ratio_p20"]),
-        atr_ratio_p50=float(PAIRS[pair]["atr_ratio_p50"]),
-        atr_ratio_p80=float(PAIRS[pair]["atr_ratio_p80"]),
-        atr_ratio_p95=float(PAIRS[pair]["atr_ratio_p95"]),
-        k_stop_buy=dict(TRADING_PARAMS[pair]["K_STOP"].get("buy") or {}),
-        k_stop_sell=dict(TRADING_PARAMS[pair]["K_STOP"].get("sell") or {}),
     )
 
 
