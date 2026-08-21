@@ -25,13 +25,34 @@ def test_calculate_noise_between_pivots_returns_event_for_uptrend(sample_datafra
 
     start = (1, "min", df.loc[1, "low"], df.loc[1, "dtime"])
     end = (5, "max", df.loc[5, "high"], df.loc[5, "dtime"])
-    atr_percentiles = {"p20": 1.1, "p50": 1.8, "p80": 2.6, "p95": 3.2}
+    ratio_percentiles = {"p20": 0.012, "p50": 0.02, "p80": 0.028, "p95": 0.035}
 
-    event = calculate_noise_between_pivots(df, (start, end), atr_percentiles)
+    event = calculate_noise_between_pivots(df, (start, end), ratio_percentiles)
 
     assert event["type"] == "uptrend"
     assert event["price_change_pct"] > 0
     assert isinstance(event["volatility_levels"], dict)
+
+
+def test_calculate_noise_between_pivots_buckets_by_the_atr_close_ratio() -> None:
+    # Both segment candles carry the same absolute ATR, so only the ratio separates them.
+    df = pd.DataFrame(
+        {
+            "dtime": pd.date_range("2026-01-01", periods=4, freq="15min"),
+            "high": [100.0, 104.0, 52.0, 60.0],
+            "low": [98.0, 100.0, 48.0, 58.0],
+            "close": [99.0, 100.0, 50.0, 59.0],
+            "atr": [1.0, 1.0, 1.0, 1.0],
+        }
+    )
+    start = (0, "min", df.loc[0, "low"], df.loc[0, "dtime"])
+    end = (3, "max", df.loc[3, "high"], df.loc[3, "dtime"])
+    # Row 1 has a ratio of 0.01 (LL); row 2 has 0.02 (LV).
+    ratio_percentiles = {"p20": 0.015, "p50": 0.05, "p80": 0.08, "p95": 0.1}
+
+    event = calculate_noise_between_pivots(df, (start, end), ratio_percentiles)
+
+    assert set(event["volatility_levels"]) == {"LL", "LV"}
 
 
 def test_analyze_structural_noise_returns_two_event_lists(sample_dataframe: pd.DataFrame) -> None:

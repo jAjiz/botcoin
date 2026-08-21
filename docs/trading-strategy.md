@@ -108,7 +108,7 @@ This K-value represents how far the price moved against the dominant trend (stru
 
 ### K-value percentile selection
 
-`calculate_k_stops` in `trading/parameters_manager.py` groups the per-segment K-values by volatility level and selects the value at the configured percentile (`PAIR_STOP_PCT_<LEVEL>`).
+`calculate_k_stops` in `trading/parameters_manager.py` groups the per-segment K-values by volatility level and selects the value at the configured percentile (`PAIR_STOP_PCT_<LEVEL>`). Each candle is assigned to a level by its own `ATR/close` ratio, against the same percentile boundaries the live classifier reads, so a K-value is calibrated for the level that later selects it.
 
 - **Low percentile** (e.g. P25): tight stop — higher closure frequency, smaller per-trade loss.
 - **High percentile** (e.g. P95): wide stop — lower closure frequency, larger noise tolerance.

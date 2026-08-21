@@ -149,18 +149,19 @@ def test_calculate_trading_parameters_updates_atr_and_k_stops(monkeypatch, sampl
     assert parameters_manager.PAIRS[pair]["atr_ratio_p80"] == pytest.approx(0.0361801, rel=1e-5)
     assert parameters_manager.PAIRS[pair]["atr_ratio_p95"] == pytest.approx(0.0463853, rel=1e-5)
 
-    # K_STOP sell side (from real uptrend events, 2 events X 5 vol levels)
+    # K_STOP sell side, from the two real uptrend events. Both HH candles of the fixture
+    # sit in downtrend segments, so the sell side has no HH sample and get_k_stop falls back.
     sell = parameters_manager.TRADING_PARAMS[pair]["K_STOP"]["sell"]
     assert sell["LL"] == 10.0
     assert sell["LV"] == 3.4
-    assert sell["MV"] == 2.0
-    assert sell["HV"] == 1.5
-    assert sell["HH"] == 1.2
+    assert sell["MV"] == 1.8
+    assert sell["HV"] == 1.2
+    assert sell["HH"] is None
 
     # K_STOP buy side (from real downtrend events, 2 events X 5 vol levels)
     buy = parameters_manager.TRADING_PARAMS[pair]["K_STOP"]["buy"]
     assert buy["LL"] == 11.0
-    assert buy["LV"] == 3.4
-    assert buy["MV"] == 2.0
+    assert buy["LV"] == 2.7
+    assert buy["MV"] == 1.8
     assert buy["HV"] == 1.5
     assert buy["HH"] == 1.2

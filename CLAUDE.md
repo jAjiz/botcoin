@@ -97,7 +97,7 @@ Step 6 lives in the `finally`, and is the **only** place the position block writ
 
 ### Volatility classification (`trading/market_analyzer.py` + `trading/parameters_manager.py`)
 
-ATR is computed from OHLC stored in `ohlc_data`. `get_volatility_level` classifies `ATR/close` (a dimensionless ratio, so the levels survive price drift) into five levels (LL/LV/MV/HV/HH) using precomputed percentile boundaries of that ratio. `K_STOP` for each level comes from `PAIR_STOP_PCT_<LEVEL>` — the percentile of historically observed K-values (structural noise analysis via pivot detection).
+ATR is computed from OHLC stored in `ohlc_data`. `get_volatility_level` classifies `ATR/close` (a dimensionless ratio, so the levels survive price drift) into five levels (LL/LV/MV/HV/HH) using precomputed percentile boundaries of that ratio. `K_STOP` for each level comes from `PAIR_STOP_PCT_<LEVEL>` — the percentile of historically observed K-values (structural noise analysis via pivot detection), where each historical candle is bucketed by that same `ATR/close` ratio. `market_analyzer.atr_ratio_percentiles` is the single source of those boundaries, shared by the classifier, the calibration, the backtest and the optimizer, so the partition that groups K-values cannot drift away from the one that selects them.
 
 ### Trading tools — backtest & optimizer (`trading/engine.py`, `trading/backtest.py`, `trading/optimizer/`)
 

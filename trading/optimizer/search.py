@@ -39,7 +39,7 @@ import core.database as db
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.engine import EngineConfig, PairCalibration, simulate_operations
-from trading.market_analyzer import analyze_structural_noise
+from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -113,13 +113,6 @@ def _search_space_from_dict(d: dict) -> SearchSpace:
 
 
 # --- pure helpers ----------------------------------------------------------
-
-
-def _compute_atr_ratio_thresholds(df) -> tuple[float, float, float, float]:
-    """Percentiles of ATR/close — the series the volatility classifier reads."""
-    ratio = (df["atr"] / df["close"]).to_numpy(dtype=float)
-    p20, p50, p80, p95 = (float(np.percentile(ratio, p)) for p in (20, 50, 80, 95))
-    return p20, p50, p80, p95
 
 
 def _quantile_ceiled(values: np.ndarray, pct: float) -> float | None:
@@ -608,7 +601,7 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
         # note in backtest.run_backtest.
         cal_df = df_full[df_full["dtime"] <= req.end].reset_index(drop=True) if req.end else df_full
         up_events, down_events = analyze_structural_noise(cal_df)
-        atr_ratio_thresholds = _compute_atr_ratio_thresholds(cal_df)
+        atr_ratio_thresholds = atr_ratio_percentiles(cal_df)
 
     up_k = _k_values_by_level(up_events)
     down_k = _k_values_by_level(down_events)

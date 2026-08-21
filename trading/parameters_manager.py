@@ -1,7 +1,6 @@
 import math
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 import core.database as db
@@ -10,7 +9,7 @@ import core.runtime as runtime
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.engine import PairCalibration
-from trading.market_analyzer import analyze_structural_noise
+from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 
 
 def calculate_k_stops(pair: str, events: list[dict[str, Any]]) -> dict[str, float | None]:
@@ -48,11 +47,11 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
         raise e
 
     # Percentiles of ATR/close, not of ATR: dimensionless, so the levels survive price drift.
-    atr_ratio = df["atr"] / df["close"]
-    PAIRS[pair]["atr_ratio_p20"] = np.percentile(atr_ratio, 20)
-    PAIRS[pair]["atr_ratio_p50"] = np.percentile(atr_ratio, 50)
-    PAIRS[pair]["atr_ratio_p80"] = np.percentile(atr_ratio, 80)
-    PAIRS[pair]["atr_ratio_p95"] = np.percentile(atr_ratio, 95)
+    p20, p50, p80, p95 = atr_ratio_percentiles(df)
+    PAIRS[pair]["atr_ratio_p20"] = p20
+    PAIRS[pair]["atr_ratio_p50"] = p50
+    PAIRS[pair]["atr_ratio_p80"] = p80
+    PAIRS[pair]["atr_ratio_p95"] = p95
 
     if infoLog:
         logging.info(
