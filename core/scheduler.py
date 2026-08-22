@@ -101,7 +101,7 @@ def trading_session() -> None:
                 if _session_count % PARAM_SESSIONS == 0 or runtime.pop_config_dirty(pair):
                     calculate_trading_parameters(pair)
 
-                vol_level = get_volatility_level(pair, current_atr)
+                vol_level = get_volatility_level(pair, current_atr, current_price)
                 logging.info(
                     f"Market: {round_price(pair, current_price):,}€ | "
                     f"ATR: {round_price(pair, current_atr):,}€ ({vol_level})"

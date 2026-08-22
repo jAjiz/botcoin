@@ -872,7 +872,7 @@
               }
             ]
           },
-          "unit": "percent"
+          "unit": "currencyEUR"
         },
         "overrides": [
           {
@@ -882,7 +882,7 @@
               "options": {
                 "mode": "exclude",
                 "names": [
-                  "cumulative_pnl"
+                  "cumulative_pnl_eur"
                 ],
                 "prefix": "All except:",
                 "readOnly": true
@@ -928,11 +928,11 @@
             "uid": "botc-postgres"
           },
           "format": "table",
-          "rawSql": "SELECT closed_at AS time, SUM(pnl_percent::float8) OVER (ORDER BY closed_at) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' UNION ALL SELECT now() AS time, SUM(pnl_percent::float8) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' HAVING COUNT(*) > 0 ORDER BY time",
+          "rawSql": "SELECT closed_at AS time, SUM(pnl_percent::float8 / 100.0 * entry_price::float8 * volume::float8) OVER (ORDER BY closed_at) AS cumulative_pnl_eur FROM closed_positions WHERE pair = '$pair' UNION ALL SELECT now() AS time, SUM(pnl_percent::float8 / 100.0 * entry_price::float8 * volume::float8) AS cumulative_pnl_eur FROM closed_positions WHERE pair = '$pair' HAVING COUNT(*) > 0 ORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Cumulative PnL",
+      "title": "Cumulative PnL (€)",
       "type": "timeseries"
     },
     {

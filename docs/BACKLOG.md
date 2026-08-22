@@ -68,10 +68,6 @@ to two.
 
 - Spec: [`specs/closing-state-machine-design.md`](specs/closing-state-machine-design.md)
 
-
-
-## 📋 Planned
-
 ### Strategy Review Follow-ups
 
 Six items from the 2026-07-06 trading-strategy review, in one spec: the order
@@ -80,11 +76,15 @@ boundary returns the amounts it actually submitted and captures Kraken's
 Grafana's cumulative panel switches to notional-weighted EUR, since summing raw
 percentages can show a rising line through a losing period; volatility
 classification moves from absolute ATR to ATR/close (the one behaviour change,
-live and engine together); the MIN_MARGIN profit floor, the real meaning of
+live, engine and K_STOP calibration together); the MIN_MARGIN activation margin, the real meaning of
 `pnl_percent` and the re-anchoring trade-off get documented; and a consolidation
 pass removes the duplication that has already left `operations.md` stale.
 
 - Spec: [`specs/strategy-review-followups-design.md`](specs/strategy-review-followups-design.md)
+
+
+
+## 📋 Planned
 
 
 

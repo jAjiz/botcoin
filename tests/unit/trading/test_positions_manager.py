@@ -3,7 +3,10 @@ from typing import Any
 
 import pytest
 
+import exchange.kraken as kraken
 import trading.positions_manager as positions_manager
+from core import config
+from core.utils import now_utc
 from exchange.kraken import OrderLookup, OrderState, OrderStatus
 
 
@@ -31,7 +34,7 @@ def test_calculate_activation_price_uses_k_act_when_defined(monkeypatch) -> None
         {"XBTEUR": {"K_ACT": 2.0, "MIN_MARGIN": 0.01}},
     )
 
-    result = positions_manager.calculate_activation_price("XBTEUR", "sell", 100.0, 5.0)
+    result = positions_manager.calculate_activation_price("XBTEUR", "sell", 100.0, 5.0, 100.0)
 
     assert result == 110.0
 
@@ -42,9 +45,9 @@ def test_calculate_activation_price_uses_k_stop_and_margin_fallback(monkeypatch)
         "TRADING_PARAMS",
         {"XBTEUR": {"K_ACT": None, "MIN_MARGIN": 0.1}},
     )
-    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 2.0)
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 2.0)
 
-    result = positions_manager.calculate_activation_price("XBTEUR", "buy", 100.0, 5.0)
+    result = positions_manager.calculate_activation_price("XBTEUR", "buy", 100.0, 5.0, 100.0)
 
     # distance = 2*5 + 0.1*100 = 20
     assert result == 80.0
@@ -54,10 +57,22 @@ def test_update_activation_price_updates_position_fields(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_args: 87.5)
 
     pos = {"side": "buy", "entry_price": 100.0}
-    positions_manager.update_activation_price("XBTEUR", pos, atr_val=3.0)
+    positions_manager.update_activation_price("XBTEUR", pos, atr_val=3.0, current_price=99.0)
 
     assert pos["activation_price"] == 87.5
     assert pos["activation_atr"] == 3.0
+
+
+def test_update_activation_price_classifies_with_the_current_price(monkeypatch) -> None:
+    seen: list[float] = []
+    monkeypatch.setattr(positions_manager, "TRADING_PARAMS", {"XBTEUR": {"K_ACT": None, "MIN_MARGIN": 0.0}})
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: seen.append(close) or 1.0)
+
+    pos = {"side": "sell", "entry_price": 100.0}
+    positions_manager.update_activation_price("XBTEUR", pos, atr_val=2.0, current_price=140.0)
+
+    assert seen == [140.0]  # the level follows the market, not the old entry
+    assert pos["activation_price"] == 102.0  # the distance still anchors on entry_price
 
 
 def test_reanchor_activation_price_returns_false_when_gap_within_expected(monkeypatch) -> None:
@@ -105,10 +120,10 @@ def test_reanchor_activation_price_updates_buy_when_gap_exceeds_expected(monkeyp
 
 
 def test_update_stop_price_updates_position_fields(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 1.5)
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 1.5)
 
     pos = {"side": "sell"}
-    positions_manager.update_stop_price("XBTEUR", pos, trailing_price=120.0, atr_val=4.0)
+    positions_manager.update_stop_price("XBTEUR", pos, trailing_price=120.0, atr_val=4.0, current_price=118.0)
 
     assert pos["trailing_price"] == 120.0
     assert pos["stop_price"] == 114.0
@@ -148,6 +163,16 @@ def test_create_position_builds_state_from_calculated_values(monkeypatch) -> Non
     assert trailing_state["XBTEUR"]["created_at"] == _now
 
 
+def test_create_position_skipped_when_volume_below_ordermin(monkeypatch, caplog) -> None:
+    monkeypatch.setitem(config.PAIRS, "XBTEUR", {"ordermin": 0.0001})
+    monkeypatch.setattr(positions_manager, "calculate_position", lambda *a, **k: ("sell", 5000.0))
+    trailing_state: dict = {}
+
+    positions_manager.create_position("XBTEUR", {}, {"XBTEUR": 100_000_000.0}, 1.0, trailing_state)
+
+    assert trailing_state == {}
+
+
 # ============================================================================
 # Full precision (small-value pairs like USDCEUR)
 # ============================================================================
@@ -180,7 +205,7 @@ def test_update_activation_price_preserves_full_precision(monkeypatch) -> None:
     monkeypatch.setattr(positions_manager, "calculate_activation_price", lambda *_args: 1.0234567)
 
     pos = {"side": "buy", "entry_price": 1.0001}
-    positions_manager.update_activation_price("USDCEUR", pos, atr_val=0.00081234)
+    positions_manager.update_activation_price("USDCEUR", pos, atr_val=0.00081234, current_price=1.0002)
 
     assert pos["activation_price"] == 1.0234567
     assert pos["activation_atr"] == 0.00081234
@@ -198,10 +223,10 @@ def test_reanchor_activation_price_preserves_full_precision(monkeypatch) -> None
 
 
 def test_update_stop_price_preserves_full_precision(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr: 0.5)
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: 0.5)
 
     pos = {"side": "sell"}
-    positions_manager.update_stop_price("USDCEUR", pos, trailing_price=1.23456, atr_val=0.0008)
+    positions_manager.update_stop_price("USDCEUR", pos, trailing_price=1.23456, atr_val=0.0008, current_price=1.234)
 
     # stop = 1.23456 - 0.5 * 0.0008 = 1.23416
     assert pos["stop_price"] == pytest.approx(1.23416)
@@ -259,13 +284,40 @@ def test_refresh_position_drops_position_and_returns_false_when_below_min_value(
     assert "XBTEUR" not in trailing_state
 
 
+def test_update_stop_price_classifies_with_the_current_price(monkeypatch) -> None:
+    seen: list[float] = []
+    monkeypatch.setattr(positions_manager, "get_k_stop", lambda pair, side, atr, close: seen.append(close) or 1.0)
+
+    pos = {"side": "sell"}
+    positions_manager.update_stop_price("XBTEUR", pos, trailing_price=120.0, atr_val=2.0, current_price=110.0)
+
+    assert seen == [110.0]  # the level follows the market, not the favourable extreme
+    assert pos["stop_price"] == 118.0  # the stop still anchors on the trailing price
+
+
+def test_refresh_position_drops_when_remaining_below_ordermin(monkeypatch) -> None:
+    monkeypatch.setitem(config.PAIRS, "XBTEUR", {"ordermin": 0.0001})
+    monkeypatch.setattr(positions_manager, "calculate_position", lambda *a, **k: ("sell", 5000.0))
+    pos = {"side": "sell", "volume": 0.00001, "stop_at": now_utc()}
+    trailing_state = {"XBTEUR": pos}
+
+    result = positions_manager.refresh_position("XBTEUR", pos, {}, {"XBTEUR": 100_000_000.0}, trailing_state)
+
+    assert result is False
+    assert "XBTEUR" not in trailing_state
+
+
 # ============================================================================
 # close_position
 # ============================================================================
 
 
 def test_close_position_updates_position_on_success(monkeypatch) -> None:
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: "ORDER123")
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *args, **kwargs: kraken.PlacedOrder(txid="ORDER123", price=90.0, volume=1.0),
+    )
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
     prices = {"XBTEUR": 90.0}
@@ -285,7 +337,7 @@ def test_close_position_mints_and_writes_the_request_id_before_placing(monkeypat
     def fake_place_limit_order(pair, side, price, volume, cl_ord_id=None):
         captured["pos_closing_request_id"] = pos.get("closing_request_id")
         captured["cl_ord_id"] = cl_ord_id
-        return "ORDER123"
+        return kraken.PlacedOrder(txid="ORDER123", price=price, volume=volume)
 
     monkeypatch.setattr(positions_manager, "place_limit_order", fake_place_limit_order)
 
@@ -325,7 +377,11 @@ def test_close_position_leaves_position_untouched_on_unexpected_error(monkeypatc
 
 def test_close_position_announces_a_successful_placement(monkeypatch) -> None:
     """Announced on every attempt, including the first after the breach."""
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *args, **kwargs: "ORDER123")
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *args, **kwargs: kraken.PlacedOrder(txid="ORDER123", price=90.0, volume=1.0),
+    )
     sent = _capture_telegram(monkeypatch)
 
     pos = {"side": "sell", "entry_price": 100.0, "stop_price": 95.0, "volume": 1.0, "stop_at": "already-latched"}
@@ -358,6 +414,19 @@ def test_close_position_never_sends_a_raised_error_to_telegram(monkeypatch) -> N
         assert positions_manager.close_position("XBTEUR", pos, {"XBTEUR": 90.0}) is False
 
     assert [m for m, tg in sent if tg] == []
+
+
+def test_close_position_stores_the_submitted_volume(monkeypatch) -> None:
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *a, **k: kraken.PlacedOrder(txid="TX1", price=1.0313, volume=12.12345679),
+    )
+    pos = {"side": "sell", "volume": 12.123456789, "entry_price": 1.0, "stop_at": now_utc()}
+
+    assert positions_manager.close_position("USDCEUR", pos, {"USDCEUR": 1.031274}) is True
+    assert pos["volume"] == 12.12345679
+    assert pos["closing_price"] == 1.0313
 
 
 # ============================================================================
@@ -440,6 +509,35 @@ def test_finalize_close_pnl_for_buy_side() -> None:
     pos = {"closing_order_id": "ORD001", "entry_price": 68000.0, "side": "buy"}
     assert positions_manager.finalize_close(pos, state) is True
     assert pos["pnl_percent"] == round((68000.0 - 67000.0) / 68000.0 * 100, 4)
+
+
+def test_finalize_close_nets_the_fee_into_pnl(monkeypatch) -> None:
+    pos = {"side": "sell", "entry_price": 100.0, "volume": 1.0, "closing_order_id": "TX1"}
+    state = OrderState(status=OrderStatus.CLOSED, avg_price=110.0, vol_exec=1.0, vol=1.0, fee=2.0)
+
+    assert positions_manager.finalize_close(pos, state) is True
+    # gross +10.00%, fee 2.0 EUR on a 100.0 EUR entry notional = 2.00%
+    assert pos["pnl_percent"] == 8.0
+    assert pos["fee"] == 2.0
+
+
+def test_finalize_close_without_a_fee_leaves_pnl_gross() -> None:
+    pos = {"side": "sell", "entry_price": 100.0, "volume": 1.0, "closing_order_id": "TX1"}
+    state = OrderState(status=OrderStatus.CLOSED, avg_price=110.0, vol_exec=1.0, vol=1.0)
+
+    assert positions_manager.finalize_close(pos, state) is True
+    assert pos["pnl_percent"] == 10.0
+    assert pos["fee"] == 0.0
+
+
+def test_finalize_close_fee_uses_the_executed_volume_on_a_raced_cancel() -> None:
+    pos = {"side": "sell", "entry_price": 100.0, "volume": 1.0, "closing_order_id": "TX1"}
+    state = OrderState(status=OrderStatus.CANCELED, avg_price=110.0, vol_exec=2.0, vol=2.0, fee=4.0)
+
+    assert positions_manager.finalize_close(pos, state) is True
+    # volume is overwritten to 2.0 first, so the notional is 200.0 and the fee is 2.00%
+    assert pos["volume"] == 2.0
+    assert pos["pnl_percent"] == 8.0
 
 
 def test_finalize_close_finalizes_a_terminal_order_that_was_fully_executed() -> None:
@@ -647,7 +745,8 @@ def test_reprice_closing_order_reprices_on_price_move(monkeypatch) -> None:
         positions_manager,
         "place_limit_order",
         lambda pair, side, price, volume, cl_ord_id=None: (
-            place_calls.append((pair, side, price, volume, cl_ord_id)) or "NEWORDER1"
+            place_calls.append((pair, side, price, volume, cl_ord_id))
+            or kraken.PlacedOrder(txid="NEWORDER1", price=price, volume=volume)
         ),
     )
 
@@ -687,7 +786,7 @@ def test_reprice_closing_order_mints_a_new_id_for_the_replacement(monkeypatch) -
     def fake_place_limit_order(pair, side, price, volume, cl_ord_id=None):
         captured["pos_closing_request_id"] = pos.get("closing_request_id")
         captured["cl_ord_id"] = cl_ord_id
-        return "NEWORDER1"
+        return kraken.PlacedOrder(txid="NEWORDER1", price=price, volume=volume)
 
     monkeypatch.setattr(positions_manager, "place_limit_order", fake_place_limit_order)
 
@@ -802,7 +901,8 @@ def test_reprice_closing_order_sizes_replacement_to_remainder_on_fill_in_cancel_
         positions_manager,
         "place_limit_order",
         lambda pair, side, price, volume, cl_ord_id=None: (
-            place_calls.append((pair, side, price, volume)) or "NEWORDER2"
+            place_calls.append((pair, side, price, volume))
+            or kraken.PlacedOrder(txid="NEWORDER2", price=price, volume=volume)
         ),
     )
 
@@ -954,6 +1054,26 @@ def test_reprice_closing_order_places_nothing_when_kraken_omits_the_orders_vol(m
     assert pos["volume"] == 0.5
 
 
+def test_reprice_reports_unmanaged_when_the_remainder_is_below_ordermin(monkeypatch) -> None:
+    monkeypatch.setitem(config.PAIRS, "XBTEUR", {"ordermin": 0.0001, "pair_decimals": 1})
+    placed: list = []
+    monkeypatch.setattr(positions_manager, "cancel_order", lambda *a, **k: True)
+    monkeypatch.setattr(
+        positions_manager,
+        "get_order_state",
+        lambda *a, **k: OrderState(status=OrderStatus.CANCELED, avg_price=100.0, vol_exec=0.99995, vol=1.0),
+    )
+    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: placed.append(a))
+    pos = {"side": "sell", "volume": 1.0, "closing_order_id": "TX1", "closing_price": 90.0}
+
+    result = positions_manager.reprice_closing_order(
+        "XBTEUR", pos, OrderState(status=OrderStatus.OPEN, avg_price=90.0, vol_exec=0.0, vol=1.0), {"XBTEUR": 100.0}
+    )
+
+    assert placed == []
+    assert result is False  # the cancel was confirmed and nothing rests at Kraken
+
+
 # ============================================================================
 # tick_position
 # ============================================================================
@@ -977,7 +1097,7 @@ def test_tick_position_recalibrates_activation_when_atr_out_of_range(monkeypatch
     monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.1)
     monkeypatch.setattr(positions_manager, "reanchor_activation_price", lambda *_: False)
 
-    def fake_update_activation(pair, pos, atr) -> None:
+    def fake_update_activation(pair, pos, atr, close) -> None:
         pos["activation_price"] = 80.0
         pos["activation_atr"] = atr
 
@@ -1000,7 +1120,7 @@ def test_tick_position_recalibrates_then_reanchors_when_both_conditions_met(monk
 
     update_order: list[str] = []
 
-    def fake_update_activation(pair, pos, atr) -> None:
+    def fake_update_activation(pair, pos, atr, close) -> None:
         update_order.append("atr_recalib")
         pos["activation_price"] = 88.0
         pos["activation_atr"] = atr
@@ -1035,7 +1155,7 @@ def test_tick_position_activates_sell_when_price_reaches_activation(monkeypatch)
     monkeypatch.setattr(
         positions_manager,
         "update_stop_price",
-        lambda pair, pos, price, atr: pos.update({"trailing_price": price, "stop_price": price - 5}),
+        lambda pair, pos, price, atr, close: pos.update({"trailing_price": price, "stop_price": price - 5}),
     )
     monkeypatch.setattr(positions_manager, "now_utc", lambda: _now)
 
@@ -1109,7 +1229,7 @@ def test_tick_position_updates_trailing_when_sell_price_moves_up(monkeypatch) ->
     monkeypatch.setattr(
         positions_manager,
         "update_stop_price",
-        lambda pair, pos, price, atr: updated_prices.append(price),
+        lambda pair, pos, price, atr, close: updated_prices.append(price),
     )
 
     # sell: update trailing when current_price > trailing_price; stop_atr in range, stop not hit
@@ -1126,7 +1246,7 @@ def test_tick_position_recalibrates_stop_when_stop_atr_out_of_range(monkeypatch)
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *_: True)
     monkeypatch.setattr(positions_manager, "ATR_DESV_LIMIT", 0.1)
 
-    def fake_update_stop(pair, pos, price, atr) -> None:
+    def fake_update_stop(pair, pos, price, atr, close) -> None:
         pos["stop_price"] = 70.0
         pos["stop_atr"] = atr
 
@@ -1235,7 +1355,11 @@ def test_manage_close_position_clears_a_dead_order_and_re_places_it_in_one_call(
         lambda _: OrderState(status=OrderStatus.CANCELED, avg_price=0.0, vol_exec=0.0),
     )
     monkeypatch.setattr(positions_manager, "refresh_position", lambda *a: True)
-    monkeypatch.setattr(positions_manager, "place_limit_order", lambda *a, **k: "ORD002")
+    monkeypatch.setattr(
+        positions_manager,
+        "place_limit_order",
+        lambda *a, **k: kraken.PlacedOrder(txid="ORD002", price=67000.0, volume=0.5),
+    )
 
     pos = {
         "side": "sell",
@@ -1349,7 +1473,9 @@ def test_manage_close_position_clears_and_replaces_when_the_request_never_landed
     monkeypatch.setattr(
         positions_manager,
         "place_limit_order",
-        lambda pair, side, price, volume, cl_ord_id=None: place_calls.append(cl_ord_id) or "NEWORDER9",
+        lambda pair, side, price, volume, cl_ord_id=None: (
+            place_calls.append(cl_ord_id) or kraken.PlacedOrder(txid="NEWORDER9", price=price, volume=volume)
+        ),
     )
 
     pos = {

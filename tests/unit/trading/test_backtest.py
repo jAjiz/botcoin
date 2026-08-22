@@ -42,10 +42,10 @@ def test_run_backtest_uses_cache_when_no_slicing(monkeypatch, sample_dataframe) 
         _PAIR,
         up_events=[],
         down_events=[],
-        atr_p20=1.0,
-        atr_p50=2.0,
-        atr_p80=3.0,
-        atr_p95=4.0,
+        atr_ratio_p20=0.01,
+        atr_ratio_p50=0.02,
+        atr_ratio_p80=0.03,
+        atr_ratio_p95=0.04,
         row_count=10,
     )
 

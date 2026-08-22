@@ -119,18 +119,21 @@ the non-obvious part: a reader expecting an entry fee and an exit fee will look
 for a second one that does not exist.
 
 `OrderState` gains a `fee` field, populated by `_build_order_state` from Kraken's
-`fee` (quote currency, so EUR here) — it is the anti-corruption boundary, so the
+`fee` (in the pair's quote currency — EUR for every pair the bot currently trades,
+but the field is not named after it) — it is the anti-corruption boundary, so the
 field is read there and nowhere else. `closed_positions` gains a **nullable**
-`fee_eur` column. Nullable is load-bearing: it is how a reader distinguishes a
+`fee` column. Nullable is load-bearing: it is how a reader distinguishes a
 gross historical row from a net one, and there is no backfill because the data was
-never fetched.
+never fetched. Kraken's `AssetPairs` also returns `fee_volume_currency`, naming
+which currency a pair's fee is charged in; it is not stored, since the bot is
+EUR-only in practice and the extra column would have no reader.
 
 `finalize_close` expresses the fee as a percentage of the **entry notional**
 (`entry_price × volume`) so the units match what `pnl_percent` already measures
 against, and subtracts it:
 
 ```
-fee_pct     = fee_eur / (entry_price * volume) * 100
+fee_pct     = fee / (entry_price * volume) * 100
 pnl_percent = gross_pnl_percent - fee_pct
 ```
 
@@ -179,8 +182,8 @@ Grafana SQL only — no schema change, no new writes. Every input column already
 exists on `closed_positions`.
 
 **Ordering matters with §2.** Once `pnl_percent` is net of the fee, this
-expression is *already* net; subtracting `fee_eur` again would double-count it.
-`fee_eur` is for attribution — how much went to Kraken — never a second
+expression is *already* net; subtracting `fee` again would double-count it.
+`fee` is for attribution — how much went to Kraken — never a second
 subtraction.
 
 The **PnL per close** panel keeps showing percentages: per trade, a percentage is
@@ -243,9 +246,15 @@ frame (`trading/engine.py:204,241`).
 calibration snapshot — never in the database — so they recalculate on the next
 `calculate_trading_parameters` run. Nothing stored needs converting.
 
-**K_STOP calibration is untouched.** The K-values are already scale-free
-(`K = deviation / ATR`), so only the level a given moment maps to changes, not the
-distributions themselves.
+**K_STOP calibration moves with the classifier.** The K-values themselves are
+scale-free (`K = deviation / ATR`), but the *partition* that groups historical
+K-values into levels is a separate thing from the values. Leaving it on absolute-ATR
+percentiles would have let a K-value land in one level while the live lookup
+resolved the same moment to another, and the two would diverge further as price
+drifts. `analyze_structural_noise` therefore buckets each candle by its own
+ATR/close ratio, and one shared helper — `market_analyzer.atr_ratio_percentiles` —
+computes the boundaries for the classifier, the calibration, the backtest and the
+optimizer, so a single partition is structural rather than coincidental.
 
 ### Consequences to carry
 
@@ -273,13 +282,15 @@ distributions themselves.
 Three things the code does that no document states, all to
 [`../trading-strategy.md`](../trading-strategy.md):
 
-**The MIN_MARGIN guarantee.** Under MIN_MARGIN activation the activation distance
-is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails `K_STOP × ATR`
-behind the best price seen. An activated position therefore cannot exit worse than
-`MIN_MARGIN × entry_price` from entry — MIN_MARGIN is a **minimum profit floor on
-activated trades**, not merely a distance parameter. Under K_ACT activation
-(`K_ACT × ATR`) no such floor exists, which is why the two modes are not
-interchangeable.
+**The MIN_MARGIN activation margin.** Under MIN_MARGIN activation the activation
+distance is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails
+`K_STOP × ATR` behind the best price seen. The two terms cancel at the instant of
+activation, so the first stop sits `MIN_MARGIN × entry_price` beyond entry —
+MIN_MARGIN is a **profit margin at activation**, not merely a distance parameter.
+Under K_ACT activation (`K_ACT × ATR`) there is no such margin, which is why the
+two modes are not interchangeable. Document it as an activation-time property, not
+as a floor on the exit: re-anchoring measures the margin from `current_price`, and
+an ATR (or `K_STOP`) increase widens the stop distance past it.
 
 **The real semantics of `pnl_percent`.** Timing alpha against the plan-creation
 reference, not economic profit; `entry_price` is not a cost basis; net of the Kraken
@@ -371,7 +382,7 @@ one-line why, with the full reasoning left in the spec it came from.
   decision; §5 documents the asymmetry without constraining it.
 - Making `fee_pct` non-optional in the optimizer/backtest. Related to §2, separate
   surface.
-- Backfilling `fee_eur` for historical closes. The data was never fetched.
+- Backfilling `fee` for historical closes. The data was never fetched.
 - Any change to the trailing stop as the only exit mechanism.
 
 ## Testing

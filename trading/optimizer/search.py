@@ -39,7 +39,7 @@ import core.database as db
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.engine import EngineConfig, PairCalibration, simulate_operations
-from trading.market_analyzer import analyze_structural_noise
+from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -113,12 +113,6 @@ def _search_space_from_dict(d: dict) -> SearchSpace:
 
 
 # --- pure helpers ----------------------------------------------------------
-
-
-def _compute_atr_thresholds(df) -> tuple[float, float, float, float]:
-    atr = df["atr"].to_numpy(dtype=float)
-    p20, p50, p80, p95 = (float(np.percentile(atr, p)) for p in (20, 50, 80, 95))
-    return p20, p50, p80, p95
 
 
 def _quantile_ceiled(values: np.ndarray, pct: float) -> float | None:
@@ -237,7 +231,7 @@ def _candidate_to_dict(cand: Candidate) -> dict:
 def _build_engine_config(
     pair: str,
     cand: Candidate,
-    atr_thresholds: tuple[float, float, float, float],
+    atr_ratio_thresholds: tuple[float, float, float, float],
     up_k: dict[str, np.ndarray],
     down_k: dict[str, np.ndarray],
     atr_desv_limit: float,
@@ -245,10 +239,10 @@ def _build_engine_config(
     sell_k_stop = {lvl: _quantile_ceiled(up_k[lvl], cand.stop_pcts[lvl]) for lvl in LEVELS}
     buy_k_stop = {lvl: _quantile_ceiled(down_k[lvl], cand.stop_pcts[lvl]) for lvl in LEVELS}
     calibration = PairCalibration(
-        atr_p20=atr_thresholds[0],
-        atr_p50=atr_thresholds[1],
-        atr_p80=atr_thresholds[2],
-        atr_p95=atr_thresholds[3],
+        atr_ratio_p20=atr_ratio_thresholds[0],
+        atr_ratio_p50=atr_ratio_thresholds[1],
+        atr_ratio_p80=atr_ratio_thresholds[2],
+        atr_ratio_p95=atr_ratio_thresholds[3],
         k_stop_buy=buy_k_stop,
         k_stop_sell=sell_k_stop,
     )
@@ -365,7 +359,7 @@ class EvalContext:
     test_df: pd.DataFrame
     split_boundary_time: str | None
     fee_rate: float
-    atr_thresholds: tuple[float, float, float, float]
+    atr_ratio_thresholds: tuple[float, float, float, float]
     up_k: dict[str, np.ndarray]
     down_k: dict[str, np.ndarray]
     min_ops: int
@@ -374,7 +368,7 @@ class EvalContext:
 
 
 def _evaluate(cand: Candidate, ctx: EvalContext) -> _Eval:
-    cfg = _build_engine_config(ctx.pair, cand, ctx.atr_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT)
+    cfg = _build_engine_config(ctx.pair, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT)
     ops_all = simulate_operations(ctx.df, cfg, fee_rate=ctx.fee_rate)
     in_sample = _score_run(ops_all)
 
@@ -596,18 +590,18 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
     if calibration is not None:
         up_events = calibration["up_events"]
         down_events = calibration["down_events"]
-        atr_thresholds = (
-            calibration["atr_p20"],
-            calibration["atr_p50"],
-            calibration["atr_p80"],
-            calibration["atr_p95"],
+        atr_ratio_thresholds = (
+            calibration["atr_ratio_p20"],
+            calibration["atr_ratio_p50"],
+            calibration["atr_ratio_p80"],
+            calibration["atr_ratio_p95"],
         )
     else:
         # Calibrate over the full history up to `end`, not over the slice — see the
         # note in backtest.run_backtest.
         cal_df = df_full[df_full["dtime"] <= req.end].reset_index(drop=True) if req.end else df_full
         up_events, down_events = analyze_structural_noise(cal_df)
-        atr_thresholds = _compute_atr_thresholds(cal_df)
+        atr_ratio_thresholds = atr_ratio_percentiles(cal_df)
 
     up_k = _k_values_by_level(up_events)
     down_k = _k_values_by_level(down_events)
@@ -619,7 +613,7 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
         test_df=test_df,
         split_boundary_time=split_boundary_time,
         fee_rate=fee_rate,
-        atr_thresholds=atr_thresholds,
+        atr_ratio_thresholds=atr_ratio_thresholds,
         up_k=up_k,
         down_k=down_k,
         min_ops=req.min_ops,

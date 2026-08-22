@@ -13,7 +13,7 @@ import core.database as db
 import core.runtime as runtime
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, TRADING_PARAMS
 from trading.engine import EngineConfig, Operation, PairCalibration, simulate_operations
-from trading.market_analyzer import analyze_structural_noise
+from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 from trading.parameters_manager import calculate_k_stops
 
 
@@ -40,11 +40,6 @@ def _coerce_float(v) -> float | None:
         return float(v) if v is not None and str(v).strip() != "" else None
     except (TypeError, ValueError):
         return None
-
-
-def _atr_percentiles(frame) -> tuple[float, float, float, float]:
-    atr = frame["atr"].to_numpy(dtype=float)
-    return tuple(float(np.percentile(atr, p)) for p in (20, 50, 80, 95))
 
 
 def _build_summary(ops: list[Operation], row_count: int, source: str) -> dict:
@@ -101,7 +96,7 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
         df = df.reset_index(drop=True)
         cal_df = df_full[df_full["dtime"] <= req.end].reset_index(drop=True) if req.end else df_full
         up_events, down_events = analyze_structural_noise(cal_df)
-        atr_p20, atr_p50, atr_p80, atr_p95 = _atr_percentiles(cal_df)
+        atr_ratio_p20, atr_ratio_p50, atr_ratio_p80, atr_ratio_p95 = atr_ratio_percentiles(cal_df)
     else:
         cached = runtime.get_pair_calibration(req.pair) if req.use_live_config else None
         if cached is not None:
@@ -109,21 +104,21 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
             df = df_full
             up_events = cached["up_events"]
             down_events = cached["down_events"]
-            atr_p20 = cached["atr_p20"]
-            atr_p50 = cached["atr_p50"]
-            atr_p80 = cached["atr_p80"]
-            atr_p95 = cached["atr_p95"]
+            atr_ratio_p20 = cached["atr_ratio_p20"]
+            atr_ratio_p50 = cached["atr_ratio_p50"]
+            atr_ratio_p80 = cached["atr_ratio_p80"]
+            atr_ratio_p95 = cached["atr_ratio_p95"]
         else:
             source = "recompute"
             df = df_full
             up_events, down_events = analyze_structural_noise(df_full)
-            atr_p20, atr_p50, atr_p80, atr_p95 = _atr_percentiles(df_full)
+            atr_ratio_p20, atr_ratio_p50, atr_ratio_p80, atr_ratio_p95 = atr_ratio_percentiles(df_full)
 
     calibration = PairCalibration(
-        atr_p20=atr_p20,
-        atr_p50=atr_p50,
-        atr_p80=atr_p80,
-        atr_p95=atr_p95,
+        atr_ratio_p20=atr_ratio_p20,
+        atr_ratio_p50=atr_ratio_p50,
+        atr_ratio_p80=atr_ratio_p80,
+        atr_ratio_p95=atr_ratio_p95,
         k_stop_buy=calculate_k_stops(req.pair, down_events),
         k_stop_sell=calculate_k_stops(req.pair, up_events),
     )

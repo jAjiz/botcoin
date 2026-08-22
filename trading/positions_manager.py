@@ -2,6 +2,7 @@ from enum import StrEnum
 from typing import Any
 
 import core.logging as logging
+from core import config
 from core.config import ATR_DESV_LIMIT, MIN_VALUE, TRADING_PARAMS
 from core.utils import new_cl_ord_id, now_utc, round_price
 from exchange.kraken import (
@@ -19,6 +20,12 @@ from trading.parameters_manager import get_k_stop
 UNRESOLVABLE_STATUSES = (OrderStatus.NOT_FOUND, OrderStatus.UNKNOWN)
 # Only these give a definitive vol_exec: the order can never trade again.
 TERMINAL_STATUSES = (OrderStatus.CLOSED, OrderStatus.CANCELED)
+
+
+def _below_ordermin(pair: str, volume: float) -> bool:
+    """True when Kraken would reject this size. Unknown ordermin never blocks a trade."""
+    ordermin = config.PAIRS.get(pair, {}).get("ordermin")
+    return ordermin is not None and volume < ordermin
 
 
 class ClosingState(StrEnum):
@@ -47,7 +54,14 @@ def create_position(
         logging.info(f"Cannot create {side.upper()} position: volume {volume:.8f} <= 0")
         return
 
-    activation_price = calculate_activation_price(pair, side, current_price, atr_val)
+    if _below_ordermin(pair, volume):
+        logging.info(
+            f"Cannot create {side.upper()} position: volume {volume:.8f} < Kraken ordermin "
+            f"{config.PAIRS[pair]['ordermin']:.8f}"
+        )
+        return
+
+    activation_price = calculate_activation_price(pair, side, current_price, atr_val, current_price)
     stored_volume = int(volume * 1e8) / 1e8
 
     trailing_state[pair] = {
@@ -65,27 +79,28 @@ def create_position(
     )
 
 
-def calculate_activation_distance(pair: str, side: str, reference_price: float, atr_val: float) -> float:
+def calculate_activation_distance(pair: str, side: str, reference_price: float, atr_val: float, close: float) -> float:
+    """``reference_price`` anchors the distance; ``close`` classifies the level, and is always the current price."""
     k_act = TRADING_PARAMS[pair]["K_ACT"]
 
     if k_act is not None:
         return float(k_act) * atr_val  # K_ACT = 0 means immediate activation
 
-    k_stop = get_k_stop(pair, side, atr_val)
+    k_stop = get_k_stop(pair, side, atr_val, close)
     min_margin = float(TRADING_PARAMS[pair]["MIN_MARGIN"])
     return k_stop * atr_val + min_margin * reference_price
 
 
-def calculate_activation_price(pair: str, side: str, entry_price: float, atr_val: float) -> float:
-    activation_distance = calculate_activation_distance(pair, side, entry_price, atr_val)
+def calculate_activation_price(pair: str, side: str, entry_price: float, atr_val: float, close: float) -> float:
+    activation_distance = calculate_activation_distance(pair, side, entry_price, atr_val, close)
     activation_price = entry_price + activation_distance if side == "sell" else entry_price - activation_distance
     return activation_price
 
 
-def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float) -> None:
+def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float, current_price: float) -> None:
     side = pos["side"]
     entry_price = pos["entry_price"]
-    activation_price = calculate_activation_price(pair, side, entry_price, atr_val)
+    activation_price = calculate_activation_price(pair, side, entry_price, atr_val, current_price)
 
     pos.update({"activation_price": activation_price, "activation_atr": atr_val})
 
@@ -93,26 +108,29 @@ def update_activation_price(pair: str, pos: dict[str, Any], atr_val: float) -> N
 def reanchor_activation_price(pair: str, pos: dict[str, Any], current_price: float) -> bool:
     side = pos["side"]
     atr_val = pos["activation_atr"]
-    expected_distance = calculate_activation_distance(pair, side, current_price, atr_val)
+    expected_distance = calculate_activation_distance(pair, side, current_price, atr_val, current_price)
     gap = pos["activation_price"] - current_price if side == "sell" else current_price - pos["activation_price"]
     if gap <= expected_distance:
         return False
 
-    pos["activation_price"] = calculate_activation_price(pair, side, current_price, atr_val)
+    pos["activation_price"] = calculate_activation_price(pair, side, current_price, atr_val, current_price)
     return True
 
 
-def calculate_stop_price(pair: str, side: str, trailing_price: float, atr_val: float) -> float:
-    k_stop = get_k_stop(pair, side, atr_val)
+def calculate_stop_price(pair: str, side: str, trailing_price: float, atr_val: float, close: float) -> float:
+    """``trailing_price`` anchors the stop; ``close`` classifies the level."""
+    k_stop = get_k_stop(pair, side, atr_val, close)
     stop_distance = k_stop * atr_val
 
     stop_price = trailing_price - stop_distance if side == "sell" else trailing_price + stop_distance
     return stop_price
 
 
-def update_stop_price(pair: str, pos: dict[str, Any], trailing_price: float, atr_val: float) -> None:
+def update_stop_price(
+    pair: str, pos: dict[str, Any], trailing_price: float, atr_val: float, current_price: float
+) -> None:
     side = pos["side"]
-    stop_price = calculate_stop_price(pair, side, trailing_price, atr_val)
+    stop_price = calculate_stop_price(pair, side, trailing_price, atr_val, current_price)
 
     pos.update({"trailing_price": trailing_price, "stop_price": stop_price, "stop_atr": atr_val})
 
@@ -139,6 +157,11 @@ def refresh_position(
     volume = value / current_price if current_price else 0.0
     if volume <= 0:
         _drop_position(f"volume {volume:.8f} <= 0")
+        return False
+
+    if _below_ordermin(pair, volume):
+        # A latched exit below ordermin can never be placed; the residual is untradeable by definition.
+        _drop_position(f"volume {volume:.8f} < Kraken ordermin {config.PAIRS[pair]['ordermin']:.8f}")
         return False
 
     pos["volume"] = int(volume * 1e8) / 1e8
@@ -179,9 +202,13 @@ def finalize_close(pos: dict[str, Any], state: OrderState) -> bool:
     entry = pos["entry_price"]
     side = pos["side"]
     pnl = (closing_price - entry) / entry * 100 if side == "sell" else (entry - closing_price) / entry * 100
+    # Only this order's fee: a fill that landed during an earlier cancel window is not reconciled either.
+    entry_notional = entry * float(pos.get("volume") or 0.0)
+    fee_pct = (state.fee / entry_notional * 100) if entry_notional > 0 else 0.0
     pos["closing_price"] = closing_price
-    pos["pnl_percent"] = round(pnl, 4)
-    logging.info(f"💸 Position closed: {pnl:+.2f}% result", to_telegram=True)
+    pos["fee"] = state.fee
+    pos["pnl_percent"] = round(pnl - fee_pct, 4)
+    logging.info(f"💸 Position closed: {pnl - fee_pct:+.2f}% result (fee {state.fee:.2f}€)", to_telegram=True)
     return True
 
 
@@ -228,7 +255,7 @@ def tick_position(
 
     if not trailing_active:
         if pos["activation_atr"] < atr_limit_min or pos["activation_atr"] > atr_limit_max:
-            update_activation_price(pair, pos, atr_val)
+            update_activation_price(pair, pos, atr_val, current_price)
             logging.info(
                 f"♻️ Recalibrate {side.upper()} position: activation price to {round_price(pair, pos['activation_price']):,}€."
             )
@@ -246,14 +273,14 @@ def tick_position(
                 f"[{pair}] ⚡ Activation price {round_price(pair, pos['activation_price']):,}€ reached for {side.upper()} position.",
                 to_telegram=True,
             )
-            update_stop_price(pair, pos, current_price, atr_val)
+            update_stop_price(pair, pos, current_price, atr_val, current_price)
             logging.info(
                 f"📈 Update {side.upper()} position: new trailing price {round_price(pair, pos['trailing_price']):,}€ | stop {round_price(pair, pos['stop_price']):,}€"
             )
 
     else:
         if pos["stop_atr"] < atr_limit_min or pos["stop_atr"] > atr_limit_max:
-            update_stop_price(pair, pos, pos["trailing_price"], atr_val)
+            update_stop_price(pair, pos, pos["trailing_price"], atr_val, current_price)
             logging.info(
                 f"♻️ Recalibrate {side.upper()} position: stop price to {round_price(pair, pos['stop_price']):,}€."
             )
@@ -272,7 +299,7 @@ def tick_position(
         if (side == "sell" and current_price > pos["trailing_price"]) or (
             side == "buy" and current_price < pos["trailing_price"]
         ):
-            update_stop_price(pair, pos, current_price, atr_val)
+            update_stop_price(pair, pos, current_price, atr_val, current_price)
             logging.info(
                 f"📈 Update {side.upper()} position: new trailing price {round_price(pair, pos['trailing_price']):,}€ | stop {round_price(pair, pos['stop_price']):,}€"
             )
@@ -309,11 +336,19 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
             "not placing a replacement."
         )
         return True  # fully executed during the cancel window; branch 1 finalizes it next tick
+    if _below_ordermin(pair, remaining):
+        # Not finalizable either (vol_exec < vol), so the next tick clears the order and re-places or drops.
+        logging.warning(
+            f"[{pair}] Closing order {order_id} left a remainder below Kraken ordermin after cancel "
+            f"(vol_exec={post_cancel_state.vol_exec:.8f} of {post_cancel_state.vol:.8f}); "
+            "not placing a replacement."
+        )
+        return False  # confirmed cancel with nothing placeable: the pair is unmanaged
     if post_cancel_state.vol_exec > 0:
         logging.warning(
             f"[{pair}] Closing order {order_id} partially filled during the cancel window: "
             f"{post_cancel_state.vol_exec:.8f} of {post_cancel_state.vol:.8f} executed; replacement sized to "
-            f"{remaining:.8f}.",
+            f"{remaining:.8f}. Its {post_cancel_state.fee:.4f} fee stays out of the recorded close.",
             to_telegram=True,
         )
 
@@ -325,11 +360,11 @@ def reprice_closing_order(pair: str, pos: dict[str, Any], state: OrderState, las
     cl_ord_id = new_cl_ord_id()
     pos.update({"volume": remaining, "closing_price": current_price, "closing_request_id": cl_ord_id})
     pos.pop("closing_order_id", None)
-    new_order = place_limit_order(pair, side, current_price, remaining, cl_ord_id=cl_ord_id)
-    if not new_order:
+    placed = place_limit_order(pair, side, current_price, remaining, cl_ord_id=cl_ord_id)
+    if placed is None:
         logging.error(f"[{pair}] Closing order replacement not confirmed after cancel; the next tick will resolve it.")
         return False  # unconfirmed: manage_close_position's unconfirmed sub-state resolves it
-    pos["closing_order_id"] = new_order
+    pos.update({"closing_order_id": placed.txid, "closing_price": placed.price, "volume": placed.volume})
     return True
 
 
@@ -376,11 +411,11 @@ def close_position(pair: str, pos: dict[str, Any], last_prices: dict[str, float]
 
         cl_ord_id = new_cl_ord_id()
         pos.update({"closing_request_id": cl_ord_id, "closing_price": current_price})
-        closing_order = place_limit_order(pair, side, current_price, volume, cl_ord_id=cl_ord_id)
-        if not closing_order:
+        placed = place_limit_order(pair, side, current_price, volume, cl_ord_id=cl_ord_id)
+        if placed is None:
             logging.error(f"[{pair}] Closing order not confirmed; it remains owed and will be resolved next tick.")
             return False
-        pos["closing_order_id"] = closing_order
+        pos.update({"closing_order_id": placed.txid, "closing_price": placed.price, "volume": placed.volume})
 
         # Announced on every attempt: the breach says the stop fired, this says an order rests.
         logging.info(

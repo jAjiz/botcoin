@@ -83,6 +83,7 @@ def record_position_closed(pair: str, position_data: dict[str, Any]) -> None:
         "closing_order_id": position_data["closing_order_id"],
         "closed_at": datetime.now(UTC),
         "pnl_percent": _to_decimal_required(position_data["pnl_percent"]),
+        "fee": _to_decimal(position_data.get("fee")),
     }
     with open_session() as session:
         result = session.execute(
