@@ -20,7 +20,20 @@ from core.config import (
     TELEGRAM_USER_ID,
     VOLATILITY_LEVELS,
 )
-from exchange.kraken import build_pairs_map
+
+
+def validate_telegram_params(errors: list[str]) -> None:
+    """Shared by validate_common_params (botc) and the telegram service's own
+    startup check — each process validates independently since they run in
+    separate containers with separately-scoped env vars."""
+    if not TELEGRAM_ENABLED:
+        return
+    if not TELEGRAM_TOKEN:
+        errors.append("TELEGRAM_TOKEN is missing")
+    if not TELEGRAM_USER_ID or not TELEGRAM_USER_ID.isdigit() or int(TELEGRAM_USER_ID) <= 0:
+        errors.append("TELEGRAM_USER_ID must be a positive integer")
+    if TELEGRAM_POLL_INTERVAL < 0:
+        errors.append("TELEGRAM_POLL_INTERVAL must be a non-negative integer")
 
 
 def validate_common_params(errors: list[str]) -> None:
@@ -29,13 +42,7 @@ def validate_common_params(errors: list[str]) -> None:
     if not KRAKEN_API_SECRET:
         errors.append("KRAKEN_API_SECRET is missing")
 
-    if TELEGRAM_ENABLED:
-        if not TELEGRAM_TOKEN:
-            errors.append("TELEGRAM_TOKEN is missing")
-        if not TELEGRAM_USER_ID or not TELEGRAM_USER_ID.isdigit() or int(TELEGRAM_USER_ID) <= 0:
-            errors.append("TELEGRAM_USER_ID must be a positive integer")
-        if TELEGRAM_POLL_INTERVAL < 0:
-            errors.append("TELEGRAM_POLL_INTERVAL must be a non-negative integer")
+    validate_telegram_params(errors)
 
     if not API_SECRET_TOKEN and not ALLOW_NO_AUTH:
         errors.append(
@@ -152,6 +159,10 @@ def validate_pair_params(errors: list[str]) -> None:
 
 
 def build_and_validate_pairs(errors: list[str]) -> None:
+    # Keep function-local: the telegram service imports this module, and
+    # exchange.kraken would cost it ~45 MB of RSS (pandas + numpy) it never uses.
+    from exchange.kraken import build_pairs_map
+
     try:
         build_pairs_map(PAIRS)
         if not any(PAIRS.values()):

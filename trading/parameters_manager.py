@@ -1,7 +1,6 @@
 import math
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 import core.database as db
@@ -9,9 +8,7 @@ import core.logging as logging
 import core.runtime as runtime
 from core.config import CANDLE_TIMEFRAME, PAIRS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
-from core.utils import round_price
-from trading.engine import PairCalibration
-from trading.market_analyzer import analyze_structural_noise
+from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 
 
 def calculate_k_stops(pair: str, events: list[dict[str, Any]]) -> dict[str, float | None]:
@@ -48,18 +45,20 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
         logging.error(f"Error loading data for {pair}: {e}")
         raise e
 
-    PAIRS[pair]["atr_20pct"] = np.percentile(df["atr"], 20)
-    PAIRS[pair]["atr_50pct"] = np.percentile(df["atr"], 50)
-    PAIRS[pair]["atr_80pct"] = np.percentile(df["atr"], 80)
-    PAIRS[pair]["atr_95pct"] = np.percentile(df["atr"], 95)
+    # Percentiles of ATR/close, not of ATR: dimensionless, so the levels survive price drift.
+    p20, p50, p80, p95 = atr_ratio_percentiles(df)
+    PAIRS[pair]["atr_ratio_p20"] = p20
+    PAIRS[pair]["atr_ratio_p50"] = p50
+    PAIRS[pair]["atr_ratio_p80"] = p80
+    PAIRS[pair]["atr_ratio_p95"] = p95
 
     if infoLog:
         logging.info(
-            "ATR percentiles → P20:{:,}€ | P50:{:,}€ | P80:{:,}€ | P95:{:,}€".format(
-                round_price(pair, PAIRS[pair]["atr_20pct"]),
-                round_price(pair, PAIRS[pair]["atr_50pct"]),
-                round_price(pair, PAIRS[pair]["atr_80pct"]),
-                round_price(pair, PAIRS[pair]["atr_95pct"]),
+            "ATR/close percentiles → P20:{:.3%} | P50:{:.3%} | P80:{:.3%} | P95:{:.3%}".format(
+                PAIRS[pair]["atr_ratio_p20"],
+                PAIRS[pair]["atr_ratio_p50"],
+                PAIRS[pair]["atr_ratio_p80"],
+                PAIRS[pair]["atr_ratio_p95"],
             )
         )
 
@@ -87,44 +86,33 @@ def calculate_trading_parameters(pair: str, infoLog: bool = True) -> None:
         pair,
         up_events=uptrend_events,
         down_events=downtrend_events,
-        atr_p20=float(PAIRS[pair]["atr_20pct"]),
-        atr_p50=float(PAIRS[pair]["atr_50pct"]),
-        atr_p80=float(PAIRS[pair]["atr_80pct"]),
-        atr_p95=float(PAIRS[pair]["atr_95pct"]),
+        atr_ratio_p20=float(PAIRS[pair]["atr_ratio_p20"]),
+        atr_ratio_p50=float(PAIRS[pair]["atr_ratio_p50"]),
+        atr_ratio_p80=float(PAIRS[pair]["atr_ratio_p80"]),
+        atr_ratio_p95=float(PAIRS[pair]["atr_ratio_p95"]),
         row_count=len(df),
     )
 
 
-def build_calibration(pair: str) -> PairCalibration:
-    """Build a PairCalibration from current globals. Used by the API to seed
-    EngineConfig from live state without re-running analyze_structural_noise."""
-    return PairCalibration(
-        atr_p20=float(PAIRS[pair]["atr_20pct"]),
-        atr_p50=float(PAIRS[pair]["atr_50pct"]),
-        atr_p80=float(PAIRS[pair]["atr_80pct"]),
-        atr_p95=float(PAIRS[pair]["atr_95pct"]),
-        k_stop_buy=dict(TRADING_PARAMS[pair]["K_STOP"].get("buy") or {}),
-        k_stop_sell=dict(TRADING_PARAMS[pair]["K_STOP"].get("sell") or {}),
-    )
-
-
-def get_volatility_level(pair: str, atr_val: float) -> str:
-    if atr_val < PAIRS[pair]["atr_20pct"]:
+def get_volatility_level(pair: str, atr_val: float, close: float) -> str:
+    """Classify ATR relative to price, so the level means the same thing at any price level."""
+    ratio = atr_val / close if close else 0.0
+    if ratio < PAIRS[pair]["atr_ratio_p20"]:
         return "LL"
-    elif atr_val < PAIRS[pair]["atr_50pct"]:
+    elif ratio < PAIRS[pair]["atr_ratio_p50"]:
         return "LV"
-    elif atr_val < PAIRS[pair]["atr_80pct"]:
+    elif ratio < PAIRS[pair]["atr_ratio_p80"]:
         return "MV"
-    elif atr_val < PAIRS[pair]["atr_95pct"]:
+    elif ratio < PAIRS[pair]["atr_ratio_p95"]:
         return "HV"
 
     return "HH"
 
 
-def get_k_stop(pair: str, side: str, atr_val: float) -> float | None:
+def get_k_stop(pair: str, side: str, atr_val: float, close: float) -> float | None:
     """Resolve K_STOP for a side/ATR: same side, then opposite side, then the nearest
     neighbouring levels on the same side."""
-    vol = get_volatility_level(pair, atr_val)
+    vol = get_volatility_level(pair, atr_val, close)
 
     k_stop = TRADING_PARAMS[pair]["K_STOP"][side].get(vol)
     if k_stop is not None:

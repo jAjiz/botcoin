@@ -52,10 +52,10 @@ def _calibration() -> dict:
     return {
         "up_events": [{"volatility_levels": {"LV": {"k_value": 1.5}, "MV": {"k_value": 2.0}}}],
         "down_events": [{"volatility_levels": {"LV": {"k_value": 1.2}, "MV": {"k_value": 1.8}}}],
-        "atr_p20": 1.0,
-        "atr_p50": 2.0,
-        "atr_p80": 3.0,
-        "atr_p95": 4.0,
+        "atr_ratio_p20": 0.01,
+        "atr_ratio_p50": 0.02,
+        "atr_ratio_p80": 0.03,
+        "atr_ratio_p95": 0.04,
     }
 
 
@@ -144,7 +144,7 @@ def test_run_optimize_no_global_mutation(monkeypatch) -> None:
         _PAIR,
         {"K_ACT": "1.0", "MIN_MARGIN": "0.005"},
     )
-    monkeypatch.setitem(config.PAIRS, _PAIR, {"atr_20pct": 1.0, "atr_50pct": 2.0})
+    monkeypatch.setitem(config.PAIRS, _PAIR, {"atr_ratio_p20": 0.01, "atr_ratio_p50": 0.02})
 
     before_tp = copy.deepcopy(config.TRADING_PARAMS[_PAIR])
     before_pairs = copy.deepcopy(config.PAIRS[_PAIR])
@@ -209,6 +209,18 @@ def test_run_optimize_uses_passed_calibration(monkeypatch) -> None:
 # --- run_auto_optimize -----------------------------------------------------
 
 
+def _patch_seed_sample(monkeypatch, seeds: list[int]) -> None:
+    """Steer which seeds run_auto_optimize picks, without depending on the real
+    RNG. B7 made seed selection go through ``random.Random(req.seed).sample(...)``
+    (an instance, not the module-level ``random.sample``), so tests patch the
+    ``Random`` constructor instead."""
+    monkeypatch.setattr(
+        optimizer.random,
+        "Random",
+        lambda _seed: types.SimpleNamespace(sample=lambda _pop, k: seeds[:k]),
+    )
+
+
 def _patch_auto(monkeypatch, *, seed_fn) -> None:
     """Mock the AUTO seams so convergence is steered deterministically without
     running Optuna. ``seed_fn(seed, n_trials)`` returns ``(k_act, robust)`` for
@@ -226,7 +238,7 @@ def _patch_auto(monkeypatch, *, seed_fn) -> None:
 
 
 def test_auto_converges_first_batch(monkeypatch) -> None:
-    monkeypatch.setattr(optimizer.random, "sample", lambda _pop, k: [11, 22, 33, 44][:k])
+    _patch_seed_sample(monkeypatch, [11, 22, 33, 44])
     # 3 of 4 seeds land on the same config (k_act=1.0) → convergence.
     _patch_auto(
         monkeypatch,
@@ -246,7 +258,7 @@ def test_auto_converges_first_batch(monkeypatch) -> None:
 
 
 def test_auto_escalates_until_convergence(monkeypatch) -> None:
-    monkeypatch.setattr(optimizer.random, "sample", lambda _pop, k: [1, 2, 3, 4][:k])
+    _patch_seed_sample(monkeypatch, [1, 2, 3, 4])
 
     # First level (1000 trials): all-different configs → no convergence.
     # Second level (1500 trials): three seeds agree on the same config (k_act=7.0).
@@ -265,7 +277,7 @@ def test_auto_escalates_until_convergence(monkeypatch) -> None:
 
 
 def test_auto_no_convergence_returns_best_fallback(monkeypatch) -> None:
-    monkeypatch.setattr(optimizer.random, "sample", lambda _pop, k: [1, 2, 3, 4][:k])
+    _patch_seed_sample(monkeypatch, [1, 2, 3, 4])
     # Every level has all-different configs → never reaches min_agree within budget.
     _patch_auto(
         monkeypatch,
@@ -284,3 +296,20 @@ def test_auto_no_convergence_returns_best_fallback(monkeypatch) -> None:
     assert out.converged is False
     # Fallback returns the highest-robust candidate seen in the last batch.
     assert out.top_candidates[0]["robust_pnl_pct"] == 8.5
+
+
+def test_auto_seed_selection_is_deterministic_for_same_req_seed(monkeypatch) -> None:
+    """B7: run_auto_optimize must derive its seed sample from req.seed (not the
+    unseeded global RNG), so two runs of the identical request pick the same
+    seeds_used. Real random.Random(seed).sample is exercised here — only the
+    Optuna/eval seams are mocked."""
+    _patch_auto(monkeypatch, seed_fn=lambda seed, _n: (float(seed), 1.0))
+    req = OptimizerRequest(
+        pair=_PAIR, mode="AUTO", n_trials=1000, seed=7, auto_settings=AutoSettings(), search_space=_space()
+    )
+
+    out1 = run_auto_optimize(req, calibration=None)
+    out2 = run_auto_optimize(req, calibration=None)
+
+    assert out1.seeds_used == out2.seeds_used
+    assert out1.seeds_used

@@ -85,6 +85,47 @@ def test_register_session_ontime_signals_recovery_only_when_alerted():
     assert runtime.register_session_ontime() is False
 
 
+def test_register_pair_failure_alerts_once_at_threshold():
+    runtime._shared_data["consecutive_pair_failures"] = {}
+    runtime._shared_data["pair_failure_alerted"] = set()
+
+    assert runtime.register_pair_failure("XBTEUR", 3) is None  # 1st
+    assert runtime.register_pair_failure("XBTEUR", 3) is None  # 2nd
+    assert runtime.register_pair_failure("XBTEUR", 3) == 3  # 3rd → alert, returns count
+    assert runtime.register_pair_failure("XBTEUR", 3) is None  # 4th → already alerted
+
+
+def test_register_pair_success_signals_recovery_only_when_alerted():
+    runtime._shared_data["consecutive_pair_failures"] = {}
+    runtime._shared_data["pair_failure_alerted"] = set()
+
+    # No prior alert → no recovery signal, streak reset.
+    runtime.register_pair_failure("XBTEUR", 3)
+    assert runtime.register_pair_success("XBTEUR") is False
+    assert runtime._shared_data["consecutive_pair_failures"]["XBTEUR"] == 0
+
+    # Reach the alert state, then recover once.
+    runtime.register_pair_failure("XBTEUR", 1)
+    assert runtime.register_pair_success("XBTEUR") is True
+    # A second success without a new alert does not re-signal.
+    assert runtime.register_pair_success("XBTEUR") is False
+
+
+def test_an_alerted_pair_does_not_silence_another_pair():
+    """A permanently broken pair must not hold the flag for the others."""
+    runtime._shared_data["consecutive_pair_failures"] = {}
+    runtime._shared_data["pair_failure_alerted"] = set()
+
+    assert runtime.register_pair_failure("XBTEUR", 1) == 1
+    assert runtime.register_pair_failure("XBTEUR", 1) is None  # stays silent
+
+    assert runtime.register_pair_failure("ETHEUR", 1) == 1  # still alerts
+
+    # ETHEUR recovering says nothing about XBTEUR, which is still failing.
+    assert runtime.register_pair_success("ETHEUR") is True
+    assert runtime._shared_data["consecutive_pair_failures"]["XBTEUR"] == 2
+
+
 def test_overrun_and_failure_streaks_are_independent():
     runtime._shared_data["consecutive_session_failures"] = 0
     runtime._shared_data["session_failure_alerted"] = False

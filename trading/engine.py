@@ -15,10 +15,11 @@ LEVELS = ("LL", "LV", "MV", "HV", "HH")
 
 @dataclass(frozen=True)
 class PairCalibration:
-    atr_p20: float
-    atr_p50: float
-    atr_p80: float
-    atr_p95: float
+    # Percentiles of ATR/close, not of ATR: a level means the same thing at any price.
+    atr_ratio_p20: float
+    atr_ratio_p50: float
+    atr_ratio_p80: float
+    atr_ratio_p95: float
     k_stop_buy: dict[str, float | None]  # {level: k}
     k_stop_sell: dict[str, float | None]
 
@@ -46,14 +47,16 @@ class Operation:
     cum_pnl: float | None
 
 
-def _vol_level_from_atr(atr_val: float, atr_20: float, atr_50: float, atr_80: float, atr_95: float) -> str:
-    if atr_val < atr_20:
+def _vol_level_from_atr(atr_val: float, close: float, p20: float, p50: float, p80: float, p95: float) -> str:
+    """Classify ATR relative to price. Mirrors parameters_manager.get_volatility_level."""
+    ratio = atr_val / close if close else 0.0
+    if ratio < p20:
         return "LL"
-    if atr_val < atr_50:
+    if ratio < p50:
         return "LV"
-    if atr_val < atr_80:
+    if ratio < p80:
         return "MV"
-    if atr_val < atr_95:
+    if ratio < p95:
         return "HV"
     return "HH"
 
@@ -64,13 +67,9 @@ def _pnl_abs(prev_side: str, prev_price: float, curr_price: float) -> float:
     return prev_price - curr_price
 
 
-def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float) -> float | None:
-    """Resolve K_STOP for a side/ATR: same side, then opposite side, then the nearest
-    neighbouring levels on the same side. Reproduces parameters_manager.get_k_stop's
-    fallback logic but reads cfg.calibration instead of TRADING_PARAMS."""
+def _k_for_level(cfg: EngineConfig, side: str, vol: str) -> float | None:
+    """Resolve K_STOP for an already-classified level: same side, then opposite, then nearest neighbours."""
     cal = cfg.calibration
-    vol = _vol_level_from_atr(atr_val, cal.atr_p20, cal.atr_p50, cal.atr_p80, cal.atr_p95)
-
     same = cal.k_stop_sell if side == "sell" else cal.k_stop_buy
     opp = cal.k_stop_buy if side == "sell" else cal.k_stop_sell
 
@@ -93,27 +92,88 @@ def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float) -> float | None:
     return None
 
 
-def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float) -> float:
+def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float, close: float) -> float | None:
+    """Resolve K_STOP for a side/ATR, classifying `close` into a level first."""
+    cal = cfg.calibration
+    vol = _vol_level_from_atr(
+        atr_val, close, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
+    )
+    return _k_for_level(cfg, side, vol)
+
+
+def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float, close: float) -> float:
+    """``reference_price`` anchors the distance; ``close`` classifies the level."""
     k_act = cfg.k_act
     if k_act is not None:
         return float(k_act) * atr_val
-    k_stop = lookup_k_stop(cfg, side, atr_val) or 0.0
+    k_stop = lookup_k_stop(cfg, side, atr_val, close) or 0.0
     return float(k_stop) * atr_val + (cfg.min_margin * reference_price)
 
 
-def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float) -> float:
-    distance = activation_distance(cfg, side, entry_price, atr_val)
+def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float, close: float) -> float:
+    distance = activation_distance(cfg, side, entry_price, atr_val, close)
     if side == "sell":
         return entry_price + distance
     return entry_price - distance
 
 
-def stop_price(cfg: EngineConfig, side: str, trailing_price: float, atr_val: float) -> float:
-    k_stop = lookup_k_stop(cfg, side, atr_val) or 0.0
+def stop_price(cfg: EngineConfig, side: str, trailing_price: float, atr_val: float, close: float) -> float:
+    """``trailing_price`` anchors the stop; ``close`` classifies the level."""
+    k_stop = lookup_k_stop(cfg, side, atr_val, close) or 0.0
     stop_distance = float(k_stop) * atr_val
     if side == "sell":
         return trailing_price - stop_distance
     return trailing_price + stop_distance
+
+
+def _opposite(side: str) -> str:
+    return "buy" if side == "sell" else "sell"
+
+
+def _record_stop_exit(
+    ops: list[Operation],
+    cfg: EngineConfig,
+    side: str,
+    exec_price: float,
+    dtime: str,
+    vol: str,
+    fee_rate: float,
+    cum_pnl: float,
+) -> float:
+    """Append the exit leg for ``side`` and return the updated cumulative PnL; both sides book it identically."""
+    prev = ops[-1]
+    fee = float(exec_price) * float(fee_rate)
+    pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
+    pnl_pct = (pnl / prev.price) * 100 if prev.price else None
+    if pnl_pct is not None:
+        cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
+        cum_pnl = (cum_factor - 1.0) * 100.0
+    # Keyed on the level this very row reports, so the two can never describe different moments.
+    k_used = _k_for_level(cfg, side, vol) or 0.0
+    ops.append(
+        Operation(
+            idx=len(ops) + 1,
+            time=dtime,
+            side=side,
+            price=float(exec_price),
+            vol=vol,
+            k_stop=float(k_used),
+            fee_abs=float(fee),
+            pnl_abs=float(pnl),
+            pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
+            cum_pnl=float(cum_pnl),
+        )
+    )
+    return cum_pnl
+
+
+def _price_of(row, has_close: bool, has_open: bool) -> float:
+    """Reference price of a bar: close, else open, else the high/low midpoint."""
+    if has_close:
+        return float(row.close)
+    if has_open:
+        return float(row.open)
+    return (float(row.high) + float(row.low)) / 2.0
 
 
 def simulate_operations(
@@ -123,31 +183,37 @@ def simulate_operations(
     max_ops: int | None = None,
 ) -> list[Operation]:
     cal = cfg.calibration
-    atr_20, atr_50, atr_80, atr_95 = cal.atr_p20, cal.atr_p50, cal.atr_p80, cal.atr_p95
+    ratio_20, ratio_50, ratio_80, ratio_95 = (
+        cal.atr_ratio_p20,
+        cal.atr_ratio_p50,
+        cal.atr_ratio_p80,
+        cal.atr_ratio_p95,
+    )
 
     ops: list[Operation] = []
     cum_pnl = 0.0  # cumulative return in percent, compounded
 
+    # Column availability is a property of the frame, not of a row: resolve it once
+    # so the per-bar loop never inspects the schema (itertuples yields namedtuples,
+    # which have no membership test anyway).
+    has_close = "close" in df.columns
+    has_open = "open" in df.columns
+
     # The simulation always opens with a BUY at the first bar with a valid ATR.
     first_row = None
-    for _, row in df.iterrows():
-        atr = float(row["atr"])
+    for row in df.itertuples(index=False):
+        atr = float(row.atr)
         if atr > 0 and not np.isnan(atr):
             first_row = row
             break
     if first_row is None:
         return ops
 
-    first_atr = float(first_row["atr"])
-    if "close" in first_row:
-        first_price = float(first_row["close"])
-    elif "open" in first_row:
-        first_price = float(first_row["open"])
-    else:
-        first_price = (float(first_row["high"]) + float(first_row["low"])) / 2.0
-    first_time = str(first_row["dtime"])
-    first_vol = _vol_level_from_atr(first_atr, atr_20, atr_50, atr_80, atr_95)
-    first_k = lookup_k_stop(cfg, "buy", first_atr) or 0.0
+    first_atr = float(first_row.atr)
+    first_price = _price_of(first_row, has_close, has_open)
+    first_time = str(first_row.dtime)
+    first_vol = _vol_level_from_atr(first_atr, first_price, ratio_20, ratio_50, ratio_80, ratio_95)
+    first_k = _k_for_level(cfg, "buy", first_vol) or 0.0
     first_fee = float(first_price) * float(fee_rate)
     # The entry fee is an immediate negative return of fee_rate * 100 percent.
     cum_pnl -= float(fee_rate) * 100.0
@@ -175,54 +241,46 @@ def simulate_operations(
     stop_px = None
     stop_atr = None
 
-    for _, row in df.iterrows():
-        atr = float(row["atr"])
+    for row in df.itertuples(index=False):
+        atr = float(row.atr)
         if atr <= 0 or np.isnan(atr):
             continue
 
-        high = float(row["high"])
-        low = float(row["low"])
-        dtime = str(row["dtime"])
-        vol = _vol_level_from_atr(atr, atr_20, atr_50, atr_80, atr_95)
-        if "close" in row:
-            price = float(row["close"])
-        elif "open" in row:
-            price = float(row["open"])
-        else:
-            price = (high + low) / 2.0
+        high = float(row.high)
+        low = float(row.low)
+        dtime = str(row.dtime)
+        price = _price_of(row, has_close, has_open)
+        vol = _vol_level_from_atr(atr, price, ratio_20, ratio_50, ratio_80, ratio_95)
 
         atr_limit_max = atr * (1 + cfg.atr_desv_limit)
         atr_limit_min = atr * (1 - cfg.atr_desv_limit)
 
         if activation_px is None:
-            activation_px = activation_price(cfg, side, entry_price, atr)
+            activation_px = activation_price(cfg, side, entry_price, atr, price)
             activation_atr = atr
 
         if not active:
             if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
-                activation_px = activation_price(cfg, side, entry_price, atr)
+                activation_px = activation_price(cfg, side, entry_price, atr, price)
                 activation_atr = atr
 
             # Re-anchor toward the current price when it has drifted too far. Mirrors
             # positions_manager.reanchor_activation_price: uses the stored
             # activation_atr, not the current bar ATR.
-            exp_dist = activation_distance(cfg, side, price, activation_atr)
+            exp_dist = activation_distance(cfg, side, price, activation_atr, price)
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
             if gap > exp_dist:
-                activation_px = activation_price(cfg, side, price, activation_atr)
+                activation_px = activation_price(cfg, side, price, activation_atr, price)
 
-            if side == "sell" and high >= activation_px:
-                active = True
-                trailing_price = high
-                stop_px = stop_price(cfg, side, trailing_price, atr)
-                stop_atr = atr
-            elif side == "buy" and low <= activation_px:
-                active = True
-                trailing_price = low
-                stop_px = stop_price(cfg, side, trailing_price, atr)
-                stop_atr = atr
-            else:
+            # A sell activates when the bar's high crosses up through the
+            # activation price and then trails the highs; a buy is the mirror.
+            crossed = high >= activation_px if side == "sell" else low <= activation_px
+            if not crossed:
                 continue
+            active = True
+            trailing_price = high if side == "sell" else low
+            stop_px = stop_price(cfg, side, trailing_price, atr, price)
+            stop_atr = atr
 
         if (
             stop_px is not None
@@ -230,90 +288,35 @@ def simulate_operations(
             and stop_atr is not None
             and (stop_atr < atr_limit_min or stop_atr > atr_limit_max)
         ):
-            stop_px = stop_price(cfg, side, trailing_price, atr)
+            stop_px = stop_price(cfg, side, trailing_price, atr, price)
             stop_atr = atr
 
-        if side == "sell":
-            if high > trailing_price:
-                trailing_price = high
-                stop_px = stop_price(cfg, side, trailing_price, atr)
-                stop_atr = atr
-            if low <= stop_px:
-                exec_price = stop_px
-                prev = ops[-1]
-                fee = float(exec_price) * float(fee_rate)
-                pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
-                pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                if pnl_pct is not None:
-                    cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
-                    cum_pnl = (cum_factor - 1.0) * 100.0
-                k_used = lookup_k_stop(cfg, "sell", atr) or 0.0
-                ops.append(
-                    Operation(
-                        idx=len(ops) + 1,
-                        time=dtime,
-                        side="sell",
-                        price=float(exec_price),
-                        vol=vol,
-                        k_stop=float(k_used),
-                        fee_abs=float(fee),
-                        pnl_abs=float(pnl),
-                        pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
-                        cum_pnl=float(cum_pnl),
-                    )
-                )
+        # Trail the favourable extreme (highs for a sell, lows for a buy), then
+        # test the stop against the *updated* level.
+        extreme = high if side == "sell" else low
+        improved = extreme > trailing_price if side == "sell" else extreme < trailing_price
+        if improved:
+            trailing_price = extreme
+            stop_px = stop_price(cfg, side, trailing_price, atr, price)
+            stop_atr = atr
 
-                if max_ops is not None and len(ops) >= max_ops:
-                    break
+        stop_hit = low <= stop_px if side == "sell" else high >= stop_px
+        if not stop_hit:
+            continue
 
-                side = "buy"
-                entry_price = float(exec_price)
-                active = False
-                activation_px = None
-                activation_atr = None
-                trailing_price = None
-                stop_px = None
-                stop_atr = None
-        else:
-            if low < trailing_price:
-                trailing_price = low
-                stop_px = stop_price(cfg, side, trailing_price, atr)
-                stop_atr = atr
-            if high >= stop_px:
-                exec_price = stop_px
-                prev = ops[-1]
-                fee = float(exec_price) * float(fee_rate)
-                pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
-                pnl_pct = (pnl / prev.price) * 100 if prev.price else None
-                if pnl_pct is not None:
-                    cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
-                    cum_pnl = (cum_factor - 1.0) * 100.0
-                k_used = lookup_k_stop(cfg, "buy", atr) or 0.0
-                ops.append(
-                    Operation(
-                        idx=len(ops) + 1,
-                        time=dtime,
-                        side="buy",
-                        price=float(exec_price),
-                        vol=vol,
-                        k_stop=float(k_used),
-                        fee_abs=float(fee),
-                        pnl_abs=float(pnl),
-                        pnl_pct=float(pnl_pct) if pnl_pct is not None else None,
-                        cum_pnl=float(cum_pnl),
-                    )
-                )
+        exec_price = stop_px
+        cum_pnl = _record_stop_exit(ops, cfg, side, exec_price, dtime, vol, fee_rate, cum_pnl)
 
-                if max_ops is not None and len(ops) >= max_ops:
-                    break
+        if max_ops is not None and len(ops) >= max_ops:
+            break
 
-                side = "sell"
-                entry_price = float(exec_price)
-                active = False
-                activation_px = None
-                activation_atr = None
-                trailing_price = None
-                stop_px = None
-                stop_atr = None
+        side = _opposite(side)
+        entry_price = float(exec_price)
+        active = False
+        activation_px = None
+        activation_atr = None
+        trailing_price = None
+        stop_px = None
+        stop_atr = None
 
     return ops

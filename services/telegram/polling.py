@@ -44,7 +44,12 @@ def _check_auth(update: Update) -> bool:
     return update.effective_user.id == int(TELEGRAM_USER_ID)
 
 
-def _pnl_percent(pos: dict[str, Any], last_price: float) -> float | None:
+def _pnl_percent(pos: dict[str, Any]) -> float | None:
+    """PnL the position would realize if the trailing stop were hit right now.
+
+    Derived from ``stop_price`` alone — the current market price plays no part,
+    which is why the caller labels it ``PnL @stop``.
+    """
     trailing_price = pos.get("trailing_price")
     stop_price = pos.get("stop_price")
     if trailing_price is None or stop_price is None:
@@ -210,13 +215,13 @@ async def positions_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             ]
 
             if trailing_active:
-                pnl = _pnl_percent(pos, last_price)
+                pnl = _pnl_percent(pos)
                 pnl_symbol = "🟢" if pnl and pnl > 0 else "🔴"
                 base_lines.extend(
                     [
                         f"Trailing: {pos['trailing_price']:,}€",
                         f"Stop: {pos['stop_price']:,}€",
-                        f"PnL: {pnl_symbol} {pnl:+.2f}%",
+                        f"PnL @stop: {pnl_symbol} {pnl:+.2f}%",
                     ]
                 )
 

@@ -776,7 +776,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT side AS \"Side\", volume::float8 AS \"Volume\", volume::float8 * (SELECT (control_value::jsonb -> '$pair' ->> 'price')::float8 FROM bot_control WHERE control_key = 'latest_pair_data') AS \"Value (€)\", entry_price::float8 AS \"Entry\", activation_price::float8 AS \"Activation\", trailing_price::float8 AS \"Trailing\", stop_price::float8 AS \"Stop\", CASE WHEN trailing_price IS NULL OR stop_price IS NULL THEN NULL WHEN side = 'sell' THEN (stop_price::float8 - entry_price::float8) / entry_price::float8 * 100 ELSE (entry_price::float8 - stop_price::float8) / entry_price::float8 * 100 END AS \"Est. PnL %\", created_at AS \"Created\", activated_at AS \"Activated\", updated_at AS \"Updated\", closing_order_id AS \"Closing Order\", closing_price::float8 AS \"Closing Price\", closing_requested_at AS \"Close Requested\" FROM trailing_state WHERE pair = '$pair' ORDER BY pair",
+          "rawSql": "SELECT side AS \"Side\", volume::float8 AS \"Volume\", volume::float8 * (SELECT (control_value::jsonb -> '$pair' ->> 'price')::float8 FROM bot_control WHERE control_key = 'latest_pair_data') AS \"Value (€)\", entry_price::float8 AS \"Entry\", activation_price::float8 AS \"Activation\", trailing_price::float8 AS \"Trailing\", stop_price::float8 AS \"Stop\", CASE WHEN trailing_price IS NULL OR stop_price IS NULL THEN NULL WHEN side = 'sell' THEN (stop_price::float8 - entry_price::float8) / entry_price::float8 * 100 ELSE (entry_price::float8 - stop_price::float8) / entry_price::float8 * 100 END AS \"Est. PnL %\", created_at AS \"Created\", activated_at AS \"Activated\", updated_at AS \"Updated\", closing_order_id AS \"Closing Order\", closing_price::float8 AS \"Closing Price\", stop_at AS \"Stop Hit\" FROM trailing_state WHERE pair = '$pair' ORDER BY pair",
           "refId": "A",
           "sql": {
             "columns": [
@@ -872,7 +872,7 @@
               }
             ]
           },
-          "unit": "percent"
+          "unit": "currencyEUR"
         },
         "overrides": [
           {
@@ -882,7 +882,7 @@
               "options": {
                 "mode": "exclude",
                 "names": [
-                  "cumulative_pnl"
+                  "cumulative_pnl_eur"
                 ],
                 "prefix": "All except:",
                 "readOnly": true
@@ -928,11 +928,11 @@
             "uid": "botc-postgres"
           },
           "format": "table",
-          "rawSql": "SELECT closed_at AS time, SUM(pnl_percent::float8) OVER (ORDER BY closed_at) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' UNION ALL SELECT now() AS time, SUM(pnl_percent::float8) AS cumulative_pnl FROM closed_positions WHERE pair = '$pair' HAVING COUNT(*) > 0 ORDER BY time",
+          "rawSql": "SELECT closed_at AS time, SUM(pnl_percent::float8 / 100.0 * entry_price::float8 * volume::float8) OVER (ORDER BY closed_at) AS cumulative_pnl_eur FROM closed_positions WHERE pair = '$pair' UNION ALL SELECT now() AS time, SUM(pnl_percent::float8 / 100.0 * entry_price::float8 * volume::float8) AS cumulative_pnl_eur FROM closed_positions WHERE pair = '$pair' HAVING COUNT(*) > 0 ORDER BY time",
           "refId": "A"
         }
       ],
-      "title": "Cumulative PnL",
+      "title": "Cumulative PnL (€)",
       "type": "timeseries"
     },
     {
@@ -1487,7 +1487,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT date_trunc('hour', started_at) AS time, COUNT(*) FILTER (WHERE status = 'completed') AS COMPLETED, COUNT(*) FILTER (WHERE status = 'failed') AS FAILED, COUNT(*) FILTER (WHERE status = 'paused') AS PAUSED FROM sessions WHERE $__timeFilter(started_at) GROUP BY 1 ORDER BY 1",
+          "rawSql": "SELECT date_trunc('hour', started_at) AS time, COUNT(*) FILTER (WHERE status = 'completed') AS COMPLETED, COUNT(*) FILTER (WHERE status = 'pair_error') AS PAIR_ERROR, COUNT(*) FILTER (WHERE status = 'failed') AS FAILED, COUNT(*) FILTER (WHERE status = 'paused') AS PAUSED FROM sessions WHERE $__timeFilter(started_at) GROUP BY 1 ORDER BY 1",
           "refId": "A",
           "sql": {
             "columns": [

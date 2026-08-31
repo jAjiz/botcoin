@@ -45,7 +45,14 @@ BUY:  activation_price = entry_price − activation_distance
 activation_distance = K_STOP × ATR + MIN_MARGIN × entry_price
 ```
 
-`K_ACT` and `MIN_MARGIN` can each be configured per side (`PAIR_SELL_K_ACT`, `PAIR_BUY_K_ACT`, etc.) or as a shared value for both sides.
+`K_ACT` and `MIN_MARGIN` are single values per pair, shared by both sides (the earlier per-side `PAIR_SELL_K_ACT` / `PAIR_BUY_K_ACT` variants were removed). `K_STOP` remains per-side because it is derived from pivot analysis, which naturally differs between uptrends and downtrends.
+
+Under MIN_MARGIN activation the activation distance is `K_STOP × ATR + MIN_MARGIN × entry_price`, while the stop trails `K_STOP × ATR` behind the best price seen since activation. The two terms cancel at the instant of activation, so the first stop sits exactly `MIN_MARGIN × entry_price` beyond entry: **MIN_MARGIN sets a profit margin at activation**, not merely a distance parameter. Under K_ACT activation (`K_ACT × ATR`) there is no such margin — the first stop can already sit at or through the entry price — which is why the two modes are not interchangeable.
+
+That margin holds at activation only. It is **not** a floor on the exit, because two mechanisms move the stop back through it:
+
+- **Re-anchoring** recalculates the activation from `current_price` instead of `entry_price` (see Recalibration below), so the margin is measured against the new reference and the exit can land well under entry.
+- **ATR recalibration** recalculates the stop from a larger ATR (or a larger `K_STOP`) while the trailing price has not advanced, which widens the stop distance past the margin.
 
 ### Trailing-stop mechanics
 
@@ -57,19 +64,23 @@ Once the market price crosses the activation price:
 
 ### Recalibration
 
-If ATR changes by more than `ATR_DESV_LIMIT` (default 20 %) between sessions, both the activation price (pre-activation) and the stop price (post-activation) are recalculated with the new ATR. This prevents the stop from becoming stale in a volatility regime shift.
+If ATR changes by more than `ATR_DESV_LIMIT` (default 20 %) between sessions, both the activation price (pre-activation) and the stop price (post-activation) are recalculated with the new ATR. This prevents the stop from becoming stale in a volatility regime shift. The volatility level of that recalculation is classified against the **current** price, while the activation price stays anchored to `entry_price` and the stop to the trailing price.
+
+After a strong adverse move, a plan re-anchors its activation toward the current price and executes into the first bounce, recording a large negative `pnl_percent` against the original reference. This is deliberate: for a rebalancer, executing late beats never executing. It is also the main source of the worst recorded per-trade numbers, so those are the mechanism working as designed rather than a defect.
 
 ### Position closure
 
-`close_position` places a limit order and records the approximate `closing_price` (at order placement time). `is_closing_complete` polls the Kraken `QueryOrders` endpoint; when the fill is confirmed, it overwrites `closing_price` with the real fill price and computes `pnl_percent`. PnL is valid only after `is_closing_complete` returns `True`.
+`close_position` places a limit order and records the approximate `closing_price` (at order placement time); if the market moves before it fills, later sessions cancel and re-place it at the then-current price. `finalize_close` overwrites `closing_price` with the real fill and computes `pnl_percent` once the fill is confirmed — PnL is valid only after that. See [`docs/operations.md` § Closing order repricing](operations.md#closing-order-repricing) for what an operator sees, and [`CLAUDE.md` § Position lifecycle](../CLAUDE.md#position-lifecycle-tradingpositions_managerpy) for the exact order-id and status-dispatch mechanics.
+
+`pnl_percent` is **timing alpha, not economic profit**. It measures the execution price against `entry_price` — the price when the rebalance plan was created — so it reports how much better the trailing layer did than rebalancing immediately. `entry_price` is a reference, not a cost basis: nothing was ever bought at it. From the fee change onward it is **net** of the real Kraken fee (recorded in `closed_positions.fee`, in the pair's quote currency); rows closed before that are gross, so the series is not homogeneous across that point. The recorded fee is the one charged on the order that finalized the close: a fill that landed during an earlier cancel window contributes neither its proceeds nor its fee (see [`CLAUDE.md` § Position lifecycle](../CLAUDE.md#position-lifecycle-tradingpositions_managerpy)).
 
 ---
 
 ## Volatility classification
 
-ATR is classified into five levels using percentile boundaries precomputed from each pair's OHLC history:
+`ATR/close` — a dimensionless ratio, so the levels survive price drift — is classified into five levels using percentile boundaries of that ratio, precomputed from each pair's OHLC history:
 
-| Level | ATR range | Description |
+| Level | ATR/close ratio range | Description |
 |---|---|---|
 | LL | < P20 | Very Low Volatility |
 | LV | P20–P50 | Low Volatility |
@@ -77,7 +88,7 @@ ATR is classified into five levels using percentile boundaries precomputed from 
 | HV | P80–P95 | High Volatility |
 | HH | > P95 | Very High Volatility |
 
-`get_volatility_level(pair, atr)` in `trading/parameters_manager.py` performs this classification against the current pair's ATR percentile boundaries.
+`get_volatility_level(pair, atr_val, close)` in `trading/parameters_manager.py` performs this classification against the current pair's `ATR/close` percentile boundaries.
 
 ---
 
@@ -97,7 +108,7 @@ This K-value represents how far the price moved against the dominant trend (stru
 
 ### K-value percentile selection
 
-`calculate_k_stops` in `trading/parameters_manager.py` groups the per-segment K-values by volatility level and selects the value at the configured percentile (`PAIR_STOP_PCT_<LEVEL>`).
+`calculate_k_stops` in `trading/parameters_manager.py` groups the per-segment K-values by volatility level and selects the value at the configured percentile (`PAIR_STOP_PCT_<LEVEL>`). Each candle is assigned to a level by its own `ATR/close` ratio, against the same percentile boundaries the live classifier reads, so a K-value is calibrated for the level that later selects it.
 
 - **Low percentile** (e.g. P25): tight stop — higher closure frequency, smaller per-trade loss.
 - **High percentile** (e.g. P95): wide stop — lower closure frequency, larger noise tolerance.
@@ -120,7 +131,4 @@ No universal answer exists — optimal percentiles depend on the pair's historic
 
 ## Constraints and invariants
 
-- The trailing stop is the **only** exit mechanism. There is no global stop-loss, no max-loss-per-position, no panic kill switch. Adding one is a strategy change and must be discussed explicitly.
-- A position with `closing_order_id` set is **not open** — `tick_position` must not run on it (the scheduler enforces this via step ordering).
-- `closing_price` is an estimate until fill confirmation: `close_position` writes it first at order placement, and each `reprice_closing_order` chase overwrites it again (still an estimate, at the new limit price) while the order remains unfilled. `is_closing_complete` performs the final write with the real fill price and computes `pnl_percent`.
-- `_safe_call` in `exchange/kraken.py` swallows errors and returns `None`. Every caller that does not handle `None` will silently corrupt state.
+These invariants are owned by [`CLAUDE.md` § Architecture](../CLAUDE.md#architecture) (trailing stop as sole exit, `is_open`/`stop_at`, `closing_price` as estimate-until-`finalize_close`, `_safe_call` returning `None`) — this document defers to that copy rather than repeating it.

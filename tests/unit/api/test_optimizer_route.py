@@ -1,6 +1,8 @@
 """Unit tests for /optimizer/jobs routes."""
 
+import asyncio
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -8,6 +10,7 @@ from fastapi.testclient import TestClient
 
 import core.database as db
 from api.routes import optimizer as optimizer_route
+from api.schemas import OptimizerRequest as OptimizerRequestSchema
 from trading.optimizer.jobs import OptimizerBusyError
 
 _PAIR = "XBTEUR"
@@ -91,6 +94,43 @@ def test_submit_returns_202_with_job_id(monkeypatch) -> None:
     body = resp.json()
     assert body["job_id"] == _JOB_ID
     assert body["status"] == "running"
+
+
+def test_submit_calls_try_start_via_to_thread(monkeypatch) -> None:
+    """try_start does a DB insert + a synchronous Telegram HTTP call; it must run
+    off the event loop via asyncio.to_thread, not be awaited/called directly."""
+    calls = []
+
+    async def _fake_to_thread(func, *args):
+        calls.append(func)
+        return func(*args)
+
+    monkeypatch.setattr(optimizer_route.asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
+    client = _make_client(monkeypatch)
+    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE})
+    assert resp.status_code == 202
+    assert calls == [optimizer_route.JOB_STORE.try_start]
+
+
+def test_submit_retains_supervise_task_and_discards_on_completion(monkeypatch) -> None:
+    """The supervise() task must be kept in a module-level set (not fire-and-forget
+    via a bare create_task) so it cannot be garbage-collected mid-flight, and must
+    be discarded once it completes."""
+    monkeypatch.setattr(optimizer_route, "PAIRS", _PAIRS)
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "supervise", AsyncMock(return_value=None))
+
+    async def _run():
+        req = OptimizerRequestSchema(pair=_PAIR, mode="OPTIMIZE", search_space=_SPACE)
+        await optimizer_route.submit(req)
+        assert len(optimizer_route._supervise_tasks) == 1
+        # yield control so the task runs to completion and its done-callback fires
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert len(optimizer_route._supervise_tasks) == 0
+
+    asyncio.run(_run())
 
 
 def test_submit_disabled_returns_503(monkeypatch) -> None:
@@ -181,3 +221,81 @@ def test_get_auto_job_nests_auto_fields(monkeypatch) -> None:
     assert "converged" not in body["result"] and "seeds_used" not in body["result"]
     # the request echo groups the AUTO knobs
     assert body["request"]["auto_settings"]["n_seeds"] == 4
+
+
+def test_submit_rejects_non_iso_start(monkeypatch) -> None:
+    """An unparseable window used to be accepted and only fail inside the spawned
+    worker, after a job row had already been created."""
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE, "start": "last week"},
+    )
+    assert resp.status_code == 422
+    assert "ISO" in str(resp.json()["detail"])
+
+
+def test_submit_rejects_non_iso_end(monkeypatch) -> None:
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE, "end": "31/01/2026"},
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["start", "end"])
+def test_submit_rejects_offset_aware_window(monkeypatch, field: str) -> None:
+    """An offset-aware bound parses as ISO but is still unusable: it is compared
+    against the tz-naive `dtime` column, which raises inside pandas."""
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={"pair": _PAIR, "mode": "OPTIMIZE", "search_space": _SPACE, field: "2026-02-01T00:00:00+00:00"},
+    )
+    assert resp.status_code == 422
+    assert "offset" in str(resp.json()["detail"])
+
+
+def test_submit_accepts_naive_iso_window(monkeypatch) -> None:
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: _JOB_ID)
+    client = _make_client(monkeypatch)
+    resp = client.post(
+        "/optimizer/jobs",
+        json={
+            "pair": _PAIR,
+            "mode": "OPTIMIZE",
+            "search_space": _SPACE,
+            "start": "2026-01-01",
+            "end": "2026-02-01T00:00:00",
+        },
+    )
+    assert resp.status_code == 202
+
+
+def test_optimizer_request_echoes_a_non_iso_window() -> None:
+    """The model must stay lenient: it doubles as the response model for stored
+    jobs, and `try_start` inserts the row *before* the run, so a job whose window
+    never parsed still has a row to render."""
+    req = OptimizerRequestSchema(pair=_PAIR, mode="OPTIMIZE", start="last week")
+    assert req.start == "last week"
+
+
+def test_get_job_renders_a_stored_non_iso_window(monkeypatch) -> None:
+    row = dict(_JOB_ROW, request={**_JOB_ROW["request"], "start": "last week"})
+    monkeypatch.setattr(db, "get_optimizer_job", lambda jid: row)
+    client = _make_client(monkeypatch)
+    resp = client.get(f"/optimizer/jobs/{_JOB_ID}")
+    assert resp.status_code == 200
+    assert resp.json()["request"]["start"] == "last week"
+
+
+def test_list_jobs_is_not_broken_by_one_stored_non_iso_window(monkeypatch) -> None:
+    """The whole list is built in one comprehension: a single unrenderable row
+    would hide every other job."""
+    bad = dict(_JOB_ROW, request={**_JOB_ROW["request"], "start": "last week"})
+    monkeypatch.setattr(db, "list_optimizer_jobs", lambda limit: [bad, dict(_JOB_ROW)])
+    client = _make_client(monkeypatch)
+    resp = client.get("/optimizer/jobs")
+    assert resp.status_code == 200
+    assert len(resp.json()) == 2

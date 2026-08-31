@@ -11,6 +11,7 @@ import os
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import JSONB
 
 revision = "20260512_01"
@@ -19,10 +20,6 @@ branch_labels = None
 depends_on = None
 
 GRAFANA_TABLES = ("ohlc_data", "closed_positions", "trailing_state", "bot_control", "sessions")
-
-
-def _escape_literal(value: str) -> str:
-    return value.replace("'", "''")
 
 
 def upgrade() -> None:
@@ -46,22 +43,21 @@ def upgrade() -> None:
             "GRAFANA_DB_PASSWORD must be set in the environment for migration 20260512_01. "
             "Set it in .env (it is also consumed by the grafana service)."
         )
-    password_sql = _escape_literal(password)
-    database = op.get_bind().engine.url.database
+    conn = op.get_bind()
+    database = conn.engine.url.database
 
-    op.execute(
-        f"""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader') THEN
-                CREATE ROLE grafana_reader LOGIN PASSWORD '{password_sql}';
-            ELSE
-                ALTER ROLE grafana_reader WITH LOGIN PASSWORD '{password_sql}';
-            END IF;
-        END
-        $$;
-        """
+    # The verb is chosen client-side; the password is quoted server-side by
+    # Postgres' format(%L), so `'`/`$$` in it cannot break out of the statement.
+    role_exists = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader'")).scalar() is not None
+    verb = (
+        "ALTER ROLE grafana_reader WITH LOGIN PASSWORD %L"
+        if role_exists
+        else "CREATE ROLE grafana_reader LOGIN PASSWORD %L"
     )
+    role_stmt = conn.execute(text("SELECT format(:verb, :pw)").bindparams(verb=verb, pw=password)).scalar()
+    # role_stmt contains the password, so it must reach the driver unparsed: text()
+    # would read `p@:ss` as a bind param, the DBAPI `p%rd` as a placeholder.
+    conn.exec_driver_sql(role_stmt, execution_options={"no_parameters": True})
 
     op.execute(f'GRANT CONNECT ON DATABASE "{database}" TO grafana_reader;')
     op.execute("GRANT USAGE ON SCHEMA public TO grafana_reader;")

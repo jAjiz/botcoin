@@ -28,6 +28,7 @@ from core.database import (
     set_bot_paused,
     set_control_value,
 )
+from core.db.positions import _state_entry_to_trailing_record, _trailing_record_to_state_entry
 
 
 class FakeQuery:
@@ -619,6 +620,19 @@ def test_record_position_closed_optional_fields_populated(monkeypatch):
     assert float(params["stop_atr"]) == 40.0
 
 
+def test_record_position_closed_persists_the_fee(monkeypatch):
+    """fee (Task 6's finalize_close output) must pass through to the insert."""
+    session = FakeSession()
+    patch_get_session(monkeypatch, session)
+
+    data = _make_closed_position_data(fee=Decimal("1.23"))
+    record_position_closed("XBTEUR", data)
+
+    params = session.executed_statements[0].compile().params
+    assert params["fee"] is not None
+    assert float(params["fee"]) == 1.23
+
+
 def test_record_position_closed_raises_on_db_error(monkeypatch):
     """Test that record_position_closed re-raises on database error."""
     patch_get_session_error(monkeypatch)
@@ -751,7 +765,7 @@ def test_save_trailing_state_with_optional_fields(monkeypatch):
             stop_atr=150.0,
             closing_order_id="close_123",
             closing_price=50150.0,
-            closing_requested_at=datetime(2026, 4, 1, 11, 15, 0, tzinfo=UTC),
+            stop_at=datetime(2026, 4, 1, 11, 15, 0, tzinfo=UTC),
             activated_at=datetime(2026, 4, 1, 10, 30, 0, tzinfo=UTC),
         ),
     )
@@ -760,6 +774,29 @@ def test_save_trailing_state_with_optional_fields(monkeypatch):
     assert float(saved.trailing_price) == 50400.0
     assert float(saved.stop_price) == 50200.0
     assert saved.closing_order_id == "close_123"
+
+
+def test_trailing_record_round_trips_stop_at():
+    _breach = datetime(2026, 4, 1, 11, 15, 0, tzinfo=UTC)
+    record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry(stop_at=_breach))
+    assert record.stop_at == _breach
+    assert _trailing_record_to_state_entry(record)["stop_at"] == _breach
+
+
+def test_trailing_record_omits_stop_at_when_null():
+    record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry())
+    assert "stop_at" not in _trailing_record_to_state_entry(record)
+
+
+def test_trailing_record_round_trips_closing_request_id():
+    record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry(closing_request_id="deadbeef"))
+    assert record.closing_request_id == "deadbeef"
+    assert _trailing_record_to_state_entry(record)["closing_request_id"] == "deadbeef"
+
+
+def test_trailing_record_omits_closing_request_id_when_null():
+    record = _state_entry_to_trailing_record("XBTEUR", _make_trailing_state_entry())
+    assert "closing_request_id" not in _trailing_record_to_state_entry(record)
 
 
 def test_save_trailing_state_raises_on_db_error(monkeypatch):

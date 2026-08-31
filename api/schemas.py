@@ -3,7 +3,49 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+
+def _require_iso_datetime(value: str | None) -> str | None:
+    """Reject a window bound that cannot be compared against the `dtime` column.
+
+    `start`/`end` stay strings — they are compared directly against the frame's
+    `dtime` column — but an unusable one used to travel all the way into pandas
+    (backtest) or into the spawned optimizer worker, failing long after the
+    request was accepted. Validating here turns that into a 422.
+
+    Two things are unusable, and parseability alone does not catch both.
+    `datetime.fromisoformat` also accepts an offset-aware bound, but `dtime` is
+    tz-naive `datetime64[ns]`, so `df["dtime"] <= "2026-02-01T00:00:00+00:00"`
+    raises `TypeError` mid-run — the same late failure, just further downstream.
+    Bounds are naive UTC, like every timestamp stored in `ohlc_data`.
+    """
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"must be an ISO 8601 datetime (e.g. '2026-01-31' or '2026-01-31T12:00:00'): {exc}") from exc
+    if parsed.tzinfo is not None:
+        raise ValueError(f"must not carry a UTC offset (stored timestamps are naive UTC): {value!r}")
+    return value
+
+
+def check_window_bounds(start: str | None, end: str | None) -> None:
+    """Validate an optimizer window from the route, raising `ValueError`.
+
+    Deliberately *not* a validator on `OptimizerRequest`: that model is also the
+    response model for a stored job (`OptimizerJobStatusResponse.request`), and
+    `JobStore.try_start` inserts the row before the run starts, so a job whose
+    window never parsed still has a row to render. A validator would run on the
+    way out too and turn one bad row into a 500 — for `GET /optimizer/jobs`, for
+    the entire list. Same reason `search_space` is enforced at the route.
+    """
+    for name, value in (("start", start), ("end", end)):
+        try:
+            _require_iso_datetime(value)
+        except ValueError as exc:
+            raise ValueError(f"{name}: {exc}") from exc
 
 
 class MarketItem(BaseModel):
@@ -27,7 +69,7 @@ class PositionDetail(BaseModel):
     stop_atr: float | None = None
     closing_order_id: str | None = None
     closing_price: float | None = None
-    closing_requested_at: datetime | None = None
+    stop_at: datetime | None = None
 
 
 class PositionResponse(BaseModel):
@@ -60,6 +102,8 @@ class BacktestRequest(BaseModel):
     end: str | None = None
     max_ops: int | None = None
     use_live_config: bool = False
+
+    _check_window = field_validator("start", "end")(_require_iso_datetime)
 
 
 class OperationDTO(BaseModel):
@@ -159,6 +203,8 @@ class OptimizerRequest(BaseModel):
     pair: str
     mode: Literal["OPTIMIZE", "CURRENT", "AUTO"]
     fee_pct: float = 0.0
+    # start/end must be naive ISO 8601, enforced at the route via check_window_bounds
+    # for the same reason as search_space below.
     start: str | None = None
     end: str | None = None
     train_split: float = Field(default=0.67, ge=0.5, le=1.0)

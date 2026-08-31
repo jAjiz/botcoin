@@ -4,6 +4,7 @@ import core.config as config
 from core.utils import (
     PRICE_DECIMALS_FALLBACK,
     VOLUME_DECIMALS_FALLBACK,
+    new_cl_ord_id,
     now_utc,
     round_price,
     round_volume,
@@ -57,3 +58,15 @@ def test_round_volume_falls_back_when_decimals_unknown(monkeypatch) -> None:
     monkeypatch.delitem(config.PAIRS, "ZZZEUR", raising=False)
 
     assert round_volume("ZZZEUR", 1.123456789) == round(1.123456789, VOLUME_DECIMALS_FALLBACK)
+
+
+def test_new_cl_ord_id_returns_32_lowercase_hex_chars() -> None:
+    cl_ord_id = new_cl_ord_id()
+
+    assert len(cl_ord_id) == 32
+    assert cl_ord_id == cl_ord_id.lower()
+    assert all(c in "0123456789abcdef" for c in cl_ord_id)
+
+
+def test_new_cl_ord_id_differs_between_calls() -> None:
+    assert new_cl_ord_id() != new_cl_ord_id()

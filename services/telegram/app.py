@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from core.config import ALLOW_NO_AUTH, API_SECRET_TOKEN, TELEGRAM_ENABLED, TELEGRAM_POLL_INTERVAL, TELEGRAM_USER_ID
 from core.logging import configure_logging
+from core.validation import validate_telegram_params
 from services.telegram.polling import build_tg_app
 from telegram.ext import Application
 
@@ -24,9 +25,20 @@ class NotifyRequest(BaseModel):
     level: Literal["info", "warning", "error"] = "info"
 
 
+def _validate_telegram_config() -> None:
+    """core.validation.validate_common_params only ever runs in the botc
+    process — this service must not rely on that having caught a
+    misconfiguration of its own env."""
+    errors: list[str] = []
+    validate_telegram_params(errors)
+    if errors:
+        raise RuntimeError("Telegram service configuration invalid: " + "; ".join(errors))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global tg_app
+    _validate_telegram_config()
     if not TELEGRAM_ENABLED:
         yield
         return
@@ -59,7 +71,10 @@ app = FastAPI(title="BoTC Telegram", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/notify", status_code=202)
-async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=None)) -> dict[str, bool]:
+async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=None)) -> dict[str, object]:
+    # `object`, not `bool`: FastAPI validates the response against this annotation,
+    # and the disabled branch below carries a `str` reason. Under `dict[str, bool]`
+    # that branch answered 500 — a server fault for a valid configuration.
     if API_SECRET_TOKEN:
         if x_api_token is None or not secrets.compare_digest(x_api_token, API_SECRET_TOKEN):
             raise HTTPException(status_code=401, detail="Invalid or missing API token")
@@ -74,4 +89,8 @@ async def notify(req: NotifyRequest, x_api_token: str | None = Header(default=No
         )
     except Exception as e:
         logging.error(f"Telegram send failed: {e}")
+        # 202 still: the caller (core.logging) must never fail because a
+        # notification could not be delivered. But the message was lost, so
+        # saying "accepted" would be a lie.
+        return {"accepted": False}
     return {"accepted": True}

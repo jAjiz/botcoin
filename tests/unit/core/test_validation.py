@@ -1,5 +1,10 @@
+import subprocess
+import sys
+from pathlib import Path
+
 import core.config as config
 import core.validation as validation
+import exchange.kraken as kraken
 
 
 def test_validate_common_params_collects_expected_errors(monkeypatch) -> None:
@@ -30,7 +35,8 @@ def test_build_and_validate_pairs_adds_error_on_exception(monkeypatch) -> None:
     def _boom(_pairs):
         raise RuntimeError("kraken error")
 
-    monkeypatch.setattr(validation, "build_pairs_map", _boom)
+    # Patched on exchange.kraken, where the function-local import resolves it.
+    monkeypatch.setattr(kraken, "build_pairs_map", _boom)
 
     errors = []
     validation.build_and_validate_pairs(errors)
@@ -40,13 +46,27 @@ def test_build_and_validate_pairs_adds_error_on_exception(monkeypatch) -> None:
 
 
 def test_build_and_validate_pairs_adds_error_when_no_valid_pairs(monkeypatch) -> None:
-    monkeypatch.setattr(validation, "build_pairs_map", lambda _pairs: None)
+    monkeypatch.setattr(kraken, "build_pairs_map", lambda _pairs: None)
     monkeypatch.setattr(validation, "PAIRS", {"XBTEUR": {}})
 
     errors = []
     validation.build_and_validate_pairs(errors)
 
     assert "No valid pairs found" in errors
+
+
+def test_importing_validation_does_not_pull_in_the_exchange_layer() -> None:
+    """build_pairs_map must stay a function-local import (see
+    build_and_validate_pairs); subprocess, since this session already has pandas."""
+    probe = "import sys, core.validation; print(sorted({'pandas', 'numpy', 'krakenex'} & sys.modules.keys()))"
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parents[3],
+        check=True,
+    )
+    assert result.stdout.strip() == "[]", f"core.validation now imports the exchange layer: {result.stdout.strip()}"
 
 
 def test_validate_config_returns_false_on_errors(monkeypatch) -> None:

@@ -28,7 +28,7 @@ _POSITION = {
     "stop_atr": 490.0,
     "closing_order_id": None,
     "closing_price": None,
-    "closing_requested_at": None,
+    "stop_at": None,
 }
 
 

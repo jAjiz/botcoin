@@ -5,6 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import core.validation as validation_module
 import services.telegram.app as tg_module
 import services.telegram.polling as polling
 
@@ -189,6 +190,9 @@ async def test_positions_command_shows_open_position(monkeypatch) -> None:
     await polling.positions_command(update, MockContext(args=["XBTEUR"]))
     msg = update.message.replies[0]
     assert "Trailing" in msg and "Stop" in msg
+    # The figure is what the position would realize at its stop, not a live
+    # mark-to-market PnL — the label has to say so.
+    assert "PnL @stop" in msg
 
 
 @pytest.mark.asyncio
@@ -248,10 +252,10 @@ async def test_positions_command_shows_no_position(monkeypatch) -> None:
 
 def test_pnl_percent() -> None:
     buy_pos = {"side": "buy", "entry_price": 80000.0, "trailing_price": 82000.0, "stop_price": 79000.0}
-    assert polling._pnl_percent(buy_pos, 82000.0) == pytest.approx((80000.0 - 79000.0) / 80000.0 * 100)
+    assert polling._pnl_percent(buy_pos) == pytest.approx((80000.0 - 79000.0) / 80000.0 * 100)
 
     no_trailing = {"side": "buy", "entry_price": 80000.0, "trailing_price": None, "stop_price": None}
-    assert polling._pnl_percent(no_trailing, 80000.0) is None
+    assert polling._pnl_percent(no_trailing) is None
 
 
 # ============================================================================
@@ -300,9 +304,26 @@ def test_notify_sends_message_with_level_prefix(monkeypatch):
 
 
 def test_notify_tolerates_send_failure(monkeypatch):
+    """A failed send must not raise — but it must not claim the message was
+    accepted either, or the caller has no way to know the alert was lost."""
     client, mock_tg = _notify_client(monkeypatch)
     mock_tg.bot.send_message.side_effect = RuntimeError("network error")
-    assert client.post("/notify", json={"message": "test", "level": "info"}).status_code == 202
+    resp = client.post("/notify", json={"message": "test", "level": "info"})
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": False}
+
+
+def test_notify_reports_disabled_without_a_server_error(monkeypatch):
+    """`tg_app is None` — the service started without TELEGRAM_TOKEN while botc
+    still has TELEGRAM_ENABLED=true — is a valid configuration, not a server
+    fault. FastAPI validates the response against the handler's return
+    annotation, so a `str` reason under a `dict[str, bool]` contract turns this
+    branch into a 500 and hides the answer it was built to give."""
+    client, _ = _notify_client(monkeypatch)
+    monkeypatch.setattr(tg_module, "tg_app", None)
+    resp = client.post("/notify", json={"message": "x", "level": "info"})
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": False, "reason": "Telegram is disabled"}
 
 
 def test_notify_rejects_request_without_token(monkeypatch):
@@ -427,3 +448,70 @@ async def test_config_command_rejects_unauthorized(monkeypatch):
     update = MockUpdate(user_id=999)
     await polling.config_command(update, MockContext())
     assert update.message.replies == []
+
+
+# ============================================================================
+# Startup config validation
+# ============================================================================
+# _validate_telegram_config delegates its rules to
+# core.validation.validate_telegram_params (shared with validate_common_params),
+# so these patch validation_module's bindings, not tg_module's.
+
+
+def test_validate_telegram_config_skips_checks_when_disabled(monkeypatch) -> None:
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", False)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", None)
+    tg_module._validate_telegram_config()
+
+
+def test_validate_telegram_config_passes_with_valid_settings(monkeypatch) -> None:
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
+    tg_module._validate_telegram_config()
+
+
+def test_validate_telegram_config_raises_when_token_missing(monkeypatch) -> None:
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
+    with pytest.raises(RuntimeError, match="TELEGRAM_TOKEN"):
+        tg_module._validate_telegram_config()
+
+
+@pytest.mark.parametrize("bad_user_id", [None, "", "abc", "-5", "0"])
+def test_validate_telegram_config_raises_when_user_id_invalid(monkeypatch, bad_user_id) -> None:
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", bad_user_id)
+    with pytest.raises(RuntimeError, match="TELEGRAM_USER_ID"):
+        tg_module._validate_telegram_config()
+
+
+def test_validate_telegram_config_raises_when_poll_interval_negative(monkeypatch) -> None:
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", "abc:123")
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
+    monkeypatch.setattr(validation_module, "TELEGRAM_POLL_INTERVAL", -1)
+    with pytest.raises(RuntimeError, match="TELEGRAM_POLL_INTERVAL"):
+        tg_module._validate_telegram_config()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_raises_before_building_app_when_config_invalid(monkeypatch) -> None:
+    """The validation gate must run before build_tg_app() — an invalid config
+    must fail loudly at startup, not surface later as e.g. int(None)."""
+    monkeypatch.setattr(tg_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_ENABLED", True)
+    monkeypatch.setattr(validation_module, "TELEGRAM_TOKEN", None)
+    monkeypatch.setattr(validation_module, "TELEGRAM_USER_ID", "123456789")
+
+    def _boom():
+        raise AssertionError("build_tg_app must not run when config is invalid")
+
+    monkeypatch.setattr(tg_module, "build_tg_app", _boom)
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_TOKEN"):
+        async with tg_module.lifespan(FastAPI()):
+            pass

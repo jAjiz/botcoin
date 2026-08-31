@@ -139,10 +139,17 @@ def detect_pivots(df: pd.DataFrame, order: int = DEFAULT_ORDER) -> list[tuple[in
     return pivots
 
 
+def atr_ratio_percentiles(df: pd.DataFrame) -> tuple[float, float, float, float]:
+    """Percentiles of ATR/close — the one partition both the classifier and the K-value buckets read."""
+    ratio = (df["atr"] / df["close"]).to_numpy(dtype=float)
+    p20, p50, p80, p95 = (float(np.percentile(ratio, p)) for p in (20, 50, 80, 95))
+    return p20, p50, p80, p95
+
+
 def calculate_noise_between_pivots(
     df: pd.DataFrame,
     pivot_pair: tuple[tuple[int, str, float, pd.Timestamp], tuple[int, str, float, pd.Timestamp]],
-    atr_percentiles: dict[str, float],
+    ratio_percentiles: dict[str, float],
 ) -> dict[str, Any]:
     start_idx, start_type, start_price, start_dtime = pivot_pair[0]
     end_idx, end_type, end_price, end_dtime = pivot_pair[1]
@@ -170,15 +177,18 @@ def calculate_noise_between_pivots(
 
     volatility_levels = {}
     vol_ranges = {
-        "LL": (0, atr_percentiles["p20"]),
-        "LV": (atr_percentiles["p20"], atr_percentiles["p50"]),
-        "MV": (atr_percentiles["p50"], atr_percentiles["p80"]),
-        "HV": (atr_percentiles["p80"], atr_percentiles["p95"]),
-        "HH": (atr_percentiles["p95"], float("inf")),
+        "LL": (0, ratio_percentiles["p20"]),
+        "LV": (ratio_percentiles["p20"], ratio_percentiles["p50"]),
+        "MV": (ratio_percentiles["p50"], ratio_percentiles["p80"]),
+        "HV": (ratio_percentiles["p80"], ratio_percentiles["p95"]),
+        "HH": (ratio_percentiles["p95"], float("inf")),
     }
 
-    for vol_level, (min_atr, max_atr) in vol_ranges.items():
-        mask = (segment_copy["atr"] >= min_atr) & (segment_copy["atr"] < max_atr)
+    # The same ratio get_volatility_level reads, so a K-value lands in the level that later selects it.
+    atr_ratio = segment_copy["atr"] / segment_copy["close"].replace(0, np.nan)
+
+    for vol_level, (min_ratio, max_ratio) in vol_ranges.items():
+        mask = (atr_ratio >= min_ratio) & (atr_ratio < max_ratio)
         if not mask.any():
             continue
 
@@ -212,17 +222,13 @@ def analyze_structural_noise(
 ) -> tuple[list[dict], list[dict]]:
     pivots = detect_pivots(df, order)
 
-    atr_percentiles = {
-        "p20": np.percentile(df["atr"], 20),
-        "p50": np.percentile(df["atr"], 50),
-        "p80": np.percentile(df["atr"], 80),
-        "p95": np.percentile(df["atr"], 95),
-    }
+    p20, p50, p80, p95 = atr_ratio_percentiles(df)
+    ratio_percentiles = {"p20": p20, "p50": p50, "p80": p80, "p95": p95}
 
     uptrend_events = []
     downtrend_events = []
     for i in range(1, len(pivots)):
-        event = calculate_noise_between_pivots(df, (pivots[i - 1], pivots[i]), atr_percentiles)
+        event = calculate_noise_between_pivots(df, (pivots[i - 1], pivots[i]), ratio_percentiles)
         if event and event["volatility_levels"]:
             if event["type"] == "uptrend":
                 uptrend_events.append(event)

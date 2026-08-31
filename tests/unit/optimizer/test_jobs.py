@@ -175,3 +175,61 @@ def test_supervise_error(monkeypatch) -> None:
     assert failed["job_id"] == 11
     assert "boom" in failed["error"]
     assert 11 not in store._active
+
+
+def test_supervise_ok_runs_finalize_via_to_thread(monkeypatch) -> None:
+    """_finalize does a synchronous DB write + Telegram call; it must run off the
+    event loop via asyncio.to_thread on both the ok and error branches."""
+    store = JobStore(max_concurrent=1)
+    calls = []
+
+    async def _fake_to_thread(func, *args):
+        calls.append(func)
+        return func(*args)
+
+    monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(db, "complete_optimizer_job", lambda job_id, result: None)
+
+    store._active[20] = _ActiveJob(job_id=20, future=_resolved_future({"scores": {}}), pair="XBTEUR")
+
+    asyncio.run(store.supervise(20))
+
+    assert calls == [store._finalize]
+
+
+def test_supervise_error_runs_finalize_via_to_thread(monkeypatch) -> None:
+    store = JobStore(max_concurrent=1)
+    calls = []
+
+    async def _fake_to_thread(func, *args):
+        calls.append(func)
+        return func(*args)
+
+    monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
+    monkeypatch.setattr(db, "fail_optimizer_job", lambda job_id, error: None)
+
+    store._active[21] = _ActiveJob(job_id=21, future=_failed_future(RuntimeError("boom")), pair="XBTEUR")
+
+    asyncio.run(store.supervise(21))
+
+    assert calls == [store._finalize]
+
+
+def test_try_start_submit_failure_marks_job_failed_and_reraises(monkeypatch) -> None:
+    """If _EXECUTOR.submit raises (e.g. a broken pool), the already-inserted
+    optimizer_jobs row must not be left stuck at 'running' until restart cleanup."""
+    store = JobStore(max_concurrent=1)
+    monkeypatch.setattr(db, "create_optimizer_job", lambda pair, mode, split_method, request: 42)
+    failed = {}
+    monkeypatch.setattr(
+        db, "fail_optimizer_job", lambda job_id, error: failed.update({"job_id": job_id, "error": error})
+    )
+
+    with patch("trading.optimizer.jobs._EXECUTOR") as mock_executor:
+        mock_executor.submit.side_effect = RuntimeError("pool is broken")
+        with pytest.raises(RuntimeError, match="pool is broken"):
+            store.try_start(_FakeReq())
+
+    assert failed["job_id"] == 42
+    assert "failed to submit" in failed["error"]
+    assert 42 not in store._active

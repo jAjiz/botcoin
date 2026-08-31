@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime
 
 import core.config as config
@@ -10,6 +11,11 @@ VOLUME_DECIMALS_FALLBACK = 8
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def new_cl_ord_id() -> str:
+    """A client order id for one placement attempt (Kraken's 'short UUID' form)."""
+    return uuid.uuid4().hex
 
 
 def _round_to_pair_decimals(pair: str, value: float | None, key: str, fallback: int) -> float | None:
