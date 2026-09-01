@@ -1,9 +1,6 @@
-"""Behavioral tests for the pure engine.
+"""Behavioral tests for the pure engine, one behavior per test."""
 
-Each test pins one hand-reasoned behavior on the smallest fixture that can show it:
-the pure helpers are called directly, and only the loop behaviors that need a
-sequence of bars build a frame. A failure names the behavior that changed.
-"""
+import dataclasses
 
 import pandas as pd
 import pytest
@@ -26,11 +23,10 @@ def _df(
     atr: float | list[float] = 2.0,
     price_column: str | None = "close",
 ) -> pd.DataFrame:
-    """Build an OHLC frame from (high, low, price) rows.
+    """Build an OHLC frame from (high, low, price) rows; ``price_column`` names the price column.
 
-    Prices sit around 100, so an ATR of 2.0 reads as a 0.02 ATR/close ratio against
-    the ratio percentiles ``_cfg`` supplies. ``price_column`` names the column the
-    engine reads the bar's reference price from (``None`` omits it)."""
+    Prices sit near 100, so the default ATR of 2.0 reads as a 0.02 ratio: level LV under ``_cfg``.
+    """
     data: dict[str, list] = {
         "dtime": [f"t{i}" for i in range(len(rows))],
         "high": [r[0] for r in rows],
@@ -278,3 +274,86 @@ def test_bar_price_falls_back_to_open_then_to_the_high_low_midpoint(price_column
 
     assert ops[0].price == 100.0
     assert ops[1].price == 108.0
+
+
+# --- calibration schedule --------------------------------------------------
+
+
+def _cal(k: float, percentiles: tuple[float, float, float, float] = (0.01, 0.03, 0.05, 0.07)):
+    """A calibration whose every level, both sides, carries the same K_STOP."""
+    return engine.PairCalibration(
+        atr_ratio_p20=percentiles[0],
+        atr_ratio_p50=percentiles[1],
+        atr_ratio_p80=percentiles[2],
+        atr_ratio_p95=percentiles[3],
+        k_stop_buy=dict.fromkeys(_LEVELS, k),
+        k_stop_sell=dict.fromkeys(_LEVELS, k),
+    )
+
+
+def _with_schedule(cfg: engine.EngineConfig, schedule) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, calibration_schedule=tuple(schedule))
+
+
+def test_calibration_at_returns_the_last_entry_at_or_before_the_bar() -> None:
+    # The schedule is a step function: an entry holds until the next one starts.
+    second, third = _cal(2.0), _cal(3.0)
+    cfg = _with_schedule(_cfg(), [(2, second), (5, third)])
+    base = cfg.calibration
+
+    assert engine._calibration_at(cfg, 0) is base
+    assert engine._calibration_at(cfg, 1) is base
+    assert engine._calibration_at(cfg, 2) is second
+    assert engine._calibration_at(cfg, 4) is second
+    assert engine._calibration_at(cfg, 5) is third
+    assert engine._calibration_at(cfg, 99) is third
+
+
+def test_a_scheduled_recalibration_widens_the_stop_from_its_bar_on() -> None:
+    # K_STOP 1.0 -> 2.0 at bar 2: the short exits at 94, and the wider stop survives bar 3.
+    df = _df(_ROUND_TRIP)
+    cfg = _cfg()
+
+    plain = engine.simulate_operations(df, cfg)
+    scheduled = engine.simulate_operations(df, _with_schedule(cfg, [(2, _cal(2.0))]))
+
+    assert [op.price for op in plain] == [100.0, 108.0, 92.0, 118.0]
+    assert [op.price for op in scheduled] == [100.0, 108.0, 94.0]
+    assert [op.k_stop for op in scheduled] == [1.0, 1.0, 2.0]
+
+
+def test_a_recalibration_does_not_reprice_a_stop_already_resting() -> None:
+    # Mirrors tick_position: only ATR drift or a new extreme re-prices a stop, never a recalibration.
+    rows = [(100.0, 100.0, 100.0), (100.0, 99.0, 100.0), (100.0, 97.0, 99.0)]
+    cfg = _cfg()
+
+    ops = engine.simulate_operations(_df(rows), _with_schedule(cfg, [(1, _cal(3.0))]))
+
+    # Bar 0 priced the stop at 98.0 with K=1.0; K=3.0 would have put it at 94.0.
+    assert ops[1].price == 98.0
+    # k_stop names the level of the exit bar, not the K that priced the stop.
+    assert ops[1].k_stop == 3.0
+
+
+def test_a_schedule_entry_due_on_a_skipped_bar_applies_at_the_next_usable_one() -> None:
+    # Bar 2 has no usable ATR, yet bar 3 already buys on the K_STOP scheduled for bar 2.
+    rows = [(100.0, 100.0, 100.0), (110.0, 105.0, 108.0), (109.0, 90.0, 95.0), (120.0, 100.0, 105.0)]
+    df = _df(rows, atr=[2.0, 2.0, 0.0, 2.0])
+    cfg = _cfg()
+
+    plain = engine.simulate_operations(df, cfg)
+    scheduled = engine.simulate_operations(df, _with_schedule(cfg, [(2, _cal(2.0))]))
+
+    assert [op.price for op in plain] == [100.0, 108.0, 102.0]
+    assert [op.price for op in scheduled] == [100.0, 108.0, 104.0]
+
+
+def test_the_first_operation_uses_the_calibration_of_its_own_bar() -> None:
+    # The opening BUY lands on bar 1, so a recalibration scheduled at bar 1 applies to it.
+    df = _df(_ROUND_TRIP, atr=[0.0, 2.0, 2.0, 2.0])
+    cfg = _cfg()
+
+    ops = engine.simulate_operations(df, _with_schedule(cfg, [(1, _cal(4.0))]))
+
+    assert ops[0].time == "t1"
+    assert ops[0].k_stop == 4.0

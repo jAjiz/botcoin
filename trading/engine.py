@@ -1,9 +1,6 @@
 """Pure trading simulation engine.
 
-Leaf module: it must not import from ``core.config`` or
-``trading.parameters_manager``. All configuration is passed in via
-``EngineConfig`` so the simulator can run against live state, a backtest
-request, or an optimizer candidate without ever touching module-level globals.
+Leaf module: no import from ``core.config`` or ``trading.parameters_manager``.
 """
 
 from dataclasses import dataclass
@@ -26,11 +23,19 @@ class PairCalibration:
 
 @dataclass(frozen=True)
 class EngineConfig:
+    """Everything a simulation needs, with no module-level globals.
+
+    ``calibration_schedule`` mirrors the live recalibration every ``PARAM_SESSIONS``
+    ticks: ``(bar index, calibration in force from that bar on)``, ascending. An
+    empty schedule keeps ``calibration`` for the whole run.
+    """
+
     pair: str
     calibration: PairCalibration
     k_act: float | None
     min_margin: float
     atr_desv_limit: float
+    calibration_schedule: tuple[tuple[int, PairCalibration], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,9 +72,18 @@ def _pnl_abs(prev_side: str, prev_price: float, curr_price: float) -> float:
     return prev_price - curr_price
 
 
-def _k_for_level(cfg: EngineConfig, side: str, vol: str) -> float | None:
-    """Resolve K_STOP for an already-classified level: same side, then opposite, then nearest neighbours."""
+def _calibration_at(cfg: EngineConfig, idx: int) -> PairCalibration:
+    """The calibration in force at bar ``idx``: the last scheduled entry at or before it."""
     cal = cfg.calibration
+    for at, scheduled in cfg.calibration_schedule:
+        if at > idx:
+            break
+        cal = scheduled
+    return cal
+
+
+def _k_for_level(cal: PairCalibration, side: str, vol: str) -> float | None:
+    """Resolve K_STOP for an already-classified level: same side, then opposite, then nearest neighbours."""
     same = cal.k_stop_sell if side == "sell" else cal.k_stop_buy
     opp = cal.k_stop_buy if side == "sell" else cal.k_stop_sell
 
@@ -92,34 +106,61 @@ def _k_for_level(cfg: EngineConfig, side: str, vol: str) -> float | None:
     return None
 
 
-def lookup_k_stop(cfg: EngineConfig, side: str, atr_val: float, close: float) -> float | None:
-    """Resolve K_STOP for a side/ATR, classifying `close` into a level first."""
-    cal = cfg.calibration
+def lookup_k_stop(
+    cfg: EngineConfig, side: str, atr_val: float, close: float, cal: PairCalibration | None = None
+) -> float | None:
+    """Resolve K_STOP for a side/ATR, classifying ``close`` into a level first.
+
+    ``cal`` overrides ``cfg.calibration`` for callers that walk a schedule.
+    """
+    if cal is None:
+        cal = cfg.calibration
     vol = _vol_level_from_atr(
         atr_val, close, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
     )
-    return _k_for_level(cfg, side, vol)
+    return _k_for_level(cal, side, vol)
 
 
-def activation_distance(cfg: EngineConfig, side: str, reference_price: float, atr_val: float, close: float) -> float:
+def activation_distance(
+    cfg: EngineConfig,
+    side: str,
+    reference_price: float,
+    atr_val: float,
+    close: float,
+    cal: PairCalibration | None = None,
+) -> float:
     """``reference_price`` anchors the distance; ``close`` classifies the level."""
     k_act = cfg.k_act
     if k_act is not None:
         return float(k_act) * atr_val
-    k_stop = lookup_k_stop(cfg, side, atr_val, close) or 0.0
+    k_stop = lookup_k_stop(cfg, side, atr_val, close, cal) or 0.0
     return float(k_stop) * atr_val + (cfg.min_margin * reference_price)
 
 
-def activation_price(cfg: EngineConfig, side: str, entry_price: float, atr_val: float, close: float) -> float:
-    distance = activation_distance(cfg, side, entry_price, atr_val, close)
+def activation_price(
+    cfg: EngineConfig,
+    side: str,
+    entry_price: float,
+    atr_val: float,
+    close: float,
+    cal: PairCalibration | None = None,
+) -> float:
+    distance = activation_distance(cfg, side, entry_price, atr_val, close, cal)
     if side == "sell":
         return entry_price + distance
     return entry_price - distance
 
 
-def stop_price(cfg: EngineConfig, side: str, trailing_price: float, atr_val: float, close: float) -> float:
+def stop_price(
+    cfg: EngineConfig,
+    side: str,
+    trailing_price: float,
+    atr_val: float,
+    close: float,
+    cal: PairCalibration | None = None,
+) -> float:
     """``trailing_price`` anchors the stop; ``close`` classifies the level."""
-    k_stop = lookup_k_stop(cfg, side, atr_val, close) or 0.0
+    k_stop = lookup_k_stop(cfg, side, atr_val, close, cal) or 0.0
     stop_distance = float(k_stop) * atr_val
     if side == "sell":
         return trailing_price - stop_distance
@@ -132,7 +173,7 @@ def _opposite(side: str) -> str:
 
 def _record_stop_exit(
     ops: list[Operation],
-    cfg: EngineConfig,
+    cal: PairCalibration,
     side: str,
     exec_price: float,
     dtime: str,
@@ -148,8 +189,8 @@ def _record_stop_exit(
     if pnl_pct is not None:
         cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
         cum_pnl = (cum_factor - 1.0) * 100.0
-    # Keyed on the level this very row reports, so the two can never describe different moments.
-    k_used = _k_for_level(cfg, side, vol) or 0.0
+    # The level of this row's own bar, so `vol` and `k_stop` agree; `exec_price` may predate both.
+    k_used = _k_for_level(cal, side, vol) or 0.0
     ops.append(
         Operation(
             idx=len(ops) + 1,
@@ -182,38 +223,33 @@ def simulate_operations(
     fee_rate: float = 0.0,
     max_ops: int | None = None,
 ) -> list[Operation]:
-    cal = cfg.calibration
-    ratio_20, ratio_50, ratio_80, ratio_95 = (
-        cal.atr_ratio_p20,
-        cal.atr_ratio_p50,
-        cal.atr_ratio_p80,
-        cal.atr_ratio_p95,
-    )
+    schedule = cfg.calibration_schedule
 
     ops: list[Operation] = []
     cum_pnl = 0.0  # cumulative return in percent, compounded
 
-    # Column availability is a property of the frame, not of a row: resolve it once
-    # so the per-bar loop never inspects the schema (itertuples yields namedtuples,
-    # which have no membership test anyway).
+    # Resolved once: itertuples yields namedtuples, which have no membership test.
     has_close = "close" in df.columns
     has_open = "open" in df.columns
 
     # The simulation always opens with a BUY at the first bar with a valid ATR.
-    first_row = None
-    for row in df.itertuples(index=False):
+    first_idx, first_row = 0, None
+    for idx, row in enumerate(df.itertuples(index=False)):
         atr = float(row.atr)
         if atr > 0 and not np.isnan(atr):
-            first_row = row
+            first_idx, first_row = idx, row
             break
     if first_row is None:
         return ops
 
+    cal = _calibration_at(cfg, first_idx)
     first_atr = float(first_row.atr)
     first_price = _price_of(first_row, has_close, has_open)
     first_time = str(first_row.dtime)
-    first_vol = _vol_level_from_atr(first_atr, first_price, ratio_20, ratio_50, ratio_80, ratio_95)
-    first_k = _k_for_level(cfg, "buy", first_vol) or 0.0
+    first_vol = _vol_level_from_atr(
+        first_atr, first_price, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
+    )
+    first_k = _k_for_level(cal, "buy", first_vol) or 0.0
     first_fee = float(first_price) * float(fee_rate)
     # The entry fee is an immediate negative return of fee_rate * 100 percent.
     cum_pnl -= float(fee_rate) * 100.0
@@ -241,7 +277,15 @@ def simulate_operations(
     stop_px = None
     stop_atr = None
 
-    for row in df.itertuples(index=False):
+    cal = cfg.calibration
+    next_change = 0
+
+    for idx, row in enumerate(df.itertuples(index=False)):
+        # `<= idx` so an entry due on a bar the loop skips still applies at the next usable one.
+        while next_change < len(schedule) and schedule[next_change][0] <= idx:
+            cal = schedule[next_change][1]
+            next_change += 1
+
         atr = float(row.atr)
         if atr <= 0 or np.isnan(atr):
             continue
@@ -250,36 +294,35 @@ def simulate_operations(
         low = float(row.low)
         dtime = str(row.dtime)
         price = _price_of(row, has_close, has_open)
-        vol = _vol_level_from_atr(atr, price, ratio_20, ratio_50, ratio_80, ratio_95)
+        vol = _vol_level_from_atr(
+            atr, price, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
+        )
 
         atr_limit_max = atr * (1 + cfg.atr_desv_limit)
         atr_limit_min = atr * (1 - cfg.atr_desv_limit)
 
         if activation_px is None:
-            activation_px = activation_price(cfg, side, entry_price, atr, price)
+            activation_px = activation_price(cfg, side, entry_price, atr, price, cal)
             activation_atr = atr
 
         if not active:
             if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
-                activation_px = activation_price(cfg, side, entry_price, atr, price)
+                activation_px = activation_price(cfg, side, entry_price, atr, price, cal)
                 activation_atr = atr
 
-            # Re-anchor toward the current price when it has drifted too far. Mirrors
-            # positions_manager.reanchor_activation_price: uses the stored
-            # activation_atr, not the current bar ATR.
-            exp_dist = activation_distance(cfg, side, price, activation_atr, price)
+            # Mirrors positions_manager.reanchor_activation_price: stored ATR, not the bar ATR.
+            exp_dist = activation_distance(cfg, side, price, activation_atr, price, cal)
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
             if gap > exp_dist:
-                activation_px = activation_price(cfg, side, price, activation_atr, price)
+                activation_px = activation_price(cfg, side, price, activation_atr, price, cal)
 
-            # A sell activates when the bar's high crosses up through the
-            # activation price and then trails the highs; a buy is the mirror.
+            # A sell activates on the high crossing up, then trails the highs; a buy mirrors it.
             crossed = high >= activation_px if side == "sell" else low <= activation_px
             if not crossed:
                 continue
             active = True
             trailing_price = high if side == "sell" else low
-            stop_px = stop_price(cfg, side, trailing_price, atr, price)
+            stop_px = stop_price(cfg, side, trailing_price, atr, price, cal)
             stop_atr = atr
 
         if (
@@ -288,16 +331,15 @@ def simulate_operations(
             and stop_atr is not None
             and (stop_atr < atr_limit_min or stop_atr > atr_limit_max)
         ):
-            stop_px = stop_price(cfg, side, trailing_price, atr, price)
+            stop_px = stop_price(cfg, side, trailing_price, atr, price, cal)
             stop_atr = atr
 
-        # Trail the favourable extreme (highs for a sell, lows for a buy), then
-        # test the stop against the *updated* level.
+        # Trail the favourable extreme first, then test the stop against the updated level.
         extreme = high if side == "sell" else low
         improved = extreme > trailing_price if side == "sell" else extreme < trailing_price
         if improved:
             trailing_price = extreme
-            stop_px = stop_price(cfg, side, trailing_price, atr, price)
+            stop_px = stop_price(cfg, side, trailing_price, atr, price, cal)
             stop_atr = atr
 
         stop_hit = low <= stop_px if side == "sell" else high >= stop_px
@@ -305,7 +347,7 @@ def simulate_operations(
             continue
 
         exec_price = stop_px
-        cum_pnl = _record_stop_exit(ops, cfg, side, exec_price, dtime, vol, fee_rate, cum_pnl)
+        cum_pnl = _record_stop_exit(ops, cal, side, exec_price, dtime, vol, fee_rate, cum_pnl)
 
         if max_ops is not None and len(ops) >= max_ops:
             break
