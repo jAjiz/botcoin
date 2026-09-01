@@ -15,7 +15,7 @@ from optuna.samplers import TPESampler
 import core.database as db
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
-from trading.engine import EngineConfig, PairCalibration, simulate_operations
+from trading.engine import EngineConfig, PairCalibration, mark_to_market, simulate_operations
 from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -122,12 +122,12 @@ class Score:
     pnl_samples: int
 
 
-def _score_run(ops) -> Score:
+def _score_run(ops, final_price: float) -> Score:
+    """Score a run, valuing the position it ends on: a run never stops flat."""
     if not ops:
         return Score(total_pnl=-1e18, pnl_samples=0)
-    total = float(ops[-1].cum_pnl or 0.0)
     pnl_samples = sum(1 for op in ops if op.pnl_abs is not None)
-    return Score(total_pnl=total, pnl_samples=pnl_samples)
+    return Score(total_pnl=mark_to_market(ops, final_price), pnl_samples=pnl_samples)
 
 
 def _second_half_net(total_net: float, first_net: float) -> float:
@@ -138,15 +138,18 @@ def _second_half_net(total_net: float, first_net: float) -> float:
     return (((1.0 + (total_net / 100.0)) / first_factor) - 1.0) * 100.0
 
 
-def _split_scores_from_single_run(ops, boundary_time: str) -> tuple[Score, Score]:
+def _split_scores_from_single_run(
+    ops, boundary_time: str, boundary_price: float, final_price: float
+) -> tuple[Score, Score]:
+    """Split one continuous run in two, valuing the position open at each half's end."""
     if not ops:
         empty = Score(total_pnl=-1e18, pnl_samples=0)
         return empty, empty
 
-    total_net = float(ops[-1].cum_pnl or 0.0)
+    total_net = mark_to_market(ops, final_price)
     before = [op for op in ops if str(op.time) < str(boundary_time)]
     after = [op for op in ops if str(op.time) >= str(boundary_time)]
-    first_net = float(before[-1].cum_pnl or 0.0) if before else 0.0
+    first_net = mark_to_market(before, boundary_price)
     first_samples = sum(1 for op in before if op.pnl_abs is not None)
     second_samples = sum(1 for op in after if op.pnl_abs is not None)
     return (
@@ -335,6 +338,9 @@ class EvalContext:
     train_df: pd.DataFrame
     test_df: pd.DataFrame
     split_boundary_time: str | None
+    # A half is valued at the price where it ends, since a run never stops flat.
+    boundary_price: float
+    final_price: float
     fee_rate: float
     atr_ratio_thresholds: tuple[float, float, float, float]
     up_k: dict[str, np.ndarray]
@@ -347,12 +353,12 @@ class EvalContext:
 def _evaluate(cand: Candidate, ctx: EvalContext) -> _Eval:
     cfg = _build_engine_config(ctx.pair, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT)
     ops_all = simulate_operations(ctx.df, cfg, fee_rate=ctx.fee_rate)
-    in_sample = _score_run(ops_all)
+    in_sample = _score_run(ops_all, ctx.final_price)
 
     if ctx.test_df.empty:
         return _Eval(in_sample, in_sample, Score(-1e18, 0), in_sample.total_pnl, in_sample.pnl_samples, 0)
 
-    train, test = _split_scores_from_single_run(ops_all, ctx.split_boundary_time)
+    train, test = _split_scores_from_single_run(ops_all, ctx.split_boundary_time, ctx.boundary_price, ctx.final_price)
     robust_pnl = min(train.total_pnl, test.total_pnl)
     return _Eval(in_sample, train, test, robust_pnl, train.pnl_samples, test.pnl_samples)
 
@@ -539,6 +545,8 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
     train_df = df.iloc[:split_idx].reset_index(drop=True)
     test_df = df.iloc[split_idx:].reset_index(drop=True)
     split_boundary_time = None if test_df.empty else str(df.iloc[split_idx]["dtime"])
+    final_price = float(df.iloc[-1]["close"])
+    boundary_price = final_price if test_df.empty else float(test_df.iloc[0]["close"])
 
     if calibration is not None:
         up_events = calibration["up_events"]
@@ -564,6 +572,8 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
         train_df=train_df,
         test_df=test_df,
         split_boundary_time=split_boundary_time,
+        boundary_price=boundary_price,
+        final_price=final_price,
         fee_rate=fee_rate,
         atr_ratio_thresholds=atr_ratio_thresholds,
         up_k=up_k,

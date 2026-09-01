@@ -357,3 +357,35 @@ def test_the_first_operation_uses_the_calibration_of_its_own_bar() -> None:
 
     assert ops[0].time == "t1"
     assert ops[0].k_stop == 4.0
+
+
+# --- mark_to_market --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "final", "expected"),
+    [
+        # Ends long from 100 (only the opening buy): +20% unrealized.
+        pytest.param([(100.0, 100.0, 100.0)], 120.0, 20.0, id="open-long-gains"),
+        pytest.param([(100.0, 100.0, 100.0)], 80.0, -20.0, id="open-long-loses"),
+        # Ends short from 108 after the round trip's first exit: 108 -> 120 is a loss.
+        pytest.param(_ROUND_TRIP[:2], 120.0, 8.0 - (12 / 108 * 100) * 1.08, id="open-short-loses"),
+    ],
+)
+def test_mark_to_market_values_the_position_the_run_ended_on(
+    rows: list[tuple[float, float, float]], final: float, expected: float
+) -> None:
+    ops = engine.simulate_operations(_df(rows), _cfg())
+
+    assert engine.mark_to_market(ops, final) == pytest.approx(expected)
+
+
+def test_mark_to_market_of_a_run_with_no_operations_is_zero() -> None:
+    assert engine.mark_to_market([], 120.0) == 0.0
+
+
+def test_mark_to_market_of_a_priceless_operation_keeps_the_realized_total() -> None:
+    # A zero price has no base to compute a return against, so report only what was booked.
+    priceless = engine.Operation(1, "t0", "buy", 0.0, "LV", 1.0, 0.0, None, None, 7.5)
+
+    assert engine.mark_to_market([priceless], 120.0) == 7.5

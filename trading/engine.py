@@ -208,6 +208,24 @@ def _record_stop_exit(
     return cum_pnl
 
 
+def mark_to_market(ops: list[Operation], final_price: float) -> float:
+    """Cumulative return with the still-open position valued at ``final_price``.
+
+    A leg is booked only when it closes, so a run that ends mid-position reports
+    only what it realized: the move since the last operation is missing, with the
+    sign of the side the run ended on. This is a valuation, not a liquidation — the
+    position carries on past the end of the window, so it is charged no exit fee.
+    """
+    if not ops:
+        return 0.0
+    last = ops[-1]
+    cum = float(last.cum_pnl) if last.cum_pnl is not None else 0.0
+    if not last.price:
+        return cum
+    leg_pct = (_pnl_abs(last.side, last.price, float(final_price)) / last.price) * 100.0
+    return ((1.0 + (cum / 100.0)) * (1.0 + (leg_pct / 100.0)) - 1.0) * 100.0
+
+
 def _price_of(row, has_close: bool, has_open: bool) -> float:
     """Reference price of a bar: close, else open, else the high/low midpoint."""
     if has_close:

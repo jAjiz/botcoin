@@ -12,7 +12,7 @@ import numpy as np
 import core.database as db
 import core.runtime as runtime
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, TRADING_PARAMS
-from trading.engine import EngineConfig, Operation, PairCalibration, simulate_operations
+from trading.engine import EngineConfig, Operation, PairCalibration, mark_to_market, simulate_operations
 from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
 from trading.parameters_manager import calculate_k_stops
 
@@ -42,7 +42,7 @@ def _coerce_float(v) -> float | None:
         return None
 
 
-def _build_summary(ops: list[Operation], row_count: int, source: str) -> dict:
+def _build_summary(ops: list[Operation], row_count: int, source: str, final_price: float) -> dict:
     # All pnl_abs values (including the initial entry) for the correct net total.
     all_pnl = [op.pnl_abs for op in ops if op.pnl_abs is not None]
     # Round-trip trades only (skip idx=1, the initial market entry) for per-trade stats.
@@ -50,6 +50,8 @@ def _build_summary(ops: list[Operation], row_count: int, source: str) -> dict:
     total_fees = float(sum(op.fee_abs for op in ops if op.fee_abs is not None))
     total_pnl = float(sum(all_pnl)) if all_pnl else 0.0
     total_pnl_pct = float(ops[-1].cum_pnl) if ops and ops[-1].cum_pnl is not None else 0.0
+    # A run ends mid-position, so the realized total omits the open leg (see mark_to_market).
+    marked_pnl_pct = mark_to_market(ops, final_price)
 
     if trade_pnl:
         pnl = np.array(trade_pnl, dtype=float)
@@ -67,6 +69,10 @@ def _build_summary(ops: list[Operation], row_count: int, source: str) -> dict:
         "win_rate_pct": win_rate,
         "total_pnl_eur": total_pnl,
         "total_pnl_pct": total_pnl_pct,
+        "open_position_side": ops[-1].side if ops else None,
+        "open_position_price": float(ops[-1].price) if ops else None,
+        "marked_pnl_pct": marked_pnl_pct,
+        "unrealized_pnl_pct": marked_pnl_pct - total_pnl_pct,
         "total_fees_eur": total_fees,
         "best_op_pnl_eur": best,
         "worst_op_pnl_eur": worst,
@@ -131,7 +137,8 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
         atr_desv_limit=ATR_DESV_LIMIT,
     )
 
-    operations = simulate_operations(df, cfg, fee_rate=req.fee_pct / 100.0, max_ops=req.max_ops)
-    summary = _build_summary(operations, row_count=len(df), source=source)
+    fee_rate = req.fee_pct / 100.0
+    operations = simulate_operations(df, cfg, fee_rate=fee_rate, max_ops=req.max_ops)
+    summary = _build_summary(operations, row_count=len(df), source=source, final_price=float(df.iloc[-1]["close"]))
 
     return BacktestResult(pair=req.pair, fee_pct=req.fee_pct, summary=summary, operations=operations)

@@ -1,3 +1,5 @@
+import pytest
+
 import core.runtime as runtime
 import trading.backtest as backtest
 from trading.backtest import BacktestRequest, run_backtest
@@ -11,6 +13,10 @@ _SUMMARY_KEYS = {
     "win_rate_pct",
     "total_pnl_eur",
     "total_pnl_pct",
+    "open_position_side",
+    "open_position_price",
+    "marked_pnl_pct",
+    "unrealized_pnl_pct",
     "total_fees_eur",
     "best_op_pnl_eur",
     "worst_op_pnl_eur",
@@ -102,3 +108,15 @@ def test_run_backtest_summary_shape(monkeypatch, sample_dataframe) -> None:
     assert isinstance(s["win_rate_pct"], float)
     assert isinstance(s["total_pnl_eur"], float)
     assert s["source"] == "recompute"
+
+
+def test_summary_marks_the_open_position_to_the_last_close(monkeypatch, sample_dataframe) -> None:
+    """The realized total stops at the last closed leg; the marked total values what is still open."""
+    _setup_common(monkeypatch, sample_dataframe)
+    monkeypatch.setattr(backtest, "analyze_structural_noise", lambda _df: ([], []))
+
+    s = run_backtest(BacktestRequest(pair=_PAIR)).summary
+
+    assert s["open_position_side"] in ("buy", "sell")
+    assert s["unrealized_pnl_pct"] == pytest.approx(s["marked_pnl_pct"] - s["total_pnl_pct"])
+    assert s["marked_pnl_pct"] != s["total_pnl_pct"]
