@@ -1,27 +1,4 @@
-"""Parameter optimizer.
-
-Pure ``run_optimize(req, calibration) -> OptimizerResult``: two Optuna TPE
-searches (k_act branch and min_margin branch) over per-level stop percentiles.
-The trial budget is split evenly across the *active* branches; results are merged
-and ranked globally by robust_pnl. The search grids (stop percentiles, k_act,
-min_margin) are supplied per request via ``SearchSpace`` — there are no built-in
-defaults, and a ``None`` activation grid disables that whole branch.
-
-``run_auto_optimize`` runs several seeds and escalates the trial budget until a
-majority of seeds *agree on the same config* (param signature, not just the same
-robust_pnl). The per-seed studies are kept alive across escalation levels and
-only the *delta* of trials is run each level (warm-start), so the search
-continues instead of restarting from scratch. OHLC and calibration are loaded
-once per AUTO search (``_build_eval_context``) and shared by every seed/level.
-
-Split method is always CONTINUE: the simulation runs on the full dataset and
-results are partitioned at the train/test boundary, matching how a new config
-would behave in production (the bot never resets mid-history).
-
-The calibration (structural events + ATR percentiles) is passed in explicitly,
-not read from ``core.runtime`` — the worker runs in a spawned child process whose
-runtime cache is empty. ``None`` means "recompute from the working dataframe".
-"""
+"""Parameter optimizer — run_optimize (OPTIMIZE/CURRENT) and run_auto_optimize (AUTO); see CLAUDE.md's "Trading tools" section and Design choices for the design and semantics."""
 
 import contextlib
 import math
@@ -51,9 +28,7 @@ MODES = ("OPTIMIZE", "CURRENT", "AUTO")
 
 @dataclass(frozen=True)
 class GridSpec:
-    """A uniform numeric grid (start, end, step). Mirrors the Pydantic GridSpec
-    in api.schemas; validation lives at the API boundary, this is a plain
-    container shipped to worker processes and consumed by ``suggest_float``."""
+    """A uniform numeric grid (start, end, step); mirrors the Pydantic GridSpec in api.schemas."""
 
     start: float
     end: float
@@ -62,8 +37,7 @@ class GridSpec:
 
 @dataclass(frozen=True)
 class SearchSpace:
-    """Per-request search grids. ``k_act``/``min_margin`` None disables that
-    branch (at least one must be set); ``stop_pcts`` applies to every level."""
+    """Per-request search grids; a None branch grid disables that branch (at least one must be set)."""
 
     stop_pcts: GridSpec
     k_act: GridSpec | None
@@ -82,8 +56,7 @@ class AutoSettings:
 
 @dataclass(frozen=True)
 class CurrentParams:
-    """CURRENT-mode evaluation knobs. Each field set replaces the value read
-    from the live .env; all None evaluates the live config as-is."""
+    """CURRENT-mode evaluation knobs; a set field overrides the live .env value, all None evaluates it as-is."""
 
     stop_pcts: dict[str, float] | None = None
     k_act: float | None = None
@@ -103,8 +76,7 @@ def _grid_from_dict(d: dict | None) -> GridSpec | None:
 
 
 def _search_space_from_dict(d: dict) -> SearchSpace:
-    """Coerce a plain dict (from ``model_dump``/``asdict`` round-trips) into a
-    SearchSpace. Lets the request cross the API → dataclass → worker boundaries."""
+    """Coerce a plain dict (from ``model_dump``/``asdict`` round-trips) into a SearchSpace."""
     return SearchSpace(
         stop_pcts=GridSpec(**d["stop_pcts"]),
         k_act=_grid_from_dict(d.get("k_act")),
@@ -348,10 +320,7 @@ class _Eval:
 
 @dataclass(frozen=True)
 class EvalContext:
-    """Everything a trial needs to score a candidate: the working dataframe and
-    its train/test split, the calibration, and the min-ops constraints. Built
-    once per optimize run (``_build_eval_context``) and shared by every seed,
-    level and trial — and shipped to worker processes for branch parallelism."""
+    """Everything a trial needs to score a candidate; built once per run and shared by every seed/level/trial."""
 
     pair: str
     df: pd.DataFrame
@@ -426,14 +395,7 @@ def _collect_completed(study: optuna.Study) -> list[tuple]:
 
 @dataclass
 class _SeedStudies:
-    """A seed's warm-startable studies, one per *active* branch.
-
-    Only branches enabled by the SearchSpace appear in ``studies`` (key
-    ``"kact"`` / ``"minmargin"``). Kept alive across AUTO escalation levels so
-    that *adding* trials continues the TPE search instead of restarting it from
-    scratch; ``done`` tracks the cumulative trial target already requested per
-    branch, so each escalation only runs the delta.
-    """
+    """A seed's warm-startable studies, one per active branch; ``done`` tracks the cumulative trial target per branch."""
 
     seed: int
     studies: dict[str, optuna.Study]
@@ -441,8 +403,7 @@ class _SeedStudies:
 
 
 def _new_seed_studies(seed: int, space: SearchSpace) -> _SeedStudies:
-    # minmargin uses seed+1 so the two branches explore independently. A branch
-    # whose grid is None is omitted entirely (disabled for this search).
+    # minmargin uses seed+1 so the two branches explore independently; a None grid omits that branch.
     studies: dict[str, optuna.Study] = {}
     if space.k_act is not None:
         studies["kact"] = _build_study(seed)
@@ -452,8 +413,7 @@ def _new_seed_studies(seed: int, space: SearchSpace) -> _SeedStudies:
 
 
 def _split_budget(target_n_trials: int, branches: list[str]) -> dict[str, int]:
-    """Split the trial budget evenly across the active branches; any remainder
-    goes to the last one. With a single branch it gets the whole budget."""
+    """Split the trial budget evenly across active branches; the remainder goes to the last one."""
     n = len(branches)
     base = target_n_trials // n
     out = dict.fromkeys(branches, base)
@@ -461,24 +421,19 @@ def _split_budget(target_n_trials: int, branches: list[str]) -> dict[str, int]:
     return out
 
 
-# Below this many trials in a run, branch parallelism isn't worth the process
-# spawn + dataframe pickling overhead, so the two branches run sequentially.
+# Below this trial count, branch parallelism isn't worth the process-spawn overhead.
 _PARALLEL_MIN_TRIALS = 200
 
 
 def _branch_executor(target_trials: int):
-    """Context manager yielding a 2-worker process pool for branch parallelism
-    when the workload justifies it, else a null context yielding ``None`` (the
-    branches then run sequentially in-process). Reused across an AUTO search."""
+    """Yields a 2-worker process pool for branch parallelism when the workload justifies it, else None."""
     if target_trials < _PARALLEL_MIN_TRIALS:
         return contextlib.nullcontext(None)
     return ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn"))
 
 
 def _advance_branch(study: optuna.Study, study_type: str, n_trials: int, ctx: EvalContext) -> optuna.Study:
-    """Run ``n_trials`` more on ``study`` and return it. Module-level and
-    picklable so it can run in a worker process: the warm-started study is
-    shipped over, advanced, and shipped back."""
+    """Run ``n_trials`` more on ``study`` and return it; module-level so it can run in a worker process."""
     study.optimize(_build_objective(study_type, ctx), n_trials=n_trials)
     return study
 
@@ -489,11 +444,7 @@ def _advance_seed_to(
     ctx: EvalContext,
     executor: ProcessPoolExecutor | None = None,
 ) -> tuple[list[tuple], int]:
-    """Warm-start: add trials to each active branch until it reaches its share of
-    ``target_n_trials``, running only the delta. When ``executor`` is given and
-    more than one branch has work, the studies are advanced in parallel (one
-    process each) and the advanced copies shipped back. Returns the merged
-    (completed, n_total) across all active branches."""
+    """Warm-start each active branch to its share of ``target_n_trials``, running only the delta; returns (completed, n_total)."""
     branches = list(state.studies)
     targets = _split_budget(target_n_trials, branches)
     deltas = {b: targets[b] - state.done[b] for b in branches}
@@ -515,10 +466,8 @@ def _advance_seed_to(
 
 
 def _result_from_completed(req: OptimizerRequest, all_completed: list[tuple], n_total: int) -> OptimizerResult:
-    """Rank, deduplicate and format the completed trials into an OptimizerResult.
-    Shared by single OPTIMIZE runs and each AUTO seed."""
-    # Rank by robust_pnl (the objective value); break ties by in-sample, then
-    # test, then train PnL so the ordering is deterministic, not insertion-order.
+    """Rank, deduplicate and format the completed trials into an OptimizerResult."""
+    # Rank by robust_pnl, breaking ties by in-sample, then test, then train PnL for determinism.
     ranked = sorted(
         all_completed,
         key=lambda t: (
@@ -530,8 +479,7 @@ def _result_from_completed(req: OptimizerRequest, all_completed: list[tuple], n_
         reverse=True,
     )
 
-    # Deduplicate across both branches. Keys are disjoint (k_act vs min_margin
-    # params) so same stop_pcts with different activation types won't collide.
+    # Deduplicate across both branches; disjoint keys mean same stop_pcts across branches won't collide.
     seen_params: set[tuple] = set()
     unique_completed = []
     for params, value, user_attrs in ranked:
@@ -564,10 +512,7 @@ def _result_from_completed(req: OptimizerRequest, all_completed: list[tuple], n_
 
 
 def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> EvalContext:
-    """Load OHLC once, slice by START/END, compute the train/test split and the
-    calibration, and assemble the EvalContext shared by every trial. Built once
-    per optimize run (and once per whole AUTO search) so the heavy load and
-    calibration are never repeated across seeds or escalation levels."""
+    """Load OHLC once, slice by START/END, and assemble the EvalContext shared by every trial."""
     fee_rate = float(req.fee_pct) / 100.0
 
     df_full = (
@@ -597,8 +542,7 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
             calibration["atr_ratio_p95"],
         )
     else:
-        # Calibrate over the full history up to `end`, not over the slice — see the
-        # note in backtest.run_backtest.
+        # Calibrate over full history up to `end`, not the slice (see CLAUDE.md Design choices).
         cal_df = df_full[df_full["dtime"] <= req.end].reset_index(drop=True) if req.end else df_full
         up_events, down_events = analyze_structural_noise(cal_df)
         atr_ratio_thresholds = atr_ratio_percentiles(cal_df)
@@ -656,11 +600,7 @@ def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerRe
 
 
 def _candidate_signature(cand: dict) -> tuple:
-    """Hashable signature of a candidate's *config* (not its score), used to group
-    seeds that found the same solution. Two seeds agree only if their best config
-    matches exactly (k_act vs min_margin candidates never collide — disjoint keys).
-    er_window / chop_enter_pct are included for forward-compat with the regime
-    branch (absent → None here)."""
+    """Hashable signature of a candidate's config (not score); groups seeds that found the same solution."""
     return (
         cand.get("k_act"),
         cand.get("min_margin"),
@@ -671,9 +611,7 @@ def _candidate_signature(cand: dict) -> tuple:
 
 
 def _check_convergence(results: list[OptimizerResult], min_agree: int) -> tuple[OptimizerResult, int] | None:
-    """Group results by the top candidate's param signature. Return (best,
-    n_agreed) if any group reaches min_agree members, otherwise None. Among
-    qualifying groups, pick the one with the highest robust_pnl."""
+    """Group results by config signature; return (best, n_agreed) for the highest-robust_pnl group reaching min_agree."""
     groups: dict[tuple, list[OptimizerResult]] = {}
     for r in results:
         if not r.top_candidates:
@@ -694,9 +632,7 @@ def _seed_result(
     req: OptimizerRequest,
     executor: ProcessPoolExecutor | None = None,
 ) -> OptimizerResult:
-    """Advance one seed's studies to ``target_n_trials`` (warm-start) and build
-    its OptimizerResult. Shared by single OPTIMIZE runs and each AUTO seed; the
-    AUTO seam is mocked in tests to steer convergence."""
+    """Advance one seed's studies to ``target_n_trials`` (warm-start) and build its OptimizerResult."""
     completed, n_total = _advance_seed_to(state, target_n_trials, ctx, executor)
     if not completed:
         raise ValueError("No candidate met the min_ops / min_test_ops constraints")
@@ -707,12 +643,9 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
     if req.search_space is None:
         raise ValueError("search_space is required for OPTIMIZE/AUTO")
     auto = req.auto_settings or AutoSettings()
-    # Seeded from req.seed (not the unseeded global RNG) so the stored request
-    # fully determines the run — otherwise seeds_used, and the whole AUTO
-    # outcome, would differ between two identical requests.
+    # Seeded from req.seed (not the global RNG) so the stored request fully determines the run.
     seeds = random.Random(req.seed).sample(range(1, 9999), auto.n_seeds)
-    # OHLC + calibration are loaded once, and each seed's studies stay alive across
-    # escalation levels so extra trials *continue* the search instead of restarting it.
+    # OHLC/calibration load once; each seed's studies stay alive across escalation levels (warm-start).
     ctx = _build_eval_context(req, calibration)
     states = {seed: _new_seed_studies(seed, req.search_space) for seed in seeds}
 
@@ -724,8 +657,7 @@ def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> Optimi
         while n_trials <= auto.max_trials:
             last_results = []
             for seed in seeds:
-                # min_ops not met → the seed just doesn't converge this round; its
-                # studies persist and may qualify at a higher budget.
+                # min_ops not met → this seed just doesn't converge this round; its studies persist for a higher budget.
                 with contextlib.suppress(ValueError):
                     last_results.append(_seed_result(states[seed], n_trials, ctx, req, executor))
 

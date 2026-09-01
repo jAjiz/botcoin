@@ -60,8 +60,7 @@ def _calibration() -> dict:
 
 
 def _result(robust: float, *, mode: str = "OPTIMIZE", k_act: float = 0.0) -> OptimizerResult:
-    """Minimal OptimizerResult carrying a single candidate. ``k_act`` distinguishes
-    the config signature so AUTO convergence (which groups by params) can be steered."""
+    """Minimal OptimizerResult with one candidate; ``k_act`` steers the config signature for AUTO convergence."""
     return OptimizerResult(
         pair=_PAIR,
         mode=mode,
@@ -172,9 +171,7 @@ def test_run_optimize_current_mode(monkeypatch) -> None:
 
 
 def test_build_eval_context_calibrates_over_history_up_to_end_not_start(monkeypatch) -> None:
-    """A sliced job calibrates over [T0, end] (full history up to the window end),
-    independent of `start`, matching the live bot. Otherwise K_STOP/ATR percentiles
-    are recomputed from the short slice and swing with the window boundary."""
+    """A sliced job calibrates over [T0, end] (full history up to the window end), independent of `start`."""
     df = _make_df(n=200)
     monkeypatch.setattr(optimizer.db, "load_ohlc_data", lambda _p, _tf: df.copy())
     monkeypatch.setattr(optimizer, "TRADING_PARAMS", {_PAIR: {"K_ACT": None, "MIN_MARGIN": 0.0}})
@@ -210,10 +207,7 @@ def test_run_optimize_uses_passed_calibration(monkeypatch) -> None:
 
 
 def _patch_seed_sample(monkeypatch, seeds: list[int]) -> None:
-    """Steer which seeds run_auto_optimize picks, without depending on the real
-    RNG. B7 made seed selection go through ``random.Random(req.seed).sample(...)``
-    (an instance, not the module-level ``random.sample``), so tests patch the
-    ``Random`` constructor instead."""
+    """Steer which seeds run_auto_optimize picks by patching ``random.Random`` instead of the real RNG."""
     monkeypatch.setattr(
         optimizer.random,
         "Random",
@@ -222,11 +216,7 @@ def _patch_seed_sample(monkeypatch, seeds: list[int]) -> None:
 
 
 def _patch_auto(monkeypatch, *, seed_fn) -> None:
-    """Mock the AUTO seams so convergence is steered deterministically without
-    running Optuna. ``seed_fn(seed, n_trials)`` returns ``(k_act, robust)`` for
-    that seed: convergence groups by config signature, so seeds sharing a
-    ``k_act`` 'agree'. AUTO no longer compares against current, so there is no
-    CURRENT seam to mock here."""
+    """Mock the AUTO seams so convergence is steered deterministically; ``seed_fn(seed, n_trials)`` returns ``(k_act, robust)``."""
     monkeypatch.setattr(optimizer, "_build_eval_context", lambda _req, _cal: None)
     monkeypatch.setattr(optimizer, "_new_seed_studies", lambda seed, _space: types.SimpleNamespace(seed=seed))
 
@@ -299,10 +289,7 @@ def test_auto_no_convergence_returns_best_fallback(monkeypatch) -> None:
 
 
 def test_auto_seed_selection_is_deterministic_for_same_req_seed(monkeypatch) -> None:
-    """B7: run_auto_optimize must derive its seed sample from req.seed (not the
-    unseeded global RNG), so two runs of the identical request pick the same
-    seeds_used. Real random.Random(seed).sample is exercised here — only the
-    Optuna/eval seams are mocked."""
+    """run_auto_optimize must derive its seed sample from req.seed, so two runs of the same request agree."""
     _patch_auto(monkeypatch, seed_fn=lambda seed, _n: (float(seed), 1.0))
     req = OptimizerRequest(
         pair=_PAIR, mode="AUTO", n_trials=1000, seed=7, auto_settings=AutoSettings(), search_space=_space()
