@@ -93,10 +93,16 @@ pass removes the duplication that has already left `operations.md` stale.
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates
-new position entries during sideways markets while leaving the trailing-stop
-exit logic untouched. Reuses the existing OHLC + ATR pipeline, no new external
+new position entries while the market trends, leaving the trailing-stop exit
+logic untouched. Reuses the existing OHLC + ATR pipeline, no new external
 dependencies. Ships in two stages — observation first (publish the regime via
-API/Telegram), enforcement second (gate entries on `regime != CHOP`).
+API/Telegram), enforcement second (gate entries on `regime != TREND`).
+
+Gating on `CHOP`, this card's original direction, was measured backwards: over 75
+weekly XBTEUR windows the bot's edge over buy-and-hold rises with chop (rank
+correlation +0.44, monotone by quintile), because a sustained trend takes an
+alternating long/short strategy the wrong way. Measured to cut losses, not to beat
+holding — the 111 days available are all one bull regime.
 
 - Spec: _to be written_
 
