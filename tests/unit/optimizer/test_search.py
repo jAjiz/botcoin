@@ -300,3 +300,46 @@ def test_auto_seed_selection_is_deterministic_for_same_req_seed(monkeypatch) -> 
 
     assert out1.seeds_used == out2.seeds_used
     assert out1.seeds_used
+
+
+def _op(time: str, cum_pnl: float):
+    """Minimal stand-in for an engine Operation: the split only reads these three."""
+    return types.SimpleNamespace(time=time, cum_pnl=cum_pnl, pnl_abs=1.0)
+
+
+def test_split_second_half_compounds_instead_of_subtracting() -> None:
+    """cum_pnl compounds, so the second half is a ratio of growth factors, not a subtraction."""
+    ops = [_op("2026-01-01 00:00", 50.0), _op("2026-01-02 00:00", 100.0)]
+
+    train, test = optimizer._split_scores_from_single_run(ops, "2026-01-02 00:00")
+
+    assert train.total_pnl == pytest.approx(50.0)
+    assert test.total_pnl == pytest.approx(100.0 / 3.0)
+
+
+def test_split_second_half_magnifies_a_loss_after_a_losing_train() -> None:
+    """A losing train half shrinks the base, so the same drop is a larger percentage of what is left."""
+    ops = [_op("2026-01-01 00:00", -20.0), _op("2026-01-02 00:00", -40.0)]
+
+    _train, test = optimizer._split_scores_from_single_run(ops, "2026-01-02 00:00")
+
+    assert test.total_pnl == pytest.approx(-25.0)
+
+
+def test_split_second_half_survives_a_wiped_out_train_half() -> None:
+    """A train half at -100% leaves nothing to compound, so report a total loss, not a division by zero."""
+    ops = [_op("2026-01-01 00:00", -100.0), _op("2026-01-02 00:00", -100.0)]
+
+    _train, test = optimizer._split_scores_from_single_run(ops, "2026-01-02 00:00")
+
+    assert test.total_pnl == pytest.approx(-100.0)
+
+
+def test_split_with_no_train_ops_reports_the_whole_run_as_the_second_half() -> None:
+    """With no op before the boundary, first_net is 0, so the second half equals the full run."""
+    ops = [_op("2026-02-01 00:00", 12.5)]
+
+    train, test = optimizer._split_scores_from_single_run(ops, "2026-01-01 00:00")
+
+    assert train.total_pnl == pytest.approx(0.0)
+    assert test.total_pnl == pytest.approx(12.5)

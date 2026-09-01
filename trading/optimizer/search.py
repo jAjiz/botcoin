@@ -130,6 +130,14 @@ def _score_run(ops) -> Score:
     return Score(total_pnl=total, pnl_samples=pnl_samples)
 
 
+def _second_half_net(total_net: float, first_net: float) -> float:
+    """Return of the second half alone, in percent, as a ratio of growth factors (cum_pnl compounds)."""
+    first_factor = 1.0 + (first_net / 100.0)
+    if first_factor <= 0.0:
+        return -100.0
+    return (((1.0 + (total_net / 100.0)) / first_factor) - 1.0) * 100.0
+
+
 def _split_scores_from_single_run(ops, boundary_time: str) -> tuple[Score, Score]:
     if not ops:
         empty = Score(total_pnl=-1e18, pnl_samples=0)
@@ -143,7 +151,7 @@ def _split_scores_from_single_run(ops, boundary_time: str) -> tuple[Score, Score
     second_samples = sum(1 for op in after if op.pnl_abs is not None)
     return (
         Score(total_pnl=first_net, pnl_samples=first_samples),
-        Score(total_pnl=(total_net - first_net), pnl_samples=second_samples),
+        Score(total_pnl=_second_half_net(total_net, first_net), pnl_samples=second_samples),
     )
 
 
