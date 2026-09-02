@@ -67,9 +67,8 @@ def _vol_level_from_atr(atr_val: float, close: float, p20: float, p50: float, p8
 
 
 def _pnl_abs(prev_side: str, prev_price: float, curr_price: float) -> float:
-    if prev_side == "buy":
-        return curr_price - prev_price
-    return prev_price - curr_price
+    """EUR move of the leg opened by ``prev_side``; a cash leg holds euros, so its balance does not move."""
+    return curr_price - prev_price if prev_side == "buy" else 0.0
 
 
 def _calibration_at(cfg: EngineConfig, idx: int) -> PairCalibration:
@@ -171,6 +170,13 @@ def _opposite(side: str) -> str:
     return "buy" if side == "sell" else "sell"
 
 
+def _leg_pct(prev: Operation, pnl: float, fee_rate: float) -> float | None:
+    """Return of the leg ending here; a cash leg only pays its fee, charged on the euros it spends."""
+    if prev.side != "buy":
+        return -float(fee_rate) * 100.0
+    return (pnl / prev.price) * 100 if prev.price else None
+
+
 def _record_stop_exit(
     ops: list[Operation],
     cal: PairCalibration,
@@ -181,11 +187,11 @@ def _record_stop_exit(
     fee_rate: float,
     cum_pnl: float,
 ) -> float:
-    """Append the exit leg for ``side`` and return the updated cumulative PnL; both sides book it identically."""
+    """Append the exit leg for ``side`` and return the updated cumulative PnL; only a long leg books a price move."""
     prev = ops[-1]
     fee = float(exec_price) * float(fee_rate)
     pnl = _pnl_abs(prev.side, prev.price, exec_price) - fee
-    pnl_pct = (pnl / prev.price) * 100 if prev.price else None
+    pnl_pct = _leg_pct(prev, pnl, fee_rate)
     if pnl_pct is not None:
         cum_factor = (1.0 + (cum_pnl / 100.0)) * (1.0 + (float(pnl_pct) / 100.0))
         cum_pnl = (cum_factor - 1.0) * 100.0
@@ -212,9 +218,10 @@ def mark_to_market(ops: list[Operation], final_price: float) -> float:
     """Cumulative return with the still-open position valued at ``final_price``.
 
     A leg is booked only when it closes, so a run that ends mid-position reports
-    only what it realized: the move since the last operation is missing, with the
-    sign of the side the run ended on. This is a valuation, not a liquidation — the
-    position carries on past the end of the window, so it is charged no exit fee.
+    only what it realized: the move since the last operation is missing. A run
+    ending in euros has nothing to value, so only an open long leg adds anything.
+    This is a valuation, not a liquidation — the position carries on past the end
+    of the window, so it is charged no exit fee.
     """
     if not ops:
         return 0.0

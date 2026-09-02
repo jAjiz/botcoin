@@ -201,14 +201,20 @@ def finalize_close(pos: dict[str, Any], state: OrderState) -> bool:
     closing_price = state.avg_price
     entry = pos["entry_price"]
     side = pos["side"]
-    pnl = (closing_price - entry) / entry * 100 if side == "sell" else (entry - closing_price) / entry * 100
+    # A BUY leg spends euros held since the previous sell, so the euro balance only loses the fee.
+    pnl = (closing_price - entry) / entry * 100 if side == "sell" else 0.0
     # Only this order's fee: a fill that landed during an earlier cancel window is not reconciled either.
     entry_notional = entry * float(pos.get("volume") or 0.0)
     fee_pct = (state.fee / entry_notional * 100) if entry_notional > 0 else 0.0
     pos["closing_price"] = closing_price
     pos["fee"] = state.fee
     pos["pnl_percent"] = round(pnl - fee_pct, 4)
-    logging.info(f"💸 Position closed: {pnl - fee_pct:+.2f}% result (fee {state.fee:.2f}€)", to_telegram=True)
+    # A BUY leg's own move is not a euro result, but it is what the next SELL leg will earn from.
+    move = f" | bought back {(entry - closing_price) / entry * 100:+.2f}% vs entry" if side == "buy" else ""
+    logging.info(
+        f"💸 Position closed: {pnl - fee_pct:+.2f}% result (fee {state.fee:.2f}€){move}",
+        to_telegram=True,
+    )
     return True
 
 

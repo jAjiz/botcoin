@@ -364,10 +364,10 @@ def test_split_values_each_half_at_the_price_where_that_half_ends() -> None:
     assert test.total_pnl == pytest.approx(10.0)  # 1.21 / 1.10 - 1
 
 
-def test_split_marks_a_short_half_against_it() -> None:
-    """The open leg takes the sign of the side the half ended on."""
+def test_split_marks_nothing_onto_a_half_that_ends_in_cash() -> None:
+    """A half ending on a sell holds euros, so the price it is marked at changes nothing."""
     ops = [_op("2026-01-01 00:00", 0.0, side="sell")]
 
     train, _test = _split(ops, "2026-01-02 00:00", boundary_price=110.0, final_price=110.0)
 
-    assert train.total_pnl == pytest.approx(-10.0)
+    assert train.total_pnl == pytest.approx(0.0)

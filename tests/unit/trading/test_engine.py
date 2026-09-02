@@ -148,11 +148,11 @@ def test_round_trip_alternates_sides_and_compounds_cum_pnl() -> None:
         (3, "buy", 92.0),
         (4, "sell", 118.0),
     ]
-    # A buy leg closes a short: PnL is entry - exit, the mirror of the sell leg.
-    assert [op.pnl_abs for op in ops] == pytest.approx([0.0, 8.0, 16.0, 26.0])
-    assert [op.pnl_pct for op in ops] == pytest.approx([0.0, 8.0, 16 / 108 * 100, 26 / 92 * 100])
-    # cum_pnl compounds the per-leg returns: 1.08 * (124/108) * (118/92) - 1.
-    assert [op.cum_pnl for op in ops] == pytest.approx([0.0, 8.0, 24.0, 59.0434783])
+    # A buy leg closes a cash leg: euros held do not move, so it books nothing.
+    assert [op.pnl_abs for op in ops] == pytest.approx([0.0, 8.0, 0.0, 26.0])
+    assert [op.pnl_pct for op in ops] == pytest.approx([0.0, 8.0, 0.0, 26 / 92 * 100])
+    # cum_pnl compounds the long legs only: 1.08 * (118/92) - 1.
+    assert [op.cum_pnl for op in ops] == pytest.approx([0.0, 8.0, 8.0, 38.5217391])
 
 
 def test_an_exit_row_reports_the_k_stop_of_its_own_level() -> None:
@@ -368,8 +368,8 @@ def test_the_first_operation_uses_the_calibration_of_its_own_bar() -> None:
         # Ends long from 100 (only the opening buy): +20% unrealized.
         pytest.param([(100.0, 100.0, 100.0)], 120.0, 20.0, id="open-long-gains"),
         pytest.param([(100.0, 100.0, 100.0)], 80.0, -20.0, id="open-long-loses"),
-        # Ends short from 108 after the round trip's first exit: 108 -> 120 is a loss.
-        pytest.param(_ROUND_TRIP[:2], 120.0, 8.0 - (12 / 108 * 100) * 1.08, id="open-short-loses"),
+        # Ends holding euros after the round trip's first exit: nothing left to value.
+        pytest.param(_ROUND_TRIP[:2], 120.0, 8.0, id="open-cash-adds-nothing"),
     ],
 )
 def test_mark_to_market_values_the_position_the_run_ended_on(

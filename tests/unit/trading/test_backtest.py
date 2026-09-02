@@ -111,7 +111,7 @@ def test_run_backtest_summary_shape(monkeypatch, sample_dataframe) -> None:
 
 
 def test_summary_marks_the_open_position_to_the_last_close(monkeypatch, sample_dataframe) -> None:
-    """The realized total stops at the last closed leg; the marked total values what is still open."""
+    """The realized total stops at the last closed leg; only an open long leg is left to value."""
     _setup_common(monkeypatch, sample_dataframe)
     monkeypatch.setattr(backtest, "analyze_structural_noise", lambda _df: ([], []))
 
@@ -119,4 +119,8 @@ def test_summary_marks_the_open_position_to_the_last_close(monkeypatch, sample_d
 
     assert s["open_position_side"] in ("buy", "sell")
     assert s["unrealized_pnl_pct"] == pytest.approx(s["marked_pnl_pct"] - s["total_pnl_pct"])
-    assert s["marked_pnl_pct"] != s["total_pnl_pct"]
+    if s["open_position_side"] == "buy":
+        assert s["marked_pnl_pct"] != s["total_pnl_pct"]
+    else:
+        # A run that ends holding euros has nothing open to value.
+        assert s["marked_pnl_pct"] == pytest.approx(s["total_pnl_pct"])
