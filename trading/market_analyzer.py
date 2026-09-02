@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -6,7 +7,7 @@ from scipy.signal import argrelextrema
 
 import core.database as db
 import core.logging as logging
-from core.config import ATR_PERIOD, CANDLE_TIMEFRAME, MARKET_ANALYZER
+from core.config import ATR_PERIOD, CANDLE_TIMEFRAME, MARKET_ANALYZER, VOLATILITY_LEVELS
 from exchange.kraken import fetch_ohlc_data
 
 DEFAULT_ORDER = MARKET_ANALYZER["DEFAULT_ORDER"]
@@ -214,6 +215,55 @@ def calculate_noise_between_pivots(
     }
 
     return event
+
+
+def k_values_by_level(events: list[dict]) -> dict[str, np.ndarray]:
+    """Group every event's K value by volatility level, ready for a percentile."""
+    out: dict[str, list[float]] = {lvl: [] for lvl in VOLATILITY_LEVELS}
+    for e in events:
+        for lvl, data in (e.get("volatility_levels") or {}).items():
+            if data and data.get("k_value") is not None:
+                out.setdefault(lvl, []).append(float(data["k_value"]))
+    return {lvl: np.array(vals, dtype=float) for lvl, vals in out.items()}
+
+
+@dataclass(frozen=True)
+class CalibrationInputs:
+    """What a simulated calibration needs at one bar, before any stop percentile is applied."""
+
+    at: int
+    atr_ratio_thresholds: tuple[float, float, float, float]
+    up_k: dict[str, np.ndarray]
+    down_k: dict[str, np.ndarray]
+
+
+def build_calibration_inputs(
+    df_full: pd.DataFrame, df: pd.DataFrame, recalib_bars: int
+) -> tuple[CalibrationInputs, ...]:
+    """Calibration inputs every ``recalib_bars`` bars of ``df``, each from ``df_full`` up to that bar.
+
+    Entry 0 always exists and carries what was already in force when ``df`` opens, so
+    the schedule governs the run from its very first bar. Each point sees the past only,
+    which is what the live bot has when it recalibrates.
+    """
+    if recalib_bars <= 0 or df.empty:
+        return ()
+    times = df["dtime"].tolist()
+    points = []
+    for idx in range(0, len(df), recalib_bars):
+        cal_df = df_full[df_full["dtime"] <= times[idx]].reset_index(drop=True)
+        if cal_df.empty:
+            continue
+        up_events, down_events = analyze_structural_noise(cal_df)
+        points.append(
+            CalibrationInputs(
+                at=idx,
+                atr_ratio_thresholds=atr_ratio_percentiles(cal_df),
+                up_k=k_values_by_level(up_events),
+                down_k=k_values_by_level(down_events),
+            )
+        )
+    return tuple(points)
 
 
 def analyze_structural_noise(

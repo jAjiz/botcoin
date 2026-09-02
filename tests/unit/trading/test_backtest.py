@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 import core.runtime as runtime
@@ -124,3 +125,46 @@ def test_summary_marks_the_open_position_to_the_last_close(monkeypatch, sample_d
     else:
         # A run that ends holding euros has nothing open to value.
         assert s["marked_pnl_pct"] == pytest.approx(s["total_pnl_pct"])
+
+
+# --- calibration schedule ---------------------------------------------------
+
+
+def test_k_stops_from_values_ceils_the_percentile_and_passes_an_empty_level_through() -> None:
+    k_by_level = {"MV": np.array([1.0, 2.0, 3.11]), "HV": np.array([])}
+
+    stops = backtest._k_stops_from_values(k_by_level, {"MV": 1.0, "HV": 0.9})
+
+    assert stops["MV"] == 3.2  # ceil(3.11 * 10) / 10, the same rule calculate_k_stops applies
+    assert stops["HV"] is None
+
+
+def test_run_backtest_hands_the_engine_one_calibration_per_recalibration_bar(monkeypatch, sample_dataframe) -> None:
+    """The simulator must see the cadence the live bot recalibrates at, not one fixed calibration."""
+    _setup_common(monkeypatch, sample_dataframe)
+    monkeypatch.setattr(backtest, "analyze_structural_noise", lambda _df: ([], []))
+    monkeypatch.setattr(backtest, "STOP_PERCENTILES", {_PAIR: dict.fromkeys(_LEVELS, 0.9)})
+    seen = {}
+    real = backtest.simulate_operations
+
+    def _spy(df, cfg, **kwargs):
+        seen["rows"], seen["schedule"] = len(df), cfg.calibration_schedule
+        return real(df, cfg, **kwargs)
+
+    monkeypatch.setattr(backtest, "simulate_operations", _spy)
+
+    run_backtest(BacktestRequest(pair=_PAIR, recalibration_bars=2))
+
+    assert [at for at, _ in seen["schedule"]] == list(range(0, seen["rows"], 2))
+
+
+def test_run_backtest_calibrates_once_when_recalibration_is_disabled(monkeypatch, sample_dataframe) -> None:
+    """recalibration_bars=0 keeps the single-calibration behaviour the endpoint had before."""
+    _setup_common(monkeypatch, sample_dataframe)
+    monkeypatch.setattr(backtest, "analyze_structural_noise", lambda _df: ([], []))
+    calls: list[int] = []
+    monkeypatch.setattr(backtest, "build_calibration_inputs", lambda _full, _df, bars: calls.append(bars) or ())
+
+    run_backtest(BacktestRequest(pair=_PAIR, recalibration_bars=0))
+
+    assert calls == [0]

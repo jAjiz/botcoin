@@ -102,6 +102,8 @@ class BacktestRequest(BaseModel):
     end: str | None = None
     max_ops: int | None = None
     use_live_config: bool = False
+    # Candles between simulated recalibrations; null follows the live cadence, 0 calibrates once.
+    recalibration_bars: int | None = Field(default=None, ge=0)
 
     _check_window = field_validator("start", "end")(_require_iso_datetime)
 
@@ -212,6 +214,8 @@ class OptimizerRequest(BaseModel):
     min_test_ops: int = 0
     n_trials: int = Field(default=1_000, ge=1, le=10_000)
     seed: int = 42
+    # Candles between simulated recalibrations; null follows the live cadence, 0 calibrates once.
+    recalibration_bars: int | None = Field(default=None, ge=0)
     # Mode applicability of each group is documented on its class. search_space is
     # required for OPTIMIZE/AUTO, but enforced at the route so this model can still
     # echo back historical jobs that predate the field.

@@ -36,6 +36,8 @@ SLEEPING_INTERVAL = int(os.getenv("SLEEPING_INTERVAL", 60))
 PARAM_SESSIONS = int(os.getenv("PARAM_SESSIONS", 720))
 CANDLE_TIMEFRAME = int(os.getenv("CANDLE_TIMEFRAME", 15))
 ATR_PERIOD = int(os.getenv("ATR_PERIOD", 14))
+# How many candles pass between two live recalibrations; the simulator replays this cadence.
+RECALIBRATION_BARS = max(1, (PARAM_SESSIONS * SLEEPING_INTERVAL) // (CANDLE_TIMEFRAME * 60))
 ATR_DESV_LIMIT = float(os.getenv("ATR_DESV_LIMIT", 0.2))
 MIN_VALUE = float(os.getenv("MIN_VALUE", 10))
 

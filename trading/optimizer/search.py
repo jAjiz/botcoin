@@ -13,10 +13,16 @@ import pandas as pd
 from optuna.samplers import TPESampler
 
 import core.database as db
-from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, STOP_PERCENTILES, TRADING_PARAMS
+from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, RECALIBRATION_BARS, STOP_PERCENTILES, TRADING_PARAMS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.engine import EngineConfig, PairCalibration, mark_to_market, simulate_operations
-from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
+from trading.market_analyzer import (
+    CalibrationInputs,
+    analyze_structural_noise,
+    atr_ratio_percentiles,
+    build_calibration_inputs,
+    k_values_by_level,
+)
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -94,19 +100,7 @@ def _quantile_ceiled(values: np.ndarray, pct: float) -> float | None:
     return math.ceil(q * 10.0) / 10.0
 
 
-def _k_values_by_level(events: list[dict]) -> dict[str, np.ndarray]:
-    out: dict[str, list[float]] = {lvl: [] for lvl in LEVELS}
-    for e in events:
-        vols = e.get("volatility_levels") or {}
-        for lvl in LEVELS:
-            d = vols.get(lvl)
-            if not d:
-                continue
-            k = d.get("k_value")
-            if k is None:
-                continue
-            out[lvl].append(float(k))
-    return {lvl: np.array(vals, dtype=float) for lvl, vals in out.items()}
+_k_values_by_level = k_values_by_level
 
 
 @dataclass(frozen=True)
@@ -211,6 +205,22 @@ def _candidate_to_dict(cand: Candidate) -> dict:
     }
 
 
+def _pair_calibration(
+    cand: Candidate,
+    atr_ratio_thresholds: tuple[float, float, float, float],
+    up_k: dict[str, np.ndarray],
+    down_k: dict[str, np.ndarray],
+) -> PairCalibration:
+    return PairCalibration(
+        atr_ratio_p20=atr_ratio_thresholds[0],
+        atr_ratio_p50=atr_ratio_thresholds[1],
+        atr_ratio_p80=atr_ratio_thresholds[2],
+        atr_ratio_p95=atr_ratio_thresholds[3],
+        k_stop_buy={lvl: _quantile_ceiled(down_k[lvl], cand.stop_pcts[lvl]) for lvl in LEVELS},
+        k_stop_sell={lvl: _quantile_ceiled(up_k[lvl], cand.stop_pcts[lvl]) for lvl in LEVELS},
+    )
+
+
 def _build_engine_config(
     pair: str,
     cand: Candidate,
@@ -218,23 +228,18 @@ def _build_engine_config(
     up_k: dict[str, np.ndarray],
     down_k: dict[str, np.ndarray],
     atr_desv_limit: float,
+    calibration_points: tuple[CalibrationInputs, ...] = (),
 ) -> EngineConfig:
-    sell_k_stop = {lvl: _quantile_ceiled(up_k[lvl], cand.stop_pcts[lvl]) for lvl in LEVELS}
-    buy_k_stop = {lvl: _quantile_ceiled(down_k[lvl], cand.stop_pcts[lvl]) for lvl in LEVELS}
-    calibration = PairCalibration(
-        atr_ratio_p20=atr_ratio_thresholds[0],
-        atr_ratio_p50=atr_ratio_thresholds[1],
-        atr_ratio_p80=atr_ratio_thresholds[2],
-        atr_ratio_p95=atr_ratio_thresholds[3],
-        k_stop_buy=buy_k_stop,
-        k_stop_sell=sell_k_stop,
-    )
     return EngineConfig(
         pair=pair,
-        calibration=calibration,
+        calibration=_pair_calibration(cand, atr_ratio_thresholds, up_k, down_k),
         k_act=cand.k_act,
         min_margin=cand.min_margin or 0.0,
         atr_desv_limit=atr_desv_limit,
+        # The candidate's percentiles are what turn each point into the calibration in force there.
+        calibration_schedule=tuple(
+            (p.at, _pair_calibration(cand, p.atr_ratio_thresholds, p.up_k, p.down_k)) for p in calibration_points
+        ),
     )
 
 
@@ -289,6 +294,8 @@ class OptimizerRequest:
     min_test_ops: int = 0
     n_trials: int = 1_000
     seed: int = 42
+    # Candles between simulated recalibrations; None follows the live cadence, 0 calibrates once.
+    recalibration_bars: int | None = None
     # AUTO-mode knobs (None => defaults).
     auto_settings: AutoSettings | None = None
     # Search grids: required for OPTIMIZE/AUTO, ignored by CURRENT.
@@ -347,11 +354,14 @@ class EvalContext:
     down_k: dict[str, np.ndarray]
     min_ops: int
     min_test_ops: int
+    calibration_points: tuple[CalibrationInputs, ...] = ()
     search_space: SearchSpace | None = None
 
 
 def _evaluate(cand: Candidate, ctx: EvalContext) -> _Eval:
-    cfg = _build_engine_config(ctx.pair, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT)
+    cfg = _build_engine_config(
+        ctx.pair, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT, ctx.calibration_points
+    )
     ops_all = simulate_operations(ctx.df, cfg, fee_rate=ctx.fee_rate)
     in_sample = _score_run(ops_all, ctx.final_price)
 
@@ -565,6 +575,9 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
 
     up_k = _k_values_by_level(up_events)
     down_k = _k_values_by_level(down_events)
+    # Built once and shared by every trial: the points do not depend on the candidate.
+    recalib_bars = RECALIBRATION_BARS if req.recalibration_bars is None else int(req.recalibration_bars)
+    calibration_points = build_calibration_inputs(df_full, df, recalib_bars)
 
     return EvalContext(
         pair=req.pair,
@@ -580,6 +593,7 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
         down_k=down_k,
         min_ops=req.min_ops,
         min_test_ops=req.min_test_ops,
+        calibration_points=calibration_points,
         search_space=req.search_space,
     )
 

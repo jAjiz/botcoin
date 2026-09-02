@@ -5,15 +5,20 @@ mutation. Configuration for the simulation is built into an ``EngineConfig`` and
 handed to ``trading.engine.simulate_operations``.
 """
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
 
 import core.database as db
 import core.runtime as runtime
-from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, TRADING_PARAMS
+from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, RECALIBRATION_BARS, STOP_PERCENTILES, TRADING_PARAMS
 from trading.engine import EngineConfig, Operation, PairCalibration, mark_to_market, simulate_operations
-from trading.market_analyzer import analyze_structural_noise, atr_ratio_percentiles
+from trading.market_analyzer import (
+    analyze_structural_noise,
+    atr_ratio_percentiles,
+    build_calibration_inputs,
+)
 from trading.parameters_manager import calculate_k_stops
 
 
@@ -25,6 +30,8 @@ class BacktestRequest:
     end: str | None = None
     max_ops: int | None = None
     use_live_config: bool = False  # read the calibration cache instead of recomputing
+    # Candles between simulated recalibrations; None follows the live cadence, 0 calibrates once.
+    recalibration_bars: int | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +47,36 @@ def _coerce_float(v) -> float | None:
         return float(v) if v is not None and str(v).strip() != "" else None
     except (TypeError, ValueError):
         return None
+
+
+def _calibration_schedule(pair: str, df_full, df, recalib_bars: int) -> tuple:
+    """Replay the live recalibration cadence, reading the pair's own stop percentiles at every point."""
+    pcts = STOP_PERCENTILES[pair]
+    schedule = []
+    for point in build_calibration_inputs(df_full, df, recalib_bars):
+        p20, p50, p80, p95 = point.atr_ratio_thresholds
+        schedule.append(
+            (
+                point.at,
+                PairCalibration(
+                    atr_ratio_p20=p20,
+                    atr_ratio_p50=p50,
+                    atr_ratio_p80=p80,
+                    atr_ratio_p95=p95,
+                    k_stop_buy=_k_stops_from_values(point.down_k, pcts),
+                    k_stop_sell=_k_stops_from_values(point.up_k, pcts),
+                ),
+            )
+        )
+    return tuple(schedule)
+
+
+def _k_stops_from_values(k_by_level: dict, pcts: dict) -> dict[str, float | None]:
+    """Same percentile-then-ceil rule as parameters_manager.calculate_k_stops, on ready-made arrays."""
+    out = {}
+    for lvl, values in k_by_level.items():
+        out[lvl] = None if values.size == 0 else math.ceil(float(np.quantile(values, float(pcts[lvl]))) * 10.0) / 10.0
+    return out
 
 
 def _build_summary(ops: list[Operation], row_count: int, source: str, final_price: float) -> dict:
@@ -129,12 +166,14 @@ def run_backtest(req: BacktestRequest) -> BacktestResult:
         k_stop_sell=calculate_k_stops(req.pair, up_events),
     )
 
+    recalib_bars = RECALIBRATION_BARS if req.recalibration_bars is None else int(req.recalibration_bars)
     cfg = EngineConfig(
         req.pair,
         calibration,
         k_act=_coerce_float(TRADING_PARAMS[req.pair].get("K_ACT")),
         min_margin=float(TRADING_PARAMS[req.pair].get("MIN_MARGIN") or 0.0),
         atr_desv_limit=ATR_DESV_LIMIT,
+        calibration_schedule=_calibration_schedule(req.pair, df_full, df, recalib_bars),
     )
 
     fee_rate = req.fee_pct / 100.0

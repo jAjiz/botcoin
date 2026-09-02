@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import core.config as config
+import trading.market_analyzer as market_analyzer
 import trading.optimizer.search as optimizer
 from trading.optimizer.search import (
     AutoSettings,
@@ -371,3 +372,39 @@ def test_split_marks_nothing_onto_a_half_that_ends_in_cash() -> None:
     train, _test = _split(ops, "2026-01-02 00:00", boundary_price=110.0, final_price=110.0)
 
     assert train.total_pnl == pytest.approx(0.0)
+
+
+# --- calibration schedule ---------------------------------------------------
+
+
+_LEVELS = ("LL", "LV", "MV", "HV", "HH")
+
+
+def _k_arrays(value: float) -> dict:
+    return {lvl: np.array([value]) for lvl in _LEVELS}
+
+
+def test_engine_config_carries_no_schedule_when_no_point_is_supplied() -> None:
+    cand = optimizer.Candidate(k_act=1.0, min_margin=None, stop_pcts=dict.fromkeys(_LEVELS, 0.5))
+
+    cfg = optimizer._build_engine_config("XBTEUR", cand, (0.1, 0.2, 0.3, 0.4), _k_arrays(3.0), _k_arrays(4.0), 0.2)
+
+    assert cfg.calibration_schedule == ()
+
+
+def test_engine_config_applies_the_candidate_percentiles_to_every_scheduled_point() -> None:
+    """A point carries raw K values; the candidate's percentiles are what turn them into K_STOP."""
+    cand = optimizer.Candidate(k_act=1.0, min_margin=None, stop_pcts=dict.fromkeys(_LEVELS, 0.5))
+    points = (
+        market_analyzer.CalibrationInputs(0, (0.1, 0.2, 0.3, 0.4), _k_arrays(3.0), _k_arrays(4.0)),
+        market_analyzer.CalibrationInputs(7, (0.5, 0.6, 0.7, 0.8), _k_arrays(9.0), _k_arrays(9.0)),
+    )
+
+    cfg = optimizer._build_engine_config(
+        "XBTEUR", cand, (0.1, 0.2, 0.3, 0.4), _k_arrays(3.0), _k_arrays(4.0), 0.2, points
+    )
+
+    assert [at for at, _ in cfg.calibration_schedule] == [0, 7]
+    assert cfg.calibration_schedule[0][1].k_stop_sell["MV"] == 3.0
+    assert cfg.calibration_schedule[1][1].k_stop_sell["MV"] == 9.0
+    assert cfg.calibration_schedule[1][1].atr_ratio_p20 == 0.5
