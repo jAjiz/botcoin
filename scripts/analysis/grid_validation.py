@@ -1,7 +1,11 @@
 """Validation harness for the fixed optimizer search grids.
 
 Runs the optimizer over the spec's fixed grids and reports diagnostics. Read-only;
-nothing is written. See docs/specs/optimizer-grid-derivation-design.md.
+nothing is written. See docs/specs/optimizer-validation-design.md.
+
+The `walkforward` mode restarts the simulation at every window boundary, which
+invalidates it for configs that trade less often than a window lasts; the spec's
+"Harness defects" section says why. Score such a candidate on one continuous run.
 
 Modes:
   opt          edge-pinning + coarseness sensitivity (spec tests 1, 4): OPTIMIZE per

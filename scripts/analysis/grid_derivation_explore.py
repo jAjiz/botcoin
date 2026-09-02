@@ -1,9 +1,8 @@
 """Exploratory measurement that informed the optimizer search grids.
 
 Read-only. Measures, per pair, the structural distributions behind each grid
-(see docs/specs/optimizer-grid-derivation-design.md, which records the resulting
-fixed grids). It only *reports* distributions — the grids are fixed in the spec,
-not produced here:
+(see docs/specs/optimizer-validation-design.md). It only *reports* distributions —
+the grids are fixed in the spec, not produced here:
 
 - stop_pcts : per side (sell/up, buy/down) and volatility level, the K-value
               sample count and percentiles (the per-level K distribution).
