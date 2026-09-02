@@ -84,6 +84,27 @@ def _force_sequential_branches() -> None:
     optimizer._PARALLEL_MIN_TRIALS = 10**9
 
 
+def _install_calibration_cache() -> None:
+    """Memoize the calibration schedule per window.
+
+    Every arm and seed of a transition re-fits the same window, and the in-tree
+    builder recomputes the points on each call — one rebuild costs minutes over a
+    long window, so the fit window alone would be rebuilt once per arm per seed.
+    """
+    real = optimizer.build_calibration_inputs
+    cache: dict[tuple, tuple] = {}
+
+    def cached(df_full, df, recalib_bars):
+        if df.empty:
+            return real(df_full, df, recalib_bars)
+        key = (str(df.iloc[0]["dtime"]), str(df.iloc[-1]["dtime"]), len(df), recalib_bars)
+        if key not in cache:
+            cache[key] = real(df_full, df, recalib_bars)
+        return cache[key]
+
+    optimizer.build_calibration_inputs = cached
+
+
 _REAL_SUGGEST_STOPS = optimizer._suggest_stops
 _REAL_CANDIDATE_FROM_PARAMS = optimizer._candidate_from_params
 _ANCHOR = LEVELS[0]
@@ -362,6 +383,7 @@ def main() -> None:
 
     _install_shared_ohlc_cache()
     _force_sequential_branches()
+    _install_calibration_cache()
 
     print(
         f"[experimento] pares={pairs} ventanas={args.windows} semillas={seeds} "

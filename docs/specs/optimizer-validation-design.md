@@ -115,9 +115,12 @@ The `k_act` branch moves the *other way*. A single calibration systematically fl
 
 Two consequences to carry forward:
 
-- **Cost.** About 380 s for a 15-month window (907 points), paid once per run. An async
-  optimizer job absorbs it; a synchronous `/backtest` on a long window does not, hence
-  `recalibration_bars` on both requests (`null` = live cadence, `0` = one calibration).
+- **Cost.** About 380 s for a 15-month window (907 points), paid once per run, and the
+  process prints nothing while it runs — a job or a `/backtest` that looks hung for six
+  minutes is doing this. An async optimizer job absorbs it; a synchronous `/backtest` on a
+  long window does not, hence `recalibration_bars` on both requests (`null` = live cadence,
+  `0` = one calibration). Any harness that re-fits the same window per arm and per seed
+  must memoize the schedule, or it pays that cost once per fit — see Tools.
 - **Coarsening is not a safe approximation.** At 192 bars instead of 48, `mm=0.035 s=0.9`
   moves from +34.3 % to −1.4 %; at 480 and 960 bars it returns to +35.4 % and +34.4 %. The
   outcome hinges on whether a recalibration lands before or after a particular bar. That
@@ -304,10 +307,13 @@ All read-only, all require `PYTHONPATH=.` and DB env vars.
 | `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price). |
 | `scripts/analysis/grid_validation.py` | Edge-pinning, coverage, AUTO convergence. **Its `walkforward` mode uses the segment-restart method — see Harness defects; do not trust its chained figures.** |
 
-The point cache in `refit_frequency_experiment.py` exists because the in-tree
-`build_calibration_inputs` recomputes per call and a walk-forward asks for hundreds of
-overlapping windows over the same history. It is installed by monkeypatching
-`optimizer.build_calibration_inputs`; `regime_filter_screen.py` shares it.
+Both point caches exist because the in-tree `build_calibration_inputs` recomputes on every
+call, and a schedule over a long window costs minutes. `refit_frequency_experiment.py`
+computes the pair's points once and slices them per window (frame-anchored);
+`regime_filter_screen.py` shares that one. `objective_experiment.py` memoizes per window
+instead, since every arm and every seed of a transition re-fits the same window —
+measured at 76 s for the first arm and 3 s for the next three. Both are installed by
+monkeypatching `optimizer.build_calibration_inputs`. **A new harness needs one of them.**
 
 ## Activation math (reference)
 
