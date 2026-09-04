@@ -1,33 +1,44 @@
-"""Walk-forward experiment: does re-fitting the config often beat fitting it once?
+"""Walk-forward experiment: how often should the bot's config be re-fitted?
 
-Read-only. Nothing in ``trading/optimizer/`` is modified: the variants under test
-are installed as monkeypatches for the duration of a run.
+Read-only and temporary. Nothing in ``trading/optimizer/`` is modified: the variants
+under test are installed as monkeypatches for the duration of a run.
 
-The search is fixed to the proposed setup — one stop_pct shared by all five levels,
-no inner train/test cut — so the only factor is *how often* the config is re-fitted
-and *on which data*:
+Every arm is scored on ONE continuous run over the same forward span, never restarted.
+A reconfiguration enters through the engine's two schedules — the new ``stop_pct`` rides
+the calibration schedule, the new ``k_act``/``min_margin`` ride the activation one — so
+the config changes from that bar on without liquidating the position the bot happens to
+hold, which is what ``PATCH /config/{pair}`` does to the live bot. Scoring in restarted
+segments instead would charge an entry fee per boundary and throw the open position
+away, and the number of boundaries is the very variable under test: it would penalise
+exactly the arm that reconfigures most.
 
-  fijo        fitted once on the first fit window, then applied to every segment
-  reajuste    re-fitted at every step on the trailing fit window (adapts, few ops)
-  expansivo   re-fitted at every step on all history so far (stable, barely moves)
-  hold        buy at the segment start, sell at its end
+The search is fixed to one stop_pct shared by all five levels and no inner train/test
+cut, so the only factor is *how often* the config is re-fitted and *on which data*:
 
-Each arm is judged only on disjoint forward segments it never saw. Segment returns
-are also chained, since that is the number an account would actually have seen.
+  fijo        fitted once before the span opens, then never touched (the control: its
+              number must come out identical for every cadence)
+  reajuste    re-fitted at every boundary on the trailing fit window (adapts)
+  expansivo   re-fitted at every boundary on all history so far (stable)
+  mantener    buy at the start of the span, hold to the end
+
+All cadences share one forward span, so their results — and buy-and-hold — are directly
+comparable rather than being chained over different segmentations.
 
 Calibration is progressive everywhere: every ``--recalib-bars`` bars the simulation
-adopts the calibration computed from all history up to that bar and no further,
-which is what the live bot holds at that instant.
+adopts the calibration computed from all history up to that bar and no further, which is
+what the live bot holds at that instant.
 
-Usage (PYTHONPATH=. and DB env vars required):
-  PYTHONPATH=. python scripts/analysis/refit_frequency_experiment.py XBTEUR
+Usage (PYTHONPATH=. required; DB env vars only when --csv is omitted):
+  PYTHONPATH=. python scripts/analysis/refit_frequency_experiment.py XBTEUR \
+      --csv path/to/XBTEUR_15_*.csv --fit-days 90 --step-days 60 120 180
 """
 
 import argparse
 import dataclasses
+import itertools
 import statistics
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pandas as pd
 
@@ -35,7 +46,7 @@ import core.database as db
 import trading.optimizer.search as optimizer
 from core.config import ATR_DESV_LIMIT, ATR_PERIOD, CANDLE_TIMEFRAME, PAIRS, PARAM_SESSIONS, SLEEPING_INTERVAL
 from core.config import VOLATILITY_LEVELS as LEVELS
-from trading.engine import mark_to_market, simulate_operations
+from trading.engine import ActivationParams, EngineConfig, mark_to_market, simulate_operations
 from trading.market_analyzer import (
     CalibrationInputs,
     _wilder_atr_from_scratch,
@@ -171,6 +182,8 @@ def _global_cal_points(pair: str, recalib_bars: int) -> list[CalibrationInputs]:
                 idx, atr_ratio_percentiles(cal_df), k_values_by_level(up_events), k_values_by_level(down_events)
             )
         )
+        if len(points) % 100 == 0:
+            print(f"    ... {len(points)} puntos ({time.perf_counter() - t0:.0f}s)", flush=True)
     print(f"[calibracion] {len(points)} puntos globales cada {recalib_bars} velas ({time.perf_counter() - t0:.0f}s)")
     return points
 
@@ -264,13 +277,11 @@ def _hold_return(pair: str, first_bar: int, last_bar: int) -> float:
 
 
 @dataclass
-class Segment:
-    pair: str
-    step: int
-    first_bar: int
-    last_bar: int
-    hold: float
-    results: dict = field(default_factory=dict)  # (arm, seed) -> (pnl, ops, signature)
+class Decision:
+    """A config and the frame bar from which it is in force."""
+
+    at_bar: int
+    cand: dict
 
 
 def _fit(pair: str, first_bar: int, last_bar: int, seed: int, n_trials: int) -> dict | None:
@@ -293,11 +304,43 @@ def _fit(pair: str, first_bar: int, last_bar: int, seed: int, n_trials: int) -> 
         return None
 
 
-def _score(pair: str, cand: dict, first_bar: int, last_bar: int, decided_at: str) -> tuple[float | None, int]:
-    """Score a config on a forward segment it never saw, valuing the position left open.
+def _decisions(
+    pair: str, arm: str, fit_bars: int, first_bar: int, last_bar: int, step_bars: int, seed: int, n_trials: int
+) -> list[Decision] | None:
+    """The configs this arm would have had in force across [first_bar, last_bar].
 
-    A window is a slice of a run that never stops, so it always ends mid-position.
-    Chaining the realized totals would drop that leg from every segment.
+    Every arm starts from the same config, fitted on the window that ends exactly where
+    the forward span opens, so they differ only in whether and on what they re-fit later.
+    """
+    first = _fit(pair, first_bar - fit_bars, first_bar - 1, seed, n_trials)
+    if first is None:
+        return None
+    out = [Decision(first_bar, first)]
+    if arm == "fijo":
+        return out
+
+    boundary = first_bar + step_bars
+    while boundary <= last_bar:
+        if arm == "reajuste":
+            cand = _fit(pair, boundary - fit_bars, boundary - 1, seed, n_trials)
+        else:
+            cand = _fit(pair, 0, boundary - 1, seed, n_trials)
+        # A search that finds nothing leaves the previous config in force, which is also
+        # what the operator would be left with.
+        out.append(Decision(boundary, cand if cand is not None else out[-1].cand))
+        boundary += step_bars
+    return out
+
+
+def _as_candidate(cand: dict) -> Candidate:
+    return Candidate(k_act=cand.get("k_act"), min_margin=cand.get("min_margin"), stop_pcts=cand.get("stop_pcts"))
+
+
+def _score_continuous(pair: str, decisions: list[Decision], first_bar: int, last_bar: int) -> tuple[float | None, int]:
+    """Score a whole sequence of configs on ONE run that never restarts.
+
+    The configs enter through the engine's two schedules, so a reconfiguration changes
+    what the bot does from that bar on without liquidating whatever position it holds.
     """
     req = OptimizerRequest(
         pair=pair,
@@ -310,18 +353,39 @@ def _score(pair: str, cand: dict, first_bar: int, last_bar: int, decided_at: str
         seed=0,
         search_space=SPACE,
     )
-    ctx = _build_eval_context(req, _calibration_at(pair, decided_at))
-    cfg = optimizer._build_engine_config(
-        pair,
-        Candidate(k_act=cand.get("k_act"), min_margin=cand.get("min_margin"), stop_pcts=cand.get("stop_pcts")),
-        ctx.atr_ratio_thresholds,
-        ctx.up_k,
-        ctx.down_k,
-        ATR_DESV_LIMIT,
-        ctx.calibration_points,
+    ctx = _build_eval_context(req, _calibration_at(pair, _dtime(pair, first_bar)))
+
+    # Bar indices relative to the window the engine walks.
+    rel = [(d.at_bar - first_bar, _as_candidate(d.cand)) for d in decisions]
+
+    def in_force(bar: int) -> Candidate:
+        chosen = rel[0][1]
+        for at, cand in rel:
+            if at > bar:
+                break
+            chosen = cand
+        return chosen
+
+    # Each calibration point becomes K_STOP values under the percentiles of whichever config
+    # was in force at that point: the stop_pct half of a reconfiguration rides the calibration
+    # schedule, and only k_act/min_margin need the activation one.
+    cal_schedule = tuple(
+        (p.at, optimizer._pair_calibration(in_force(p.at), p.atr_ratio_thresholds, p.up_k, p.down_k))
+        for p in ctx.calibration_points
     )
-    fee_rate = FEE / 100.0
-    ops = simulate_operations(ctx.df, cfg, fee_rate=fee_rate)
+    act_schedule = tuple((at, ActivationParams(cand.k_act, cand.min_margin or 0.0)) for at, cand in rel)
+
+    opening = rel[0][1]
+    cfg = EngineConfig(
+        pair=pair,
+        calibration=optimizer._pair_calibration(opening, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k),
+        k_act=opening.k_act,
+        min_margin=opening.min_margin or 0.0,
+        atr_desv_limit=ATR_DESV_LIMIT,
+        calibration_schedule=cal_schedule,
+        activation_schedule=act_schedule,
+    )
+    ops = simulate_operations(ctx.df, cfg, fee_rate=FEE / 100.0)
     if not ops:
         return None, 0
     marked = mark_to_market(ops, float(ctx.df.iloc[-1]["close"]))
@@ -334,161 +398,80 @@ def _signature(cand: dict) -> str:
     return f"{branch} stop={next(iter(cand['stop_pcts'].values())):.1f}"
 
 
-def run(pair: str, fit_bars: int, step_bars: int, seeds, n_trials: int) -> list[Segment]:
-    n = len(_full_frame(pair))
-    segments: list[Segment] = []
-    fixed: dict[int, dict] = {}
+def run(pair: str, fit_bars: int, step_bars: int, seeds, n_trials: int, fixed: dict) -> dict:
+    """One continuous forward run per (arm, seed). Values are (pnl, ops, changes, first signature)."""
+    first_bar, last_bar = fit_bars, len(_full_frame(pair)) - 1
+    results: dict = {}
 
-    step = 0
-    while fit_bars + (step + 1) * step_bars <= n:
-        boundary = fit_bars + step * step_bars
-        first, last = boundary, boundary + step_bars - 1
-        seg = Segment(pair, step, first, last, round(_hold_return(pair, first, last), 2))
-        decided_at = _dtime(pair, boundary)
-        print(
-            f"\n  paso {step:<3} decide en {decided_at[:10]}  "
-            f"evalua [{_dtime(pair, first)[:10]}..{_dtime(pair, last)[:10]}]  mantener={seg.hold:+.2f}%"
-        )
-
-        for seed in seeds:
-            for arm in ARMS:
-                t0 = time.perf_counter()
+    for seed in seeds:
+        for arm in ARMS:
+            t0 = time.perf_counter()
+            # The fijo arm never re-fits, so its configs do not depend on the cadence: its
+            # number must come out identical for every cadence, which is the control.
+            if arm == "fijo" and seed in fixed:
+                decisions = fixed[seed]
+            else:
+                decisions = _decisions(pair, arm, fit_bars, first_bar, last_bar, step_bars, seed, n_trials)
                 if arm == "fijo":
-                    if seed not in fixed:
-                        fixed[seed] = _fit(pair, 0, fit_bars - 1, seed, n_trials)
-                    cand = fixed[seed]
-                elif arm == "reajuste":
-                    cand = _fit(pair, boundary - fit_bars, boundary - 1, seed, n_trials)
-                else:
-                    cand = _fit(pair, 0, boundary - 1, seed, n_trials)
+                    fixed[seed] = decisions
 
-                if cand is None:
-                    seg.results[(arm, seed)] = (None, 0, "-")
-                    print(f"    {arm:<11} seed={seed:<4} sin candidato valido")
-                    continue
+            if decisions is None:
+                results[(arm, seed)] = (None, 0, 0, "-")
+                print(f"    {arm:<11} seed={seed:<5} sin candidato valido")
+                continue
 
-                pnl, ops = _score(pair, cand, first, last, decided_at)
-                seg.results[(arm, seed)] = (pnl, ops, _signature(cand))
-                print(
-                    f"    {arm:<11} seed={seed:<4} FUERA={pnl!s:>8}  ops={ops:<3} "
-                    f"{_signature(cand):<22} ({time.perf_counter() - t0:.0f}s)"
-                )
+            pnl, ops = _score_continuous(pair, decisions, first_bar, last_bar)
+            changes = sum(1 for a, b in itertools.pairwise(decisions) if _signature(a.cand) != _signature(b.cand))
+            results[(arm, seed)] = (pnl, ops, changes, _signature(decisions[0].cand))
+            print(
+                f"    {arm:<11} seed={seed:<5} FUERA={pnl!s:>8}%  ops={ops:<4} "
+                f"reconfigs={len(decisions) - 1:<3} cambios={changes:<3} "
+                f"inicial={_signature(decisions[0].cand):<22} ({time.perf_counter() - t0:.0f}s)",
+                flush=True,
+            )
 
-        segments.append(seg)
-        step += 1
-
-    return segments
+    return results
 
 
 # --- reporting --------------------------------------------------------------
 
 
-def _chain(returns: list[float]) -> float:
-    """Compound a list of percentage returns into one."""
-    factor = 1.0
-    for r in returns:
-        factor *= 1.0 + (r / 100.0)
-    return (factor - 1.0) * 100.0
-
-
-def summarize(segments: list[Segment], seeds) -> None:
-    if not segments:
-        print("\nSin segmentos: no hay datos suficientes para esa ventana y paso.")
-        return
-
-    holds = [s.hold for s in segments]
-    print("\n\n" + "=" * 78)
-    print(f"RESUMEN — {len(segments)} segmentos hacia delante, {len(seeds)} semillas")
-    print("=" * 78)
-
-    print(f"\n{'brazo':<14}{'encadenado':>12}{'mediana':>10}{'positivos':>11}{'gana a hold':>13}{'peor':>9}")
-    print("-" * 69)
+def summarize(results: dict, seeds, hold: float) -> None:
+    print(f"\n  {'brazo':<12}{'mediana':>10}{'peor':>9}{'mejor':>9}{'vs hold':>10}{'gana':>7}{'ops':>7}{'cambios':>9}")
+    print("  " + "-" * 73)
     for arm in ARMS:
-        chained, medians, wins, positives, worst = [], [], [], [], []
-        for seed in seeds:
-            vals = [s.results.get((arm, seed), (None, 0, "-"))[0] for s in segments]
-            vals = [v if v is not None else 0.0 for v in vals]
-            chained.append(_chain(vals))
-            medians.append(statistics.median(vals))
-            positives.append(sum(1 for v in vals if v > 0))
-            wins.append(sum(1 for v, h in zip(vals, holds, strict=True) if v > h))
-            worst.append(min(vals))
+        rows = [results.get((arm, s)) for s in seeds]
+        rows = [r for r in rows if r is not None and r[0] is not None]
+        if not rows:
+            print(f"  {arm:<12}{'sin resultados':>10}")
+            continue
+        pnls = [r[0] for r in rows]
+        median = statistics.median(pnls)
+        wins = sum(1 for p in pnls if p > hold)
         print(
-            f"{arm:<14}{statistics.median(chained):>11.2f}%{statistics.median(medians):>10.2f}"
-            f"{f'{round(statistics.median(positives))}/{len(segments)}':>11}"
-            f"{f'{round(statistics.median(wins))}/{len(segments)}':>13}{min(worst):>9.2f}"
+            f"  {arm:<12}{median:>9.2f}%{min(pnls):>8.2f}%{max(pnls):>8.2f}%{median - hold:>+9.1f}"
+            f"{f'{wins}/{len(rows)}':>7}{round(statistics.median([r[1] for r in rows])):>7}"
+            f"{round(statistics.median([r[2] for r in rows])):>9}"
         )
-    print(
-        f"{'mantener':<14}{_chain(holds):>11.2f}%{statistics.median(holds):>10.2f}"
-        f"{f'{sum(1 for h in holds if h > 0)}/{len(segments)}':>11}{'-':>13}{min(holds):>9.2f}"
-    )
-
-    print("\n\nPor segmento (mediana entre semillas):")
-    header = f"{'paso':<6}{'periodo':<24}" + "".join(f"{a:>12}" for a in ARMS) + f"{'mantener':>12}"
-    print("\n" + header)
-    print("-" * len(header))
-    for s in segments:
-        line = f"{s.step:<6}{_dtime_range(s):<24}"
-        for arm in ARMS:
-            vals = [s.results.get((arm, seed), (None, 0, "-"))[0] for seed in seeds]
-            vals = [v for v in vals if v is not None]
-            line += f"{statistics.median(vals):>12.2f}" if vals else f"{'-':>12}"
-        line += f"{s.hold:>12.2f}"
-        print(line)
-
-    print("\n\nEstabilidad de la configuracion elegida (semilla mas baja):")
-    seed = seeds[0]
-    print(f"\n{'paso':<6}" + "".join(f"{a:>26}" for a in ARMS))
-    print("-" * (6 + 26 * len(ARMS)))
-    changes = dict.fromkeys(ARMS, 0)
-    previous = dict.fromkeys(ARMS, None)
-    for s in segments:
-        line = f"{s.step:<6}"
-        for arm in ARMS:
-            sig = s.results.get((arm, seed), (None, 0, "-"))[2]
-            if previous[arm] is not None and sig != previous[arm]:
-                changes[arm] += 1
-            previous[arm] = sig
-            line += f"{sig:>26}"
-        print(line)
-    print("\ncambios de configuracion: " + "  ".join(f"{a}={changes[a]}/{len(segments) - 1}" for a in ARMS))
-
-    print("\n\nRuido entre semillas (rango del PnL fuera de muestra por segmento):")
-    print(f"\n{'brazo':<14}{'rango medio':>14}{'configs unicas':>17}")
-    print("-" * 45)
-    for arm in ARMS:
-        spans, uniq = [], []
-        for s in segments:
-            vals = [s.results.get((arm, sd), (None, 0, "-"))[0] for sd in seeds]
-            vals = [v for v in vals if v is not None]
-            sigs = {s.results.get((arm, sd), (None, 0, "-"))[2] for sd in seeds}
-            if len(vals) > 1:
-                spans.append(max(vals) - min(vals))
-                uniq.append(len(sigs))
-        if spans:
-            print(f"{arm:<14}{statistics.mean(spans):>14.2f}{statistics.mean(uniq):>17.1f}")
-
-
-def _dtime_range(s: Segment) -> str:
-    return f"{_dtime(s.pair, s.first_bar)[:10]}..{_dtime(s.pair, s.last_bar)[:10]}"
+    print(f"  {'mantener':<12}{hold:>9.2f}%{hold:>8.2f}%{hold:>8.2f}%{0.0:>+9.1f}{'-':>7}{1:>7}{0:>9}")
 
 
 def main() -> None:
     global FEE
-    ap = argparse.ArgumentParser(description="Walk-forward: re-fit frequency against a single fit and buy-and-hold.")
+    ap = argparse.ArgumentParser(description="Walk-forward: re-fit cadence against a single fit and buy-and-hold.")
     ap.add_argument("pairs", nargs="*", help="Pares (por defecto: PAIRS de config).")
-    ap.add_argument("--fit-days", type=int, default=30, help="Dias de datos que ve cada ajuste (brazo reajuste).")
+    ap.add_argument("--fit-days", type=int, default=90, help="Dias de datos que ve cada ajuste.")
     ap.add_argument(
         "--step-days",
         type=int,
         nargs="+",
-        default=[7],
-        help="Cada cuantos dias se reajusta y se puntua. Varios valores comparan cadencias en una sola corrida, "
-        "que es lo que hace que el calendario de calibracion se pague una vez y no una por cadencia.",
+        default=[60, 120, 180],
+        help="Cada cuantos dias se reconfigura. Varias cadencias en una sola corrida comparten el tramo y el "
+        "calendario de calibracion, que asi se paga una vez.",
     )
     ap.add_argument("--csv", nargs="+", default=None, help="Ficheros OHLCVT de Kraken; sin esto se lee de la BD.")
     ap.add_argument("--seeds", type=str, default="42,7,99")
-    ap.add_argument("--n-trials", type=int, default=300)
+    ap.add_argument("--n-trials", type=int, default=100)
     ap.add_argument("--recalib-bars", type=int, default=RECALIB_BARS)
     ap.add_argument("--from-date", type=str, default=None, help="Primera fecha de la serie continua a usar.")
     ap.add_argument("--to-date", type=str, default=None, help="Ultima fecha de la serie continua a usar.")
@@ -518,13 +501,23 @@ def main() -> None:
     for pair in pairs:
         df = _full_frame(pair)
         print(f"\n=== {pair}  {len(df)} velas  {_dtime(pair, 0)[:10]}..{_dtime(pair, len(df) - 1)[:10]} ===")
-        # The points depend only on the pair and the cadence of the *calibration*, not on the
-        # refit cadence, so every --step-days value is served by the same set.
+        # The points depend only on the pair and the calibration cadence, not on the refit
+        # cadence, so every --step-days value is served by the same set.
         _set_points(_global_cal_points(pair, args.recalib_bars), pair)
+
+        first_bar, last_bar = fit_bars, len(df) - 1
+        hold = round(_hold_return(pair, first_bar, last_bar), 2)
+        print(
+            f"\n[tramo] {_dtime(pair, first_bar)[:10]}..{_dtime(pair, last_bar)[:10]} "
+            f"({(last_bar - first_bar) / BARS_PER_DAY:.0f}d)  mantener={hold:+.2f}%"
+            "\n        identico para todas las cadencias, asi que sus resultados son directamente comparables"
+        )
+
+        fixed: dict = {}
         for step_days in args.step_days:
-            n_seg = (len(df) - fit_bars) // (step_days * BARS_PER_DAY)
-            print(f"\n\n### cadencia {step_days}d — {n_seg} segmentos hacia delante ###")
-            summarize(run(pair, fit_bars, step_days * BARS_PER_DAY, seeds, args.n_trials), seeds)
+            n_dec = (last_bar - first_bar) // (step_days * BARS_PER_DAY) + 1
+            print(f"\n\n### cadencia {step_days}d — {n_dec} configuraciones sobre el tramo ###")
+            summarize(run(pair, fit_bars, step_days * BARS_PER_DAY, seeds, args.n_trials, fixed), seeds, hold)
     print(f"\ntotal {time.perf_counter() - t0:.0f}s")
 
 
