@@ -389,3 +389,48 @@ def test_mark_to_market_of_a_priceless_operation_keeps_the_realized_total() -> N
     priceless = engine.Operation(1, "t0", "buy", 0.0, "LV", 1.0, 0.0, None, None, 7.5)
 
     assert engine.mark_to_market([priceless], 120.0) == 7.5
+
+
+# --- activation schedule ---------------------------------------------------
+
+
+def _with_activation(cfg: engine.EngineConfig, schedule) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, activation_schedule=tuple(schedule))
+
+
+def test_activation_params_default_to_the_config_scalars() -> None:
+    # An empty schedule is what production always carries: the scalars stay in force.
+    cfg = _cfg(k_act=None, min_margin=0.05)
+
+    assert engine._activation_at(cfg, 0) == engine.ActivationParams(None, 0.05)
+    assert engine._activation_at(cfg, 99) == engine.ActivationParams(None, 0.05)
+
+
+def test_activation_at_returns_the_last_entry_at_or_before_the_bar() -> None:
+    # The schedule is a step function, exactly like the calibration one.
+    second = engine.ActivationParams(None, 0.02)
+    third = engine.ActivationParams(3.0, 0.0)
+    cfg = _with_activation(_cfg(k_act=None, min_margin=0.0), [(2, second), (5, third)])
+
+    assert engine._activation_at(cfg, 0) == engine.ActivationParams(None, 0.0)
+    assert engine._activation_at(cfg, 1) == engine.ActivationParams(None, 0.0)
+    assert engine._activation_at(cfg, 2) is second
+    assert engine._activation_at(cfg, 4) is second
+    assert engine._activation_at(cfg, 5) is third
+    assert engine._activation_at(cfg, 99) is third
+
+
+def test_a_scheduled_reconfiguration_moves_the_activation_barrier() -> None:
+    # min_margin 0 -> 0.05 widens the barrier from 2.0 to 7.0, so the sell waits a bar
+    # longer and exits higher. This is what an operator's PATCH does to a running position:
+    # the config changes, the position is not liquidated.
+    rows = [(100.0, 100.0, 100.0), (103.0, 100.0, 103.0), (108.0, 100.0, 108.0)]
+    cfg = _cfg(k_act=None, min_margin=0.0)
+
+    plain = engine.simulate_operations(_df(rows), cfg)
+    scheduled = engine.simulate_operations(_df(rows), _with_activation(cfg, [(0, engine.ActivationParams(None, 0.05))]))
+
+    # The plain run activates on bar 1, exits at 101, flips to buy and re-enters at 102;
+    # the widened barrier holds the sell open until bar 2 and exits it 5 points higher.
+    assert [op.price for op in plain] == [100.0, 101.0, 102.0]
+    assert [op.price for op in scheduled] == [100.0, 106.0]
