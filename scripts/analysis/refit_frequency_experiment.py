@@ -29,13 +29,16 @@ import statistics
 import time
 from dataclasses import dataclass, field
 
+import pandas as pd
+
 import core.database as db
 import trading.optimizer.search as optimizer
-from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, PAIRS, PARAM_SESSIONS, SLEEPING_INTERVAL
+from core.config import ATR_DESV_LIMIT, ATR_PERIOD, CANDLE_TIMEFRAME, PAIRS, PARAM_SESSIONS, SLEEPING_INTERVAL
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.engine import mark_to_market, simulate_operations
 from trading.market_analyzer import (
     CalibrationInputs,
+    _wilder_atr_from_scratch,
     analyze_structural_noise,
     atr_ratio_percentiles,
     k_values_by_level,
@@ -53,17 +56,51 @@ RECALIB_BARS = max(1, (PARAM_SESSIONS * SLEEPING_INTERVAL) // (CANDLE_TIMEFRAME 
 BARS_PER_DAY = (24 * 60) // CANDLE_TIMEFRAME
 
 FEE = 0.4
-# min_margin reaches 0.10: it is the only ATR-independent activation floor, and the
-# old 0.010 ceiling could not express quiescence (69 ops minimum over 15 months), so
-# buy-and-hold was outside the space. The profitable band sits at 0.030-0.050.
-SPACE = SearchSpace(
-    stop_pcts=GridSpec(0.5, 0.9, 0.1), k_act=GridSpec(0.0, 6.0, 0.5), min_margin=GridSpec(0.0, 0.10, 0.005)
-)
+# The k_act branch is disabled: it won none of the 12 hold-out fits, and defect 5 says why
+# — it is the only branch with no ATR-independent floor, so its barrier collapses exactly
+# when the market is calm. Dropping it hands the whole trial budget to min_margin.
+# min_margin reaches 0.20 because 7 of those 12 winners pinned at 0.090, one step under the
+# previous 0.10 ceiling, and a bound a winner touches is a bound to widen. The step is 0.01
+# rather than 0.005: with one shared stop_pct the space is 21x5, small enough that seeds
+# can agree on a config instead of on a score.
+SPACE = SearchSpace(stop_pcts=GridSpec(0.5, 0.9, 0.1), k_act=None, min_margin=GridSpec(0.0, 0.20, 0.01))
 
 ARMS = ("fijo", "reajuste", "expansivo")
 
 
 # --- patches installed for the whole run -----------------------------------
+
+
+CSV_COLUMNS = ["time", "open", "high", "low", "close", "volume", "count"]
+
+
+def _install_csv_ohlc(paths: list[str]) -> None:
+    """Serve Kraken's OHLCVT files wherever the optimizer would hit the database.
+
+    Lets the experiment run with no database at all. ATR is computed with the bot's own
+    Wilder implementation, exactly as scripts/import_kraken_ohlcvt.py would have stored it.
+    """
+    frames = []
+    for path in paths:
+        part = pd.read_csv(path, header=None, names=CSV_COLUMNS)
+        print(f"  {path}: {len(part)} velas")
+        frames.append(part)
+    df = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["time"]).sort_values("time")
+    df = df.reset_index(drop=True)
+
+    step = CANDLE_TIMEFRAME * 60
+    deltas = df["time"].diff().dropna()
+    holes = deltas[deltas != step]
+    if len(holes):
+        print(f"  AVISO: {len(holes)} saltos en la serie (mayor: {int(holes.max()) // step} velas)")
+
+    df["atr"] = _wilder_atr_from_scratch(df, ATR_PERIOD)
+    df["dtime"] = pd.to_datetime(df["time"], unit="s")
+
+    def loader(pair, timeframe, *a, **kw):
+        return df.copy()
+
+    db.load_ohlc_data = loader
 
 
 def _install_shared_ohlc_cache() -> None:
@@ -441,7 +478,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Walk-forward: re-fit frequency against a single fit and buy-and-hold.")
     ap.add_argument("pairs", nargs="*", help="Pares (por defecto: PAIRS de config).")
     ap.add_argument("--fit-days", type=int, default=30, help="Dias de datos que ve cada ajuste (brazo reajuste).")
-    ap.add_argument("--step-days", type=int, default=7, help="Cada cuantos dias se reajusta y se puntua.")
+    ap.add_argument(
+        "--step-days",
+        type=int,
+        nargs="+",
+        default=[7],
+        help="Cada cuantos dias se reajusta y se puntua. Varios valores comparan cadencias en una sola corrida, "
+        "que es lo que hace que el calendario de calibracion se pague una vez y no una por cadencia.",
+    )
+    ap.add_argument("--csv", nargs="+", default=None, help="Ficheros OHLCVT de Kraken; sin esto se lee de la BD.")
     ap.add_argument("--seeds", type=str, default="42,7,99")
     ap.add_argument("--n-trials", type=int, default=300)
     ap.add_argument("--recalib-bars", type=int, default=RECALIB_BARS)
@@ -456,8 +501,9 @@ def main() -> None:
     pairs = args.pairs or [p for p in PAIRS if p]
     seeds = [int(s) for s in args.seeds.split(",")]
     fit_bars = args.fit_days * BARS_PER_DAY
-    step_bars = args.step_days * BARS_PER_DAY
 
+    if args.csv:
+        _install_csv_ohlc(args.csv)
     _install_shared_ohlc_cache()
     _force_sequential_branches()
     optimizer.build_calibration_inputs = _cached_calibration_inputs
@@ -465,15 +511,20 @@ def main() -> None:
     optimizer._candidate_from_params = _shared_candidate_from_params
 
     print(
-        f"[experimento] pares={pairs} ajuste={args.fit_days}d paso={args.step_days}d "
+        f"[experimento] pares={pairs} ajuste={args.fit_days}d cadencias={args.step_days}d "
         f"semillas={seeds} n_trials={args.n_trials} fee={FEE} recalib_bars={args.recalib_bars}"
     )
     t0 = time.perf_counter()
     for pair in pairs:
         df = _full_frame(pair)
         print(f"\n=== {pair}  {len(df)} velas  {_dtime(pair, 0)[:10]}..{_dtime(pair, len(df) - 1)[:10]} ===")
+        # The points depend only on the pair and the cadence of the *calibration*, not on the
+        # refit cadence, so every --step-days value is served by the same set.
         _set_points(_global_cal_points(pair, args.recalib_bars), pair)
-        summarize(run(pair, fit_bars, step_bars, seeds, args.n_trials), seeds)
+        for step_days in args.step_days:
+            n_seg = (len(df) - fit_bars) // (step_days * BARS_PER_DAY)
+            print(f"\n\n### cadencia {step_days}d — {n_seg} segmentos hacia delante ###")
+            summarize(run(pair, fit_bars, step_days * BARS_PER_DAY, seeds, args.n_trials), seeds)
     print(f"\ntotal {time.perf_counter() - t0:.0f}s")
 
 
