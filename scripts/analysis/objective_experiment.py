@@ -46,7 +46,10 @@ RECALIB_BARS = max(1, (PARAM_SESSIONS * SLEEPING_INTERVAL) // (CANDLE_TIMEFRAME 
 FEE = 0.4
 SPLIT = 0.67
 KACT = GridSpec(0.0, 6.0, 0.5)
-MM = GridSpec(0.0, 0.010, 0.002)
+# min_margin reaches 0.10: it is the only ATR-independent activation floor, and the
+# old 0.010 ceiling could not express quiescence (69 ops minimum over 15 months), so
+# buy-and-hold was outside the space. The profitable band sits at 0.030-0.050.
+MM = GridSpec(0.0, 0.10, 0.005)
 STOPS = GridSpec(0.5, 0.9, 0.1)
 
 SPACE = SearchSpace(stop_pcts=STOPS, k_act=KACT, min_margin=MM)
