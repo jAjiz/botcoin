@@ -1,9 +1,10 @@
 # Optimizer Validation — Design and Study State
 
 Status (2026-09-05): **four defects fixed, one harness defect fixed — and the optimizer's
-selection procedure shown to have no forward predictive value on this data.** The question this document exists to answer is unchanged — *can the optimizer
-produce a config that beats buy-and-hold out of sample?* — but the answer it carried
-before 2026-09-02 rested on measurements that were wrong. Everything PnL-based in the
+selection procedure shown to have no forward predictive value on this data.** The question
+this document exists to answer is unchanged — *can the optimizer produce a config that
+beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested on
+measurements that were wrong. Everything PnL-based in the
 previous version of this file (`optimizer-grid-derivation-design.md`) is retracted; see
 "Retracted".
 
