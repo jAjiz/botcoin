@@ -230,7 +230,8 @@ def _percentile_of(value: float, values: list[float]) -> float:
 # --- reporting --------------------------------------------------------------
 
 
-def report(in_sample, forward, hold: float, top: int) -> None:
+def report(in_sample, forward, hold: float, top: int) -> dict:
+    """Print one decision date's detail and return the row the final summary needs."""
     fwd_by_sig = {_signature(c): (pnl, ops) for c, pnl, ops in forward}
     fwd_pnls = [pnl for _, pnl, _ in forward]
 
@@ -274,19 +275,61 @@ def report(in_sample, forward, hold: float, top: int) -> None:
         "\n  no aporta informacion y un buen resultado es azar; cerca de 90 significa que si predice."
     )
 
-    print("\n\nConfigs concretos de interes:")
-    print(f"\n  {'config':<24}{'FUERA €':>11}{'FUERA BTC':>12}{'percentil':>11}{'ops':>6}")
-    print("  " + "-" * 64)
-    for sig in ("mm=0.040 stop=0.9", "mm=0.050 stop=0.6"):
-        if sig in fwd_by_sig:
-            pnl, ops = fwd_by_sig[sig]
-            print(f"  {sig:<24}{pnl:>10.2f}%{_btc(pnl, hold):>11.2f}%{_percentile_of(pnl, fwd_pnls):>10.0f}%{ops:>6}")
+    best_fwd = max(fwd_pnls)
+    return {
+        "sig": _signature(chosen),
+        "in_pnl": best_in[0][1],
+        "fwd": fwd_by_sig[_signature(chosen)][0],
+        "ops": fwd_by_sig[_signature(chosen)][1],
+        "pct": pct,
+        "top_pcts": [_percentile_of(fwd_by_sig[_signature(c)][0], fwd_pnls) for c, _, _ in best_in[:top]],
+        "median_fwd": statistics.median(fwd_pnls),
+        "best_fwd": best_fwd,
+        "beats_hold": sum(1 for p in fwd_pnls if p > hold),
+        "n": len(fwd_pnls),
+    }
+
+
+def summarize(rows: list[dict]) -> None:
+    """The whole point of several decision dates: is percentile 93 a rule or one draw?"""
+    print("\n\n" + "=" * 96)
+    print("RESUMEN — el ganador in-sample, fecha a fecha, dentro de la distribucion de su tramo")
+    print("=" * 96)
+    print(
+        f"\n  {'decide':<12}{'tramo':>8}{'mantener':>11}{'config elegido':>22}"
+        f"{'FUERA BTC':>12}{'percentil':>11}{'bate hold':>11}"
+    )
+    print("  " + "-" * 87)
+    for r in rows:
+        print(
+            f"  {r['date'][:10]:<12}{f'{r["fwd_days"]:.0f}d':>8}{r['hold']:>10.2f}%{r['sig']:>22}"
+            f"{_btc(r['fwd'], r['hold']):>11.2f}%{r['pct']:>10.0f}%{f'{r["beats_hold"]}/{r["n"]}':>11}"
+        )
+
+    pcts = [r["pct"] for r in rows]
+    all_top = [p for r in rows for p in r["top_pcts"]]
+    print(
+        f"\n  mediana del percentil del ganador: {statistics.median(pcts):.0f}"
+        f"   (peor {min(pcts):.0f}, mejor {max(pcts):.0f}, n={len(pcts)})"
+        f"\n  mediana del percentil de los mejores in-sample de cada fecha: {statistics.median(all_top):.0f}"
+        f"   (n={len(all_top)})"
+        "\n\n  Cerca de 50 significa que el ajuste no aporta informacion sobre el futuro y un buen"
+        "\n  resultado suelto es azar. Cerca de 90 significa que la eleccion in-sample predice."
+    )
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Barrido exhaustivo: el ajuste, ¿predice o es azar?")
     ap.add_argument("files", nargs="+")
-    ap.add_argument("--fit-days", type=int, default=90)
+    ap.add_argument("--fit-days", type=int, default=90, help="Longitud de la ventana de ajuste.")
+    ap.add_argument(
+        "--decide-days",
+        type=int,
+        nargs="+",
+        default=[90, 120, 150, 180, 210, 240, 270, 300, 330],
+        help="Dias desde el inicio del marco en los que se decide; cada uno ajusta con los --fit-days previos "
+        "y se evalua sobre todo lo que queda.",
+    )
     ap.add_argument("--top", type=int, default=10, help="Cuantos ganadores in-sample se detallan.")
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     args = ap.parse_args()
@@ -298,27 +341,40 @@ def main() -> int:
     print(f"\n[calibracion] calendario cada {args.recalib_bars} velas (tarda minutos)")
     _install_calibration_cache(frame, args.recalib_bars)
 
-    fit_bars = args.fit_days * BARS_PER_DAY
-    last_bar = len(frame) - 1
-    decided_at = _dtime(frame, fit_bars - 1)
-    hold = round((float(frame.iloc[last_bar]["close"]) / float(frame.iloc[fit_bars]["close"]) - 1.0) * 100.0, 2)
-
     cands = candidates()
-    print(
-        f"\n[barrido] {len(cands)} configs, sin muestreador y sin semilla"
-        f"\n  ajuste  {_dtime(frame, 0)[:10]}..{decided_at[:10]} ({args.fit_days}d)"
-        f"\n  tramo   {_dtime(frame, fit_bars)[:10]}..{_dtime(frame, last_bar)[:10]} "
-        f"({(last_bar - fit_bars) / BARS_PER_DAY:.0f}d)  mantener={hold:+.2f}%"
-    )
+    last_bar = len(frame) - 1
+    rows = []
 
-    t0 = time.perf_counter()
-    in_sample = sweep(_context(frame, 0, fit_bars - 1, decided_at), cands)
-    print(f"  ventana de ajuste barrida ({time.perf_counter() - t0:.0f}s)", flush=True)
-    t0 = time.perf_counter()
-    forward = sweep(_context(frame, fit_bars, last_bar, decided_at), cands)
-    print(f"  tramo barrido ({time.perf_counter() - t0:.0f}s)", flush=True)
+    for decide_days in args.decide_days:
+        fit_bars = decide_days * BARS_PER_DAY
+        first_fit = fit_bars - args.fit_days * BARS_PER_DAY
+        if first_fit < 0 or fit_bars >= last_bar:
+            print(f"\n[decide {decide_days}d] no cabe en el marco, se omite")
+            continue
 
-    report(in_sample, forward, hold, args.top)
+        decided_at = _dtime(frame, fit_bars - 1)
+        hold = round((float(frame.iloc[last_bar]["close"]) / float(frame.iloc[fit_bars]["close"]) - 1.0) * 100.0, 2)
+        fwd_days = (last_bar - fit_bars) / BARS_PER_DAY
+        print("\n\n" + "#" * 96)
+        print(
+            f"[decide {decide_days}d] {len(cands)} configs, sin muestreador y sin semilla"
+            f"\n  ajuste  {_dtime(frame, first_fit)[:10]}..{decided_at[:10]} ({args.fit_days}d)"
+            f"\n  tramo   {_dtime(frame, fit_bars)[:10]}..{_dtime(frame, last_bar)[:10]} "
+            f"({fwd_days:.0f}d)  mantener={hold:+.2f}%",
+            flush=True,
+        )
+
+        t0 = time.perf_counter()
+        in_sample = sweep(_context(frame, first_fit, fit_bars - 1, decided_at), cands)
+        forward = sweep(_context(frame, fit_bars, last_bar, decided_at), cands)
+        print(f"  barridos en {time.perf_counter() - t0:.0f}s", flush=True)
+
+        row = report(in_sample, forward, hold, args.top)
+        row.update({"date": decided_at, "hold": hold, "fwd_days": fwd_days, "decide_days": decide_days})
+        rows.append(row)
+
+    if rows:
+        summarize(rows)
     return 0
 
 
