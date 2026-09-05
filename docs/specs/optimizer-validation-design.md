@@ -1,7 +1,7 @@
 # Optimizer Validation — Design and Study State
 
-Status (2026-09-05): **four defects fixed, one harness defect fixed, two search questions
-open.** The question this document exists to answer is unchanged — *can the optimizer
+Status (2026-09-05): **four defects fixed, one harness defect fixed — and the optimizer's
+selection procedure shown to have no forward predictive value on this data.** The question this document exists to answer is unchanged — *can the optimizer
 produce a config that beats buy-and-hold out of sample?* — but the answer it carried
 before 2026-09-02 rested on measurements that were wrong. Everything PnL-based in the
 previous version of this file (`optimizer-grid-derivation-design.md`) is retracted; see
@@ -43,15 +43,22 @@ zero and a harness that indexes bars by position should keep reporting it.
 
 ### The single most important number
 
-Over 2025-04-01 .. 2026-03-31 (364 d, hold −23.68 %), **88 of the 105 configs in the
-current space beat buy-and-hold**, and the median config accumulates **+22.3 % BTC**.
+**Selecting a config by its in-sample PnL lands at median percentile 50 of the forward
+distribution — chance.** Measured over nine decision dates by enumerating the whole space.
+See "Fitting does not predict"; everything else here is subordinate to it.
 
-So "beats buy-and-hold" is, in this window, nearly free — 84 % of the space does it,
-including configs picked at random. Every earlier result phrased as "+N points vs hold"
-is therefore much weaker evidence than it reads. **The measure that discriminates is where
-a config lands in the distribution of the whole space, not whether it clears hold.**
+Two supporting facts that change how the older results read:
 
-That is only knowable because the space is now small enough to enumerate (105 configs),
+- Over 2025-04-01 .. 2026-03-31 (364 d, hold −23.68 %), **88 of the 105 configs beat
+  buy-and-hold** and the median config accumulates +22.3 % BTC. So in that window "beats
+  buy-and-hold" is nearly free, and every earlier result phrased as "+N points vs hold" is
+  far weaker evidence than it reads. **Report where a config lands in the distribution of
+  the whole space, not whether it clears hold.**
+- That fraction is itself span-specific: in the later windows only 13, 14 and 18 of 105
+  beat hold. The space is not uniformly good; it is good in some spans and bad in others,
+  and which is which is not knowable in advance from the fit.
+
+Both are only knowable because the space is now small enough to enumerate (105 configs),
 which is itself a consequence of two decisions recorded below.
 
 ### Task 1 — the honest out-of-sample test, re-run (2026-09-04)
@@ -104,20 +111,64 @@ Two controls hold and are worth keeping in any successor harness: `fijo` never r
 its number must come out identical at every cadence (it does), and a zero-op arm must sit
 **one** entry fee below hold rather than one per segment (−0.36, not −0.36 × segments).
 
-### Does fitting predict at all? (2026-09-05)
+### Fitting does not predict (2026-09-05)
+
+**This is the central result, and it invalidates selection by in-sample PnL.**
 
 `scripts/analysis/grid_sweep_holdout.py` enumerates all 105 configs in-sample and again on
-the forward span, reducing the question to a rank. At the 2025-04-01 decision date the
-in-sample winner (`mm=0.040 stop=0.9`) landed at **percentile 93** forward, +38.3 % BTC.
+the forward span, reducing the question to a rank: where does the in-sample winner land in
+the forward distribution? Chance is percentile 50.
 
-So the good hold-out result was **not** luck. But the margin of the procedure is wide: the
-ten best in-sample configs landed at percentiles 93, 44, 25, 89, 99, 23, 82, 47, 75, 71 —
-median 73, mean 65. Four of ten at or below the median. And the landscape is rugged at
-grid resolution: `mm=0.040 stop=0.9` is percentile 93 while its neighbour `mm=0.040
-stop=0.8` is percentile 44.
+| Decide | Forward | Config chosen | BTC forward | Percentile | Beat hold |
+|---|---|---|---|---|---|
+| 2025-04-01 | 364 d | `mm=0.040 s=0.9` | +38.3 % | 93 | 88/105 |
+| 2025-05-01 | 334 d | `mm=0.030 s=0.6` | −1.9 % | 12 | 89/105 |
+| 2025-05-31 | 304 d | `mm=0.040 s=0.8` | +17.2 % | 64 | 71/105 |
+| 2025-06-30 | 274 d | `mm=0.200 s=0.5` | −0.4 % | 35 | 67/105 |
+| 2025-07-30 | 244 d | `mm=0.200 s=0.5` | −0.4 % | 82 | 18/105 |
+| 2025-08-29 | 214 d | `mm=0.150 s=0.5` | −0.4 % | 50 | 53/105 |
+| 2025-09-28 | 184 d | `mm=0.150 s=0.5` | −0.4 % | 46 | 56/105 |
+| 2025-10-28 | 154 d | `mm=0.030 s=0.5` | −6.2 % | 13 | 13/105 |
+| 2025-11-27 | 124 d | `mm=0.080 s=0.9` | −0.4 % | 87 | 14/105 |
 
-**Open:** this is one decision date. The multi-date version of the same test (percentile of
-the in-sample winner at nine decision dates) is what turns it into a claim.
+**Median percentile 50**, spread 12–93. Pooling the ten best in-sample configs at every
+date (n = 90) also gives median 50. The in-sample optimum carries **no information about
+the forward span**: it is a draw.
+
+That retracts the single-date reading recorded here earlier, which took the 93 at
+2025-04-01 as evidence that fitting predicts. It was one draw from a distribution centred
+on chance. It also re-explains the cadence result: `fijo` did not win because fitting once
+is better, it won because that one draw happened to be good.
+
+Three further readings:
+
+- **From 2025-06-30 the winner is quiescent and pinned at the ceiling.** Five of nine dates
+  choose `mm=0.200` (the ceiling itself) or `mm=0.150`, and their forward result is exactly
+  −0.4 % BTC, the zero-operation value. Widening the ceiling from 0.10 to 0.20 did not stop
+  the pinning, it moved it.
+- **"88 of 105 beat hold" is a property of one span, not of the space.** In the later
+  windows only 13, 14 and 18 of 105 beat hold. Quiescence scores percentile 82–87 there —
+  not from skill, but because most configs do worse than holding in those spans.
+- **The landscape is rugged at grid resolution.** `mm=0.040 s=0.9` is percentile 93 while
+  its neighbour `mm=0.040 s=0.8` is percentile 44.
+
+**What remains open is a different question**, and it decides whether anything here is
+deployable: does a config that did well in one window tend to do well in the next? If rank
+persists, selection should target cross-window stability instead of in-sample PnL. If it
+does not, no objective repairs this and the problem is the strategy, not the optimizer.
+`scripts/analysis/config_stability.py` measures it as the rank correlation between disjoint
+consecutive windows.
+
+### An asymmetry worth explaining
+
+A single fit lands at median percentile 50, i.e. chance. Yet twelve sequential re-fits
+(`reajuste`) land *below the bottom quartile* — worse than chance. If each choice were
+merely uninformative, repeated choices should average toward the median, not below it.
+
+So the damage appears to be in **changing** the config, not in choosing it. Two candidate
+mechanisms, untested: a config change mid-position strands the bot between an activation
+barrier it was working toward and a new one, or trailing-window fits select actively bad
+configs rather than random ones. Worth resolving before any reconfiguration feature ships.
 
 ### Still not established
 
@@ -165,18 +216,28 @@ at the final price:
 asset_final / asset_initial = (1 + r_bot) / (1 + r_hold)
 ```
 
-Three consequences, in order of importance:
+What it does change:
 
-- **Buy-and-hold is exactly 0 % in every regime.** The whole "in a falling market anything
-  that leaves the market looks like skill" distortion disappears from the benchmark. This
-  is a cleaner fix for defect 6 than adding a benchmark term to a euro objective.
-- **A config that never trades scores 0 %, not +23.7 points.** The quiescent corner the
-  search kept running to stops being attractive without any extra constraint.
-- **Within one span the two denominations rank configs identically**, since the final price
-  is a constant and the asset figure is a monotone transform of the euro one. So no result
-  in this document is invalidated by the change — only reinterpreted. The ranking *does*
-  differ under the split objective `min(train_pnl, test_pnl)`, where the two halves have
-  different final prices, so this must be implemented rather than merely reported.
+- **Buy-and-hold is exactly 0 % in every regime.** The benchmark stops depending on which
+  way the market went, so results from a bear window and a bull window become directly
+  comparable. This is the reason to adopt it.
+- **Reporting stops flattering the bot.** "−11.7 % but hold was −35.7 %" reads as failure
+  and is a 37 % gain in base asset; "+5.5 %" reads as success and is +38.3 %.
+
+**What it does not change — a correction to an earlier version of this section.** It was
+written here that denominating in the base asset stops the search selecting quiescence.
+That is wrong. The transform is `(1 + r) / (1 + r_hold)`, and within a single fit window
+`r_hold` is **the same constant for every candidate**, so the ranking — and therefore the
+selected config — is identical. Under `train_split = 1.0` the base-asset objective selects
+exactly what the euro objective selects.
+
+Two places it does alter selection, and they are the reasons to implement it rather than
+merely report it: the split objective `min(train_pnl, test_pnl)`, where the halves have
+different holds, and any future objective that compares across windows (see "How to
+continue", where cross-window stability is the candidate).
+
+So no result in this document is invalidated by the change of denomination — only
+reinterpreted.
 
 Proposed shape: a denomination flag on the request (`objective: "EUR" | "BASE"`), not a
 separate mode. The live-bot equivalent is the deferred *Portfolio-vs-Hold Benchmark*
@@ -352,11 +413,21 @@ activates *is* buy-and-hold — the engine's first operation is always the openi
 optimizer's in-sample result is **floored by buy-and-hold**, but only once the space can
 express quiescence, which is defect 3.
 
-Defect 3 was fixed and the search did keep running to the quiescent corner (7 of 12 task-1
-winners at `mm=0.090`, 2–6 ops), so the answer is yes, it needed addressing. **Denominating
-in the base asset addresses it without adding a benchmark term**: holding scores exactly 0
-in any regime and a config that never trades scores 0 rather than +23.7 points. See "The
-objective is asset accumulation". Still to implement as a request flag.
+Defect 3 was fixed and the search kept running to the quiescent corner anyway: 7 of 12
+task-1 winners at `mm=0.090`, then 5 of 9 sweep dates at `mm=0.200` — the ceiling itself —
+with zero forward operations. Widening the bound moved the corner rather than removing it.
+
+**Denominating in the base asset does not fix this**, contrary to what an earlier version
+of this section claimed: within one fit window the divisor is a constant, so the ranking
+and the selected config are unchanged. See "The objective is asset accumulation".
+
+The corner is also not obviously a distortion. In a window where most configs lose more
+than holding, "do nothing" genuinely *is* the in-sample optimum — the honest answer to the
+question asked. The real problem is one level up: that answer does not generalise, because
+**no** in-sample answer generalises here (see "Fitting does not predict"). An objective
+tweak cannot repair a selection procedure with no forward signal. `min_ops` exists and
+would ban the corner, but banning the in-sample optimum is not the same as finding a
+config that works.
 
 ## Harness defects (measurement, not production)
 
@@ -436,11 +507,13 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 In order.
 
-1. **Does fitting predict, at more than one decision date?** `grid_sweep_holdout.py` with
-   `--decide-days 90 120 … 330`. One date gave percentile 93; nine dates turn that into a
-   claim or refute it. A median near 90 means the in-sample choice predicts and the problem
-   is re-fitting; a median near 55 with wide spread means the 93 was a draw. Everything
-   downstream depends on which it is, and it costs one calibration build plus ~95 s a date.
+1. **Does config quality persist between windows?** `scripts/analysis/config_stability.py`.
+   With in-sample selection dead, this is the question that decides whether anything is
+   deployable. If the rank correlation between disjoint consecutive windows is meaningfully
+   positive, then a robust config exists and the search should select for cross-window
+   stability — a different objective, not a tweak of the current one. If it is near zero,
+   no objective repairs this and the problem is the strategy or its parameterisation.
+   Everything below is subordinate to the answer.
 2. **Measure a bull regime.** This is now the largest threat to every conclusion here, and
    the data exists: the `ohlc_data` table holds roughly **111 days more recent than
    2026-03-31**, and `docs/BACKLOG.md` records that stretch as a single bull regime. It
@@ -477,7 +550,8 @@ Kraken's OHLCVT archives directly and need no database at all.
 | Script | What it answers |
 |---|---|
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
-| `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution. No sampler, no seed. Reports euros and base asset. `--csv`. |
+| `scripts/analysis/config_stability.py` | **Does config quality persist?** Sweeps all 105 configs over N disjoint consecutive windows and reports the rank correlation between them. Compares ranks within a window only, never levels across, so the per-window restart cancels. |
+| `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
 | `scripts/analysis/holdout_experiment.py` | Task 1: fit on the first N days, score on one continuous run over the remainder against hold. `--csv`. |
 | `scripts/analysis/refit_frequency_experiment.py` | Reconfiguration cadence, several cadences per run over one shared forward span, each arm on one continuous run. `--csv`. |
 | `scripts/analysis/objective_experiment.py` | 2×2: inner train/test split vs the fit window's own PnL, five free `stop_pcts` vs one shared. **Both factors are now settled — see "Decisions taken" — so this is superseded.** |
