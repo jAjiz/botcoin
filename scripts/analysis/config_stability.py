@@ -14,12 +14,21 @@ and a robust config exists to be found. If no — if a config's rank in one wind
 nothing about its rank in the next — then no objective repairs this, and the problem is the
 strategy or its parameterisation rather than the optimizer.
 
-Method. The frame after a warmup is cut into N **disjoint consecutive** windows, and all
-105 configs are swept on each. Only **ranks within a window** are ever compared, never
-levels across windows. That matters twice over: it removes the market's regime from the
-comparison (every config in a window faces the same market), and it makes the per-window
-restart harmless, since every config pays the same entry fee at the same bar and the
-ranking is untouched.
+Method. Every config runs **once, continuously**, over the whole span after a warmup, and
+that single run is then split into N consecutive periods by the ratio of its compounded
+growth factors at each boundary. Nothing is ever restarted: the position a config holds at
+a boundary carries into the next period, exactly as it does for the live bot.
+
+Only **ranks within a period** are compared, never levels across periods, which removes the
+market's regime from the comparison — every config in a period faces the same market.
+
+An earlier version of this harness swept N *disjoint restarted* windows instead, and that
+was wrong in a way worth recording. A 60-day window never lets a config whose activation
+barrier takes 30-90 days to cross activate at all, so it pins the low-frequency family this
+study cares about to the zero-operation value. That distorts the ranking and not merely the
+levels, since it hits some configs and not others. The tell was two measurements of the
+same data disagreeing: +22.3 % median base-asset gain over 364 continuous days against
+about -0.4 % in every restarted 60-day window.
 
 The headline statistic is the Spearman rank correlation between consecutive windows. Near
 0 means config quality does not persist and there is nothing to select. Near 1 means it
@@ -179,8 +188,38 @@ def _calibration_at(frame: pd.DataFrame, cutoff: str) -> dict:
 # --- sweep ------------------------------------------------------------------
 
 
-def sweep_window(frame: pd.DataFrame, first_bar: int, last_bar: int, cands: list[Candidate]) -> list[float]:
-    """Marked euro return of every config over one window, in candidate order."""
+def _period_returns(ops, bounds: list[tuple[str, float]], final_price: float) -> list[float]:
+    """Split ONE continuous run into per-period returns, without ever restarting it.
+
+    ``bounds`` carries (time, price) at the *start* of periods 2..N; the run's end closes
+    the last period. Each period's return is the ratio of compounded growth factors, the
+    n-way form of ``optimizer._second_half_net`` — a period is what the portfolio did while
+    it ran, and the position it holds at a boundary simply carries across.
+    """
+    cums = [mark_to_market([op for op in ops if str(op.time) < t], price) for t, price in bounds]
+    cums.append(mark_to_market(ops, final_price))
+
+    out, prev = [], 1.0
+    for cum in cums:
+        factor = 1.0 + cum / 100.0
+        out.append(-100.0 if prev <= 0.0 else ((factor / prev) - 1.0) * 100.0)
+        prev = factor
+    return out
+
+
+def sweep_continuous(
+    frame: pd.DataFrame, first_bar: int, last_bar: int, starts: list[int], cands: list[Candidate]
+) -> list[list[float]]:
+    """Every config on ONE run over [first_bar, last_bar], scored per period. [period][config].
+
+    The run is never restarted, so no config is truncated at a boundary and none pays an
+    entry fee it would not have paid. That was the flaw in the first version of this
+    harness: 60-day disjoint windows never let a config whose activation barrier takes
+    30-90 days to cross activate at all, which pushed exactly the low-frequency family this
+    study cares about onto the zero-operation value and distorted the ranking, not just the
+    levels. The tell was that the same data gave a +22.3 % median over 364 continuous days
+    and about -0.4 % in every 60-day restarted window.
+    """
     req = OptimizerRequest(
         pair=PAIR,
         mode="OPTIMIZE",
@@ -192,18 +231,20 @@ def sweep_window(frame: pd.DataFrame, first_bar: int, last_bar: int, cands: list
         seed=0,
         search_space=SPACE,
     )
-    # Calibration frozen at the window's open: no config sees its own window's future.
+    # Calibration frozen at the run's open; the schedule carries the rest, past-only.
     ctx = _build_eval_context(req, _calibration_at(frame, _dtime(frame, first_bar)))
     final_price = float(ctx.df.iloc[-1]["close"])
+    bounds = [(_dtime(frame, b), float(frame.iloc[b]["close"])) for b in starts]
 
-    out = []
+    per_config = []
     for cand in cands:
         cfg = optimizer._build_engine_config(
             PAIR, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT, ctx.calibration_points
         )
         ops = simulate_operations(ctx.df, cfg, fee_rate=FEE / 100.0)
-        out.append(0.0 if not ops else round(mark_to_market(ops, final_price), 2))
-    return out
+        per_config.append([0.0] * (len(bounds) + 1) if not ops else _period_returns(ops, bounds, final_price))
+    # [config][period] -> [period][config]
+    return [list(col) for col in zip(*per_config, strict=True)]
 
 
 def _ranks(values: list[float]) -> list[float]:
@@ -318,25 +359,29 @@ def main() -> int:
     _install_calibration_cache(frame, args.recalib_bars)
 
     warmup = args.warmup_days * BARS_PER_DAY
-    span = len(frame) - warmup
-    width = span // args.windows
+    last_bar = len(frame) - 1
+    width = (last_bar - warmup) // args.windows
+    starts = [warmup + w * width for w in range(args.windows)]
     cands = candidates()
+
+    labels, holds = [], []
+    for w in range(args.windows):
+        first = starts[w]
+        last = starts[w + 1] - 1 if w + 1 < args.windows else last_bar
+        labels.append(f"{_dtime(frame, first)[:10]}..{_dtime(frame, last)[:10]}")
+        holds.append(round((float(frame.iloc[last]["close"]) / float(frame.iloc[first]["close"]) - 1.0) * 100.0, 2))
+
     print(
-        f"\n[barrido] {len(cands)} configs x {args.windows} ventanas disjuntas de "
+        f"\n[barrido] {len(cands)} configs, UNA corrida continua de "
+        f"{(last_bar - warmup) / BARS_PER_DAY:.0f}d partida en {args.windows} periodos de "
         f"{width / BARS_PER_DAY:.0f}d, sin muestreador y sin semilla"
     )
+    for label, hold in zip(labels, holds, strict=True):
+        print(f"  {label}  mantener={hold:+.2f}%")
 
-    results, labels, holds = [], [], []
-    for w in range(args.windows):
-        first = warmup + w * width
-        last = first + width - 1
-        hold = round((float(frame.iloc[last]["close"]) / float(frame.iloc[first]["close"]) - 1.0) * 100.0, 2)
-        label = f"{_dtime(frame, first)[:10]}..{_dtime(frame, last)[:10]}"
-        t0 = time.perf_counter()
-        results.append(sweep_window(frame, first, last, cands))
-        labels.append(label)
-        holds.append(hold)
-        print(f"  {label}  mantener={hold:+.2f}%  ({time.perf_counter() - t0:.0f}s)", flush=True)
+    t0 = time.perf_counter()
+    results = sweep_continuous(frame, warmup, last_bar, starts[1:], cands)
+    print(f"  barrido en {time.perf_counter() - t0:.0f}s", flush=True)
 
     report(cands, results, labels, holds, args.top)
     return 0
