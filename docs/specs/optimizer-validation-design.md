@@ -1,14 +1,23 @@
 # Optimizer Validation — Design and Study State
 
-Status: **two measurement defects fixed and shipped; three search defects open.** The
-question this document exists to answer is unchanged — *can the optimizer produce a
-config that beats buy-and-hold out of sample?* — but the answer it carried before
-2026-09-02 rested on measurements that were wrong. Everything PnL-based in the previous
-version of this file (`optimizer-grid-derivation-design.md`) is retracted; see
+Status (2026-09-05): **four defects fixed, one harness defect fixed, two search questions
+open.** The question this document exists to answer is unchanged — *can the optimizer
+produce a config that beats buy-and-hold out of sample?* — but the answer it carried
+before 2026-09-02 rested on measurements that were wrong. Everything PnL-based in the
+previous version of this file (`optimizer-grid-derivation-design.md`) is retracted; see
 "Retracted".
 
-This file supersedes that one. It is the handoff: read "Where the study stands" and
-"How to continue" first.
+The framing of the question has since changed too, and the change matters more than any
+single number: **the goal is accumulating the base asset, not euros.** See "The objective
+is asset accumulation".
+
+This file supersedes that one. It is the handoff: read "Where the study stands",
+"Decisions taken" and "How to continue" first.
+
+A note on how this document failed once already: it recorded open defects and questions
+faithfully but **did not record decisions that had been taken**, so two of them were lost
+and later contradicted by work done from this file alone. "Decisions taken" exists to stop
+that recurring. Add to it whenever something is settled.
 
 ## The question
 
@@ -20,43 +29,162 @@ the same window**, measured out of sample.
 Everything below is XBTEUR, 15-minute candles, **0.4 % fee per leg** (the bot's limit
 orders usually fill as maker; the 0.8 % taker figure used earlier overstated the cost by
 2×). The window with continuous data is **2025-01-01 .. 2026-03-31** (43 610 simulated
-bars; 54 297 in `ohlc_data` counting pre-2025 history used for calibration). It is bearish
-end to end: **buy-and-hold returns −35.1 %** over the full window.
+bars). It is bearish end to end: **buy-and-hold returns −35.1 %** over the full window.
+
+Two corrections to how that window used to be described here. The ~10 700 candles in
+`ohlc_data` beyond those 43 610 are **more recent than 2026-03-31, not older than 2025** —
+about 111 days, separated from the frame by a gap, which is why the frame ends there. They
+are the bull-regime data task 2 needs. And the frame is not perfectly continuous: it holds
+**8 gaps, the largest 27 candles**. That is ~50 bars in 43 610, negligible for
+position-indexed arithmetic (a "90-day" boundary lands a few hours late), but it is not
+zero and a harness that indexes bars by position should keep reporting it.
 
 ## Where the study stands
 
-**Established.** With the two fixes below applied, in a single continuous run over the
-full window, a band of conservative configs beats buy-and-hold by a wide margin, and the
-optimizer finds one when the search space can express it:
+### The single most important number
 
-| Search space | Best in-sample candidate | Euro result | vs hold | ops | seed agreement |
-|---|---|---|---|---|---|
-| `min_margin` ≤ 0.010 (the old grid) | `mm=0.006 s=0.9` | **−58.6 %** | −23.6 | 91 | 3/3 |
-| `min_margin` ≤ 0.10 | `mm=0.035 s=0.9` | **+34.3 %** | +69.3 | 29 | 3/3 |
+Over 2025-04-01 .. 2026-03-31 (364 d, hold −23.68 %), **88 of the 105 configs in the
+current space beat buy-and-hold**, and the median config accumulates **+22.3 % BTC**.
 
-**Not established.** No out-of-sample result is trustworthy yet. The honest test — fit on
-the first N days only, then run continuously over the rest — was measured *before* the
-objective was corrected, so its **scoring is valid but its config selection is not**. It
-must be re-run (task 1 under "How to continue"). For the record, what it produced under
-the broken objective:
+So "beats buy-and-hold" is, in this window, nearly free — 84 % of the space does it,
+including configs picked at random. Every earlier result phrased as "+N points vs hold"
+is therefore much weaker evidence than it reads. **The measure that discriminates is where
+a config lands in the distribution of the whole space, not whether it clears hold.**
 
-| Fit window | Config chosen | ops | Euro result | Hold | vs hold |
-|---|---|---|---|---|---|
-| 60 d | `mm=0.090` (3/3 seeds) | 3 | −21.0 .. −21.9 % | −29.3 % | **+7.3 .. +8.3** |
-| 120 d | `k_act=9` / `k_act=11` | 37–59 | −24.1 .. −44.8 % | −30.2 % | −14.6 .. +6.1 |
-| 180 d | `k_act=9` / `k_act=11` | 21–37 | −28.1 .. −46.8 % | −35.9 % | −10.8 .. +7.7 |
-| 240 d | `k_act=11` / `mm=0.090` | 3–17 | −27.5 .. −31.1 % | −37.6 % | +6.5 .. +10.1 |
+That is only knowable because the space is now small enough to enumerate (105 configs),
+which is itself a consequence of two decisions recorded below.
 
-Two things to read from it. Longer fit windows are **not** better: 120 d and 180 d push
-the optimizer into the `k_act` branch, which trades 3–10× more and loses to hold on two
-seeds of three. And every honest pick sits near the top of the widened `min_margin` grid
-(0.090 of 0.10) — the search runs away from the profitable band (0.030–0.050) toward
-"trade as little as possible". Whether the corrected objective still does that is exactly
-what task 1 measures.
+### Task 1 — the honest out-of-sample test, re-run (2026-09-04)
+
+Fit on the first N days, score the winner on **one continuous run** over the entire
+remainder, in euros, against hold over the same span. `scripts/analysis/holdout_experiment.py`.
+Five free `stop_pcts`, both branches, `min_margin` ≤ 0.10, 3 seeds:
+
+| Fit window | Median result | Hold | vs hold | Seeds beating hold |
+|---|---|---|---|---|
+| 60 d | −18.3 % | −29.0 % | +10.7 | 3/3 |
+| 120 d | −24.0 % | −29.9 % | +5.9 | 3/3 |
+| 180 d | −11.7 % | −35.7 % | +23.9 | 3/3 |
+| 240 d | −30.9 % | −37.4 % | +6.5 | 3/3 |
+
+**12 of 12 beat hold**, which retracts the earlier "no optimized config generalizes".
+Read it against the distribution above, though: beating hold is what most of the space
+does. What this table does establish decisively is **defect 3** — every one of the 12
+winners chose `min_margin` between 0.030 and 0.090, so **not one of them existed inside the
+old ≤ 0.010 grid**. The search space, not the market, was the binding constraint.
+
+Two weaknesses, both since addressed: 7 of 12 winners pinned at `mm=0.090`, one step under
+the ceiling; and seed variance at 60 d spanned 51 points (−22.6, −18.3, +28.8) with only
+2–6 ops for the pinned configs, so the "profitable" picks were mostly quiescence.
+
+### Reconfiguration cadence (2026-09-05)
+
+`scripts/analysis/refit_frequency_experiment.py`, one continuous run per arm over a single
+shared forward span (2025-04-01 .. 2026-03-31, hold −23.68 %), shared `stop_pct`, no
+`k_act` branch, `min_margin` ≤ 0.20:
+
+| Cadence | fijo | expansivo | reajuste |
+|---|---|---|---|
+| 30 d | **+5.51 %** | +1.43 % | −21.84 % |
+| 60 d | **+5.51 %** | +0.41 % | −16.87 % |
+| 90 d | **+5.51 %** | −3.80 % | −16.88 % |
+
+In BTC: fijo **+38.3 %**, expansivo +26 to +33 %, reajuste +2.4 to +8.9 %, hold 0 %.
+
+`fijo > expansivo > reajuste` in all nine comparisons. Placed against the distribution of
+the whole space, the ordering says something sharper than "don't reconfigure":
+
+- fitting once lands at **percentile 93**
+- re-fitting on all history lands around the **upper quartile**
+- re-fitting on a trailing 90-day window lands **below the bottom quartile** — worse than
+  75 % of configs drawn at random. Frequent re-fitting on recent data destroys value; it is
+  not merely suboptimal.
+
+Two controls hold and are worth keeping in any successor harness: `fijo` never re-fits, so
+its number must come out identical at every cadence (it does), and a zero-op arm must sit
+**one** entry fee below hold rather than one per segment (−0.36, not −0.36 × segments).
+
+### Does fitting predict at all? (2026-09-05)
+
+`scripts/analysis/grid_sweep_holdout.py` enumerates all 105 configs in-sample and again on
+the forward span, reducing the question to a rank. At the 2025-04-01 decision date the
+in-sample winner (`mm=0.040 stop=0.9`) landed at **percentile 93** forward, +38.3 % BTC.
+
+So the good hold-out result was **not** luck. But the margin of the procedure is wide: the
+ten best in-sample configs landed at percentiles 93, 44, 25, 89, 99, 23, 82, 47, 75, 71 —
+median 73, mean 65. Four of ten at or below the median. And the landscape is rugged at
+grid resolution: `mm=0.040 stop=0.9` is percentile 93 while its neighbour `mm=0.040
+stop=0.8` is percentile 44.
+
+**Open:** this is one decision date. The multi-date version of the same test (percentile of
+the in-sample winner at nine decision dates) is what turns it into a claim.
+
+### Still not established
+
+- **One regime.** Every number here comes from one 15-month bear market on one pair. In a
+  falling market an alternating BTC/cash strategy accumulates the base asset almost by
+  construction — every round trip that sells before a drop and rebuys lower adds BTC. The
+  median config sitting at +22.3 % BTC is that, not skill. A sustained rally should invert
+  it, and until that is measured nothing here is safe to deploy.
+- **One pair.** XBTEUR only.
+
+## Decisions taken
+
+Settled choices, with the reason. **Add to this list whenever something is settled** — two
+of these were decided in earlier sessions, were never written here, and were consequently
+contradicted by later work that had only this document to go on.
+
+- **One `stop_pct` shared by all five volatility levels, not five searched independently.**
+  Reduces the space from 6⁵ to 6 per branch and buys reliability. The evidence since: at
+  the operation counts the winning configs actually produce (2–14 ops over a year), a run
+  exercises at most two or three levels, so the other levels' `stop_pct` values are
+  **unidentified** — the search fills them with noise and the selection then treats that
+  noise as signal. Restated: the "harness defect" below claiming five-free is the truth and
+  one-shared understates search difficulty is **wrong**, and is retained only as a record.
+- **`train_split = 1.0` — no inner train/test split when fitting.** A window that
+  influences which config is selected is not a test window, it is part of training. The
+  honest test is the forward span, not an inner slice. The consequence to keep in view is
+  that the selection is then a pure in-sample optimum with no internal guard, which is
+  exactly why "does fitting predict?" has to be measured directly.
+- **The `k_act` branch is disabled in the experiments.** It won none of the 12 hold-out
+  fits, and defect 5 explains structurally why. Dropping it hands the whole trial budget to
+  `min_margin`. This is an experiment scope decision, not the strategy change in defect 5.
+- **Scoring is one continuous run, never restarted segments.** See the harness defect, now
+  fixed in the engine.
+- **The base asset, not euros, is the objective.** See the next section.
+
+## The objective is asset accumulation
+
+The bot's purpose is to end holding **more of the base asset**, not more euros. This was
+not previously written down, and it changes what the optimizer should maximize.
+
+Because the portfolio is either base asset or cash, and any cash left at the end is valued
+at the final price:
+
+```
+asset_final / asset_initial = (1 + r_bot) / (1 + r_hold)
+```
+
+Three consequences, in order of importance:
+
+- **Buy-and-hold is exactly 0 % in every regime.** The whole "in a falling market anything
+  that leaves the market looks like skill" distortion disappears from the benchmark. This
+  is a cleaner fix for defect 6 than adding a benchmark term to a euro objective.
+- **A config that never trades scores 0 %, not +23.7 points.** The quiescent corner the
+  search kept running to stops being attractive without any extra constraint.
+- **Within one span the two denominations rank configs identically**, since the final price
+  is a constant and the asset figure is a monotone transform of the euro one. So no result
+  in this document is invalidated by the change — only reinterpreted. The ranking *does*
+  differ under the split objective `min(train_pnl, test_pnl)`, where the two halves have
+  different final prices, so this must be implemented rather than merely reported.
+
+Proposed shape: a denomination flag on the request (`objective: "EUR" | "BASE"`), not a
+separate mode. The live-bot equivalent is the deferred *Portfolio-vs-Hold Benchmark*
+backlog card, which needs a portfolio value time series that is not recorded today.
 
 ## The six wrong assumptions
 
-Ordered by size of effect. The first two are fixed and shipped; the rest are open.
+Ordered by size of effect. Four are fixed; two remain.
 
 ### 1. A cash leg was paid as if the bot held a short — FIXED (`3ff283b`)
 
@@ -127,7 +255,7 @@ Two consequences to carry forward:
   is a real property of the strategy, and it caps how much confidence any single number
   here deserves.
 
-### 3. The `min_margin` ceiling made buy-and-hold unreachable — OPEN
+### 3. The `min_margin` ceiling made buy-and-hold unreachable — FIXED (`bef291c`)
 
 This was the binding constraint on the whole study, and the reason every earlier
 conclusion pointed the wrong way.
@@ -148,9 +276,13 @@ term sits at a near-constant **1.8 %–2.9 %** of price at every level. Adding 1
 3–4 % barrier, which BTC crosses about once every 6.5 days on 15-minute candles. The
 profitable band needs 7–8 %.
 
-**Action:** raise the `min_margin` grid ceiling to at least 0.10.
+**Fixed**, and confirmed to have been the binding constraint: all 12 task-1 winners chose
+`min_margin` in 0.030–0.090, none of which the old grid contained. The ceiling went to 0.10
+first, then to **0.20** when 7 of those 12 pinned at 0.090; the step is **0.01**, since with
+a shared `stop_pct` the space is 21 × 5 and finer resolution only makes seeds disagree.
+Winners have since moved off the boundary (0.040–0.050), so 0.20 currently holds.
 
-### 4. `stop_pct = 1.0` is a sample maximum, not a percentile — OPEN
+### 4. `stop_pct = 1.0` is a sample maximum, not a percentile — FIXED
 
 `calculate_noise_between_pivots` stores **one K value per trend leg per level**: the
 deepest retracement of that leg. `stop_pct` is a percentile over that sample, and the
@@ -170,8 +302,11 @@ sample maximum grows with the length of history — so what `1.0` means drifts a
 accumulates. This produced a 35-point swing between `s=0.9` and `s=1.0` in the sweep and
 made a two-cell region look like a profitable plateau when it was an artefact.
 
-**Action:** cap the `stop_pcts` grid at 0.9. The old floor of 0.5 is untouched by this
-finding and the argument for it still stands.
+**Fixed:** every harness caps `stop_pcts` at 0.9. The floor of 0.5 is untouched by this
+finding and stands — below roughly 0.5 the stop sits under the median retracement already
+observed, so ordinary noise takes it out by construction. That floor argument is reasoning,
+not measurement; probing it is a cheap separate sweep, and must not be folded into a run
+that is varying something else.
 
 ### 5. The two activation branches are structurally disjoint — OPEN
 
@@ -205,7 +340,7 @@ floor.
 strategy change, not a refactor — it changes what the live bot can be configured to do,
 and `activation_distance` is mirrored in `positions_manager`.
 
-### 6. The objective is absolute PnL, never relative to the benchmark — OPEN, low priority
+### 6. The objective is absolute PnL, never relative to the benchmark — RESOLVED IN PRINCIPLE, unimplemented
 
 `robust_pnl = min(train_pnl, test_pnl)` over `mark_to_market`. Buy-and-hold appears
 nowhere. In a trending window this selects for exposure rather than skill: in this bearish
@@ -215,8 +350,13 @@ It matters less than it looks, because `min_ops` defaults to 0 and a config that
 activates *is* buy-and-hold — the engine's first operation is always the opening buy, and
 `mm=0.500` scores exactly −35.07 %, the same as hold minus one entry fee. So the
 optimizer's in-sample result is **floored by buy-and-hold**, but only once the space can
-express quiescence, which is defect 3. Fix 3 first and re-measure before deciding whether
-a benchmark-relative objective is still needed.
+express quiescence, which is defect 3.
+
+Defect 3 was fixed and the search did keep running to the quiescent corner (7 of 12 task-1
+winners at `mm=0.090`, 2–6 ops), so the answer is yes, it needed addressing. **Denominating
+in the base asset addresses it without adding a benchmark term**: holding scores exactly 0
+in any regime and a config that never trades scores 0 rather than +23.7 points. See "The
+objective is asset accumulation". Still to implement as a request flag.
 
 ## Harness defects (measurement, not production)
 
@@ -232,6 +372,19 @@ and the **order**: `mm=0.050 s=0.9` scored +10.2 % chained and +33.6 % continuou
 `mm=0.030 s=1.0` scored +24.9 % chained and +15.3 % continuous. **Score a candidate on one
 continuous run over the whole forward span.**
 
+**FIXED (`f130a52`, `afe7077`).** The restart was never a harness choice: `EngineConfig`
+held `min_margin` as a scalar and `simulate_operations` always starts flat, so changing a
+config mid-history *meant* calling it again. `EngineConfig.activation_schedule` now carries
+`(bar, ActivationParams(k_act, min_margin))` as a step function, the way
+`calibration_schedule` already carried the calibration — a new `stop_pct` needed nothing,
+since the scheduled `PairCalibration` values are what the percentile produces, but
+`min_margin` multiplies each bar's price where `k_stop` multiplies its ATR and cannot be
+folded in. Production sets neither schedule, so the live path is unchanged.
+
+This mattered most for the cadence question specifically: the number of restarts scales
+with the cadence under test, so the artifact landed on the variable being measured and
+penalised exactly the arm that reconfigures most.
+
 **The in-tree schedule anchors to the window, production anchors to its own clock.**
 `build_calibration_inputs` places its points at multiples of `recalib_bars` from the
 *window's* first bar. The live bot recalibrates on a fixed cadence regardless of where an
@@ -240,11 +393,21 @@ job they do not. `scripts/analysis/refit_frequency_experiment.py` anchors to the
 which is the faithful choice. **Open: decide whether to move the in-tree builder to a
 frame-anchored grid.** Given defect 2's sensitivity measurement, this is not cosmetic.
 
-**The harnesses collapse the five per-level `stop_pcts` into one shared value.** The real
-`SearchSpace` searches five independently: 6⁵ = 7 776 combinations per branch, and
-`_quantile_ceiled` rounds K to 0.1 so many are identical — a coarse step landscape with
-large flat plateaus, poor terrain for TPE. Results measured with one shared stop
-**understate the search difficulty the deployed optimizer faces.**
+**~~The harnesses collapse the five per-level `stop_pcts` into one shared value.~~** —
+**WITHDRAWN.** This was recorded as a defect because the deployed `SearchSpace` searches
+five independently (6⁵ = 7 776 per branch), so a shared stop looked like it understated the
+search difficulty. That inverts the actual decision, which is that five free values is the
+thing to fix: a run producing 2–14 operations exercises two or three volatility levels, so
+the rest are unidentified and the search fills them with noise. Kept here as a record of
+how the decision was lost. See "Decisions taken".
+
+The consequence is worth stating in its own right: **with one shared stop and no `k_act`
+branch the space is 21 × 5 = 105 configs, small enough to enumerate.** That makes the
+sampler, the seeds, and AUTO's convergence machinery unnecessary for these experiments —
+105 deterministic evaluations replaced 240 (3 seeds × 80 trials) that did not even cover
+the space. If shared stops also ship to production, the same collapse applies to the
+deployed optimizer, and Optuna/TPE/AUTO stop having a function there too. That is a
+significant architectural simplification and has not yet been decided.
 
 ## Retracted from the previous version of this document
 
@@ -271,49 +434,66 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-In order. Tasks 1 and 2 are cheap and should come first.
+In order.
 
-1. **Re-run the honest out-of-sample test with the corrected objective.** Fit on the first
-   N days only, then score the winner on **one continuous run** over the remainder, in
-   euros. Vary N over 60/120/180/240 d and at least 3 seeds. This is the number the whole
-   study is for, and the table above is the pre-fix version of it.
-2. **Widen the grids** — `min_margin` ceiling to 0.10, `stop_pcts` ceiling down to 0.9 —
-   and repeat task 1. Defects 3 and 4.
-3. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
+1. **Does fitting predict, at more than one decision date?** `grid_sweep_holdout.py` with
+   `--decide-days 90 120 … 330`. One date gave percentile 93; nine dates turn that into a
+   claim or refute it. A median near 90 means the in-sample choice predicts and the problem
+   is re-fitting; a median near 55 with wide spread means the 93 was a draw. Everything
+   downstream depends on which it is, and it costs one calibration build plus ~95 s a date.
+2. **Measure a bull regime.** This is now the largest threat to every conclusion here, and
+   the data exists: the `ohlc_data` table holds roughly **111 days more recent than
+   2026-03-31**, and `docs/BACKLOG.md` records that stretch as a single bull regime. It
+   cannot extend the continuous frame — there is a gap between it and 2026-03-31 — but it
+   works as a separate window. In a rally an alternating strategy should *destroy* base
+   asset, since selling into a rise and rebuying higher subtracts. Importing 2023–2024 with
+   `scripts/import_kraken_ohlcvt.py` gives a longer one.
+3. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
+   Needed for real once the objective has an inner split again, and it is what turns defect
+   6 from a known distortion into a fixed one.
+4. **Decide whether shared `stop_pct` ships to production.** If it does, the deployed space
+   becomes enumerable and Optuna/TPE/seeds/AUTO can be removed — a large simplification of
+   `trading/optimizer/`. That decision needs its own spec.
+5. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
    change: it touches `activation_distance` in both `trading/engine.py` and
-   `trading/positions_manager.py`, and needs its own validation.
-4. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
+   `trading/positions_manager.py`, and needs its own validation. Lower priority now that
+   `k_act` is out of the experiments, but it is still the reason the profitable region only
+   exists in one branch.
+6. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
    window-anchored is what ships.
-5. **Add a benchmark-relative objective** as a request option, if task 1 still shows the
-   search running to the quiescent corner (defect 6).
-6. **Import 2023–2024 history** with `scripts/import_kraken_ohlcvt.py` and repeat in a
-   bull window. Every measurement here comes from one 15-month bear market. A bot that
-   leaves the market must lose to hold in a sustained rally, and the size of that loss is
-   unmeasured.
 
 Do **not** revisit `MINIMUM_CHANGE_PCT` or chase pivot density; neither addresses any
-defect above.
+defect above. Do **not** report a result as "beats buy-and-hold" without saying what
+fraction of the whole space also beats it — in the 2025-04..2026-03 window that fraction is
+88/105, and the phrase carries almost no information there.
 
 ## Tools
 
-All read-only, all require `PYTHONPATH=.` and DB env vars.
+All read-only, all require `PYTHONPATH=.`. Everything under `scripts/analysis/` is
+**throwaway study tooling, not project code**: it exists to answer the questions in this
+document and can be deleted once they are answered. The harnesses that take `--csv` read
+Kraken's OHLCVT archives directly and need no database at all.
 
 | Script | What it answers |
 |---|---|
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
-| `scripts/analysis/refit_frequency_experiment.py` | Shared harness — bounded frames, memoised OHLC, one shared `stop_pct`, frame-anchored calibration point cache. Answers whether re-fitting often beats fitting once. |
-| `scripts/analysis/objective_experiment.py` | 2×2: inner train/test split vs the fit window's own PnL, five free `stop_pcts` vs one shared. |
+| `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution. No sampler, no seed. Reports euros and base asset. `--csv`. |
+| `scripts/analysis/holdout_experiment.py` | Task 1: fit on the first N days, score on one continuous run over the remainder against hold. `--csv`. |
+| `scripts/analysis/refit_frequency_experiment.py` | Reconfiguration cadence, several cadences per run over one shared forward span, each arm on one continuous run. `--csv`. |
+| `scripts/analysis/objective_experiment.py` | 2×2: inner train/test split vs the fit window's own PnL, five free `stop_pcts` vs one shared. **Both factors are now settled — see "Decisions taken" — so this is superseded.** |
 | `scripts/analysis/regime_filter_screen.py` | Choppiness Index as a whole-window overlay, for the Trend/Chop backlog card. |
 | `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price). |
 | `scripts/analysis/grid_validation.py` | Edge-pinning, coverage, AUTO convergence. **Its `walkforward` mode uses the segment-restart method — see Harness defects; do not trust its chained figures.** |
 
-Both point caches exist because the in-tree `build_calibration_inputs` recomputes on every
-call, and a schedule over a long window costs minutes. `refit_frequency_experiment.py`
-computes the pair's points once and slices them per window (frame-anchored);
-`regime_filter_screen.py` shares that one. `objective_experiment.py` memoizes per window
-instead, since every arm and every seed of a transition re-fits the same window —
-measured at 76 s for the first arm and 3 s for the next three. Both are installed by
-monkeypatching `optimizer.build_calibration_inputs`. **A new harness needs one of them.**
+The point caches exist because the in-tree `build_calibration_inputs` recomputes on every
+call, and a schedule over a long window costs minutes — 280–640 s for the 15-month XBTEUR
+frame (909 points), varying with machine load. `refit_frequency_experiment.py`,
+`holdout_experiment.py` and `grid_sweep_holdout.py` each compute the frame's points once
+and slice them per window (frame-anchored); `regime_filter_screen.py` shares the first.
+`objective_experiment.py` memoizes per window instead, since every arm and every seed of a
+transition re-fits the same window. All are installed by monkeypatching
+`optimizer.build_calibration_inputs`. **A new harness needs one of them**, and should
+print progress — a silent six-minute build looks like a hang.
 
 ## Activation math (reference)
 
@@ -335,8 +515,14 @@ that description is accurate only until the first re-anchor.
 
 ## Guardrails
 
-- The only figure that decides anything is the **euro portfolio value against
-  buy-and-hold**, out of sample, on one continuous run.
+- The figure that decides is the **base asset accumulated against buy-and-hold**, out of
+  sample, on one continuous run. Euros are a denomination, not the goal.
+- **"Beats buy-and-hold" is not a result on its own.** Report where a config lands in the
+  distribution of the whole search space over the same span. In the 2025-04..2026-03 window
+  88 of 105 configs beat hold, so clearing that bar says almost nothing.
+- **Write down decisions, not only defects.** This document lost two settled decisions
+  (shared `stop_pct`, `train_split = 1.0`) because it recorded only open questions, and
+  both were later contradicted by work done from it. "Decisions taken" is the place.
 - The optimizer must simulate the bot that is deployed. Two of the six defects above were
   divergences between the simulator and production, and both reordered candidates.
 - A search bound that a winning candidate touches is a bound to widen and re-measure, not
