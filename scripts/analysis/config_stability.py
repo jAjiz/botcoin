@@ -411,6 +411,55 @@ def report(
     )
 
 
+def report_oracle(results: list[list[float]], labels: list[str], holds: list[float], rally_pct: float) -> None:
+    """Upper bound on any trend filter: suspend the bot during the periods that DID rally.
+
+    This is deliberate cheating — the label uses the period's realised return, which no
+    detector can know in advance. The point is the bound: if a perfect oracle cannot beat
+    holding, no achievable detector will, and the direction is dead before anything is built.
+
+    The overlay replaces a rallying period's result with hold's (0 % base asset) rather than
+    re-simulating with exits suspended. That **flatters** the oracle: a bot sitting in cash
+    when a rally opens would not track hold by declining to sell. So a failure here is
+    conclusive, while a success only licenses the real measurement, which needs the engine
+    to carry a no-exit mask.
+    """
+    rally = [w for w in range(len(results)) if holds[w] > rally_pct]
+    print("\n\n" + "=" * 100)
+    print("ORACULO — cota superior de cualquier filtro de tendencia")
+    print("=" * 100)
+    print(f"\n  periodos alcistas (hold > {rally_pct:+.1f}%): {len(rally)} de {len(results)}")
+    for w in rally:
+        print(f"    {labels[w]}  hold={holds[w]:+.1f}%")
+    if not rally:
+        print("  Ninguno supera el umbral: el oraculo no tiene nada que bloquear.")
+        return
+
+    def total(idx: int, skip: set) -> float:
+        factor = 1.0
+        for w in range(len(results)):
+            if w in skip:
+                continue
+            factor *= 1.0 + _btc(results[w][idx], holds[w]) / 100.0
+        return (factor - 1.0) * 100.0
+
+    n_cfg = len(results[0])
+    plain = [total(i, set()) for i in range(n_cfg)]
+    gated = [total(i, set(rally)) for i in range(n_cfg)]
+
+    print(f"\n  {'':<12}{'mediana':>10}{'mejor':>10}{'peor':>10}{'bate hold':>12}")
+    print("  " + "-" * 54)
+    for name, vals in (("sin filtro", plain), ("con oraculo", gated)):
+        beats = sum(1 for v in vals if v > 0)
+        print(
+            f"  {name:<12}{statistics.median(vals):>9.1f}%{max(vals):>9.1f}%{min(vals):>9.1f}%{f'{beats}/{n_cfg}':>12}"
+        )
+    print(
+        "\n  Acumulacion de activo sobre todo el tramo; mantener es 0 % por construccion."
+        f"\n  El oraculo mueve la mediana {statistics.median(gated) - statistics.median(plain):+.1f} puntos."
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="¿Persiste la calidad de un config entre ventanas?")
     ap.add_argument("files", nargs="+")
@@ -418,6 +467,7 @@ def main() -> int:
     ap.add_argument("--windows", type=int, default=6, help="Ventanas disjuntas consecutivas.")
     ap.add_argument("--top", type=int, default=12)
     ap.add_argument("--ci-days", type=int, default=30, help="Dias que mira el indice de chop, siempre pasados.")
+    ap.add_argument("--rally-pct", type=float, default=5.0, help="Hold por encima de esto marca periodo alcista.")
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     args = ap.parse_args()
 
@@ -461,6 +511,7 @@ def main() -> int:
     print(f"  barrido en {time.perf_counter() - t0:.0f}s", flush=True)
 
     report(cands, results, labels, holds, args.top, cis)
+    report_oracle(results, labels, holds, args.rally_pct)
     return 0
 
 
