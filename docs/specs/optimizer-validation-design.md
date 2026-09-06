@@ -1,8 +1,8 @@
 # Optimizer Validation — Design and Study State
 
-Status (2026-09-06): **four defects fixed, one harness defect fixed — the optimizer's
-selection procedure shown to have no forward predictive value, and the strategy shown to
-lose base asset in a rally, which the frame already contains.** The question
+Status (2026-09-06): **four defects fixed, one harness defect fixed — and three avenues
+closed by measurement: config selection carries no forward signal, reconfiguration makes it
+worse, and gating the bot through rallies pays +0.6 points even with perfect hindsight.** The question
 this document exists to answer is unchanged — *can the optimizer produce a config that
 beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested on
 measurements that were wrong. Everything PnL-based in the
@@ -267,20 +267,59 @@ All near zero, all in the *opposite* sign to the backlog card's retracted claim.
 none is significant, but there is no evidence here that CI anticipates the phase. The phase
 matters enormously; this detector does not detect it.
 
-### Divergence: the engine cannot model `hodl_pct`
+### Trend filtering is dead (2026-09-06)
 
-`trading/inventory_manager.get_hodl_value` lets production keep a fraction of the target
-allocation permanently in the asset, never sold. `trading/engine.py` has no concept of it and
-trades the whole position in and out.
+The rally is where the strategy loses, so the next question was whether blocking the bot
+during up-trends could pay. It was bounded before it was built, and the bound says no.
 
-Today this is harmless — `XBTEUR_HODL_PCT=0`, so simulator and production agree — but it is a
-latent version of the same defect class as 1 and 2: the moment an operator sets it non-zero,
-every backtest and optimizer result silently describes a bot that is not the one running.
+`EngineConfig.no_sell_bars` suppresses the *sell* side on chosen bars: in an up-trend the
+damage is leaving the asset and rebuying higher, so the exit is the harmful action, while a
+re-entry is what gets the bot back in and must never be gated. The stop keeps trailing while
+masked, so the mask defers an exit rather than cancelling it. Empty in production.
 
-It also matters for the open question above. A hodl fraction is exactly the partial-allocation
-cushion that would reduce rally damage *without* predicting the regime, at the cost of some
-downtrend accumulation. It is the one lever of this kind that already exists in production,
-and the simulator cannot evaluate it.
+Three variants, same continuous run, 105 configs, base asset accumulated over
+2025-04-01 .. 2026-03-31:
+
+| Variant | Median | Best | Worst | Beat hold | Bars gated |
+|---|---|---|---|---|---|
+| ungated | +22.3 % | +52.7 % | −89.1 % | 88/105 | 0 |
+| **oracle (realised rallies)** | **+22.9 %** | +52.2 % | −77.1 % | 96/105 | 25 % |
+| detector (trailing 30 d > 0) | +22.4 % | +60.6 % | −63.7 % | 90/105 | 44 % |
+
+**A gate that knows in advance exactly which periods will rally adds +0.6 points to the
+median.** The causal detector adds +0.1. There is no prize to claim, so no classifier is
+worth building — which is what the oracle was for.
+
+Both gates do compress the distribution: the worst config improves from −89.1 % to −77.1 %
+and −63.7 %, and the share beating hold rises to 96/105. That is variance reduction, not
+edge, measured on one span, and it should not be read as a result.
+
+**A methodological correction, and it is the important part.** A first version of this
+oracle worked as an overlay: it replaced a rallying period's result with hold's (0 %) rather
+than re-simulating with exits suspended. That version reported **+21.9 points**. The honest
+re-simulation reports **+0.6**. The overlay was not a bound at all — substituting a result
+is not the same quantity as simulating the intervention, because the intervention changes
+what the bot holds *after* the gated stretch, and everything downstream depends on that.
+
+Scope of the negative result: it says suppressing *exits* during rallies does not pay. A
+stronger intervention — forcing full allocation during a rally — is untested, but that is no
+longer a filter on this strategy, it is market timing, and the regime is not predictable
+here anyway.
+
+### The `hodl_pct` question, closed
+
+An earlier version of this file proposed teaching the engine `hodl_pct` and called it "the
+one lever that softens a rally without predicting it". That was wrong, and the reason is
+arithmetic. A fraction `h` that is never sold has a constant base-asset count, so
+
+```
+total accumulation = (1 - h) x accumulation of the traded fraction
+```
+
+It is a volume knob, not a cushion: it shrinks the rally loss and the downtrend gain by the
+same factor, so it can never change the sign of the edge. Simulating it adds nothing that
+scaling the result would not, and the untraded fraction's performance is the price chart.
+The engine's omission is therefore not a divergence worth fixing, and the task is dropped.
 
 ### Still not established
 
@@ -638,23 +677,28 @@ In order.
    stability — a different objective, not a tweak of the current one. If it is near zero,
    no objective repairs this and the problem is the strategy or its parameterisation.
    Everything below is subordinate to the answer.
-2. **Teach the engine `hodl_pct`.** It is the only lever already in production that softens
-   a rally without requiring a forward regime signal, and no measurement here can see it.
-   Fixing the divergence is also required before any of these numbers stay true the first
-   time an operator sets it. Then sweep it: how much of the crash accumulation does a hodl
-   fraction cost, and how much of the rally damage does it prevent?
-3. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
-   Needed for real once the objective has an inner split again, and it is what turns defect
-   6 from a known distortion into a fixed one.
-4. **Decide whether shared `stop_pct` ships to production.** If it does, the deployed space
+2. **Decide whether to keep looking, and where.** Three avenues have now been closed by
+   measurement — config selection, reconfiguration cadence, trend filtering — and what
+   remains is not a tuning question. The one structural idea this study has not tested is an
+   **asymmetric stop by side**: `k_stop_buy` and `k_stop_sell` are already calibrated
+   separately, and the shared-`stop_pct` decision collapsed them onto one percentile. A wider
+   sell-side percentile biases the bot toward staying in the asset *without predicting
+   anything*, which is the structural version of what the trend filter tried to do causally.
+   Cheap to test on the existing space, but it is a strategy change and needs its own spec.
+3. **Test a second pair.** Everything here is XBTEUR. This is now the only external-validity
+   gap left, and the cheapest remaining way to learn something new.
+4. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
+   Reporting only, until an objective compares across windows again — see that section for
+   what it does and does not change.
+5. **Decide whether shared `stop_pct` ships to production.** If it does, the deployed space
    becomes enumerable and Optuna/TPE/seeds/AUTO can be removed — a large simplification of
    `trading/optimizer/`. That decision needs its own spec.
-5. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
+6. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
    change: it touches `activation_distance` in both `trading/engine.py` and
    `trading/positions_manager.py`, and needs its own validation. Lower priority now that
    `k_act` is out of the experiments, but it is still the reason the profitable region only
    exists in one branch.
-6. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
+7. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
    window-anchored is what ships.
 
 Do **not** revisit `MINIMUM_CHANGE_PCT` or chase pivot density; neither addresses any
@@ -715,6 +759,11 @@ that description is accurate only until the first re-anchor.
 - **"Beats buy-and-hold" is not a result on its own.** Report where a config lands in the
   distribution of the whole search space over the same span. In the 2025-04..2026-03 window
   88 of 105 configs beat hold, so clearing that bar says almost nothing.
+- **An overlay that substitutes a result is not a simulation of the intervention.** Replacing
+  a gated period's outcome with buy-and-hold's reported a +21.9 point prize where actually
+  re-running the gated simulation delivers +0.6, because the intervention changes what the
+  bot holds afterwards and everything downstream depends on that. Simulate the change; do not
+  arithmetically stand in for it.
 - **Any measurement that slices time must say, in writing, what happens to the open
   position at each boundary.** A restart charges an entry fee the running bot never pays and
   liquidates a position it would have kept, and it hits low-frequency configs hardest, so it
