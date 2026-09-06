@@ -434,3 +434,40 @@ def test_a_scheduled_reconfiguration_moves_the_activation_barrier() -> None:
     # the widened barrier holds the sell open until bar 2 and exits it 5 points higher.
     assert [op.price for op in plain] == [100.0, 101.0, 102.0]
     assert [op.price for op in scheduled] == [100.0, 106.0]
+
+
+# --- no-sell mask ----------------------------------------------------------
+
+
+def _with_mask(cfg: engine.EngineConfig, bars) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, no_sell_bars=frozenset(bars))
+
+
+def test_a_masked_bar_does_not_fire_the_sell_stop() -> None:
+    # Bar 1 would sell at 108; masked, the position rides the rise and exits at 118 on bar 2.
+    rows = [(100.0, 100.0, 100.0), (110.0, 105.0, 108.0), (120.0, 115.0, 118.0)]
+    cfg = _cfg()
+
+    plain = engine.simulate_operations(_df(rows), cfg)
+    masked = engine.simulate_operations(_df(rows), _with_mask(cfg, [1]))
+
+    assert [op.price for op in plain] == [100.0, 108.0, 117.0]
+    assert [op.price for op in masked] == [100.0, 118.0]
+
+
+def test_the_mask_never_blocks_a_buy_re_entry() -> None:
+    # The damage in an up-trend is leaving the asset; getting back into it is the cure,
+    # so a masked bar suppresses the sell side only.
+    rows = [(100.0, 100.0, 100.0), (110.0, 105.0, 108.0), (109.0, 90.0, 95.0)]
+    cfg = _cfg()
+
+    plain = engine.simulate_operations(_df(rows), cfg)
+    masked = engine.simulate_operations(_df(rows), _with_mask(cfg, [2]))
+
+    assert [op.price for op in plain] == [100.0, 108.0, 92.0]
+    assert [op.price for op in masked] == [100.0, 108.0, 92.0]
+
+
+def test_the_mask_is_empty_by_default() -> None:
+    # Production never sets it, so the live path must carry no mask at all.
+    assert _cfg().no_sell_bars == frozenset()

@@ -54,6 +54,11 @@ class EngineConfig:
     atr_desv_limit: float
     calibration_schedule: tuple[tuple[int, PairCalibration], ...] = ()
     activation_schedule: tuple[tuple[int, ActivationParams], ...] = ()
+    # Bars on which a *sell* exit is suppressed, so the position rides instead of leaving the
+    # asset. Sell-only because the damage an up-trend does to base-asset accumulation is
+    # selling into the rise and rebuying higher; a re-entry is the cure, never the disease.
+    # Empty in production: this exists to score a trend filter offline.
+    no_sell_bars: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -285,6 +290,7 @@ def simulate_operations(
 ) -> list[Operation]:
     schedule = cfg.calibration_schedule
     reconfigs = cfg.activation_schedule
+    no_sell = cfg.no_sell_bars
 
     ops: list[Operation] = []
     cum_pnl = 0.0  # cumulative return in percent, compounded
@@ -410,6 +416,10 @@ def simulate_operations(
 
         stop_hit = low <= stop_px if side == "sell" else high >= stop_px
         if not stop_hit:
+            continue
+
+        # The stop stays where it is and keeps trailing; the mask only defers the exit.
+        if side == "sell" and idx in no_sell:
             continue
 
         exec_price = stop_px

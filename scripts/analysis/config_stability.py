@@ -218,7 +218,12 @@ def _period_returns(ops, bounds: list[tuple[str, float]], final_price: float) ->
 
 
 def sweep_continuous(
-    frame: pd.DataFrame, first_bar: int, last_bar: int, starts: list[int], cands: list[Candidate]
+    frame: pd.DataFrame,
+    first_bar: int,
+    last_bar: int,
+    starts: list[int],
+    cands: list[Candidate],
+    no_sell: frozenset = frozenset(),
 ) -> list[list[float]]:
     """Every config on ONE run over [first_bar, last_bar], scored per period. [period][config].
 
@@ -251,6 +256,7 @@ def sweep_continuous(
         cfg = optimizer._build_engine_config(
             PAIR, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT, ctx.calibration_points
         )
+        cfg = dataclasses.replace(cfg, no_sell_bars=no_sell)
         ops = simulate_operations(ctx.df, cfg, fee_rate=FEE / 100.0)
         per_config.append([0.0] * (len(bounds) + 1) if not ops else _period_returns(ops, bounds, final_price))
     # [config][period] -> [period][config]
@@ -460,6 +466,54 @@ def report_oracle(results: list[list[float]], labels: list[str], holds: list[flo
     )
 
 
+def _oracle_bars(starts: list[int], last_bar: int, holds: list[float], rally_pct: float, warmup: int) -> frozenset:
+    """Bars inside the periods that DID rally, as indices relative to the run's first bar."""
+    bars: set[int] = set()
+    for w, hold in enumerate(holds):
+        if hold <= rally_pct:
+            continue
+        first = starts[w]
+        last = starts[w + 1] - 1 if w + 1 < len(starts) else last_bar
+        bars.update(range(first - warmup, last - warmup + 1))
+    return frozenset(bars)
+
+
+def _trend_bars(frame: pd.DataFrame, warmup: int, last_bar: int, lookback: int) -> frozenset:
+    """Bars whose trailing return over ``lookback`` bars is positive. A causal detector.
+
+    Chosen a priori and with no threshold sweep: with three rally events in this frame there
+    is no sample to sweep over, and sweeping is how the retracted +0.44 was produced.
+    """
+    close = frame["close"].to_numpy(dtype=float)
+    return frozenset(b - warmup for b in range(warmup, last_bar + 1) if close[b] > close[max(0, b - lookback)])
+
+
+def report_filter(variants: list[tuple[str, list[list[float]], int]], holds: list[float], n_bars: int) -> None:
+    """Compare accumulation with no gate, with a perfect-hindsight gate, and with a real one."""
+    print("\n\n" + "=" * 100)
+    print("FILTRO DE TENDENCIA — acumulacion de activo sobre todo el tramo, corrida continua")
+    print("=" * 100)
+    print(f"\n  {'variante':<26}{'mediana':>10}{'mejor':>10}{'peor':>10}{'bate hold':>12}{'velas sin vender':>18}")
+    print("  " + "-" * 86)
+    for name, results, blocked in variants:
+        totals = []
+        for i in range(len(results[0])):
+            factor = 1.0
+            for w in range(len(results)):
+                factor *= 1.0 + _btc(results[w][i], holds[w]) / 100.0
+            totals.append((factor - 1.0) * 100.0)
+        beats = sum(1 for v in totals if v > 0)
+        share = f"{blocked} ({100.0 * blocked / n_bars:.0f}%)"
+        print(
+            f"  {name:<26}{statistics.median(totals):>9.1f}%{max(totals):>9.1f}%{min(totals):>9.1f}%"
+            f"{f'{beats}/{len(totals)}':>12}{share:>18}"
+        )
+    print(
+        "\n  Mantener es 0 % por construccion. El oraculo usa el retorno REALIZADO de cada periodo,"
+        "\n  asi que es trampa deliberada y marca el techo; el detector solo mira velas pasadas."
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="¿Persiste la calidad de un config entre ventanas?")
     ap.add_argument("files", nargs="+")
@@ -468,6 +522,7 @@ def main() -> int:
     ap.add_argument("--top", type=int, default=12)
     ap.add_argument("--ci-days", type=int, default=30, help="Dias que mira el indice de chop, siempre pasados.")
     ap.add_argument("--rally-pct", type=float, default=5.0, help="Hold por encima de esto marca periodo alcista.")
+    ap.add_argument("--detector-days", type=int, default=30, help="Retorno de arrastre del detector causal.")
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     args = ap.parse_args()
 
@@ -512,6 +567,16 @@ def main() -> int:
 
     report(cands, results, labels, holds, args.top, cis)
     report_oracle(results, labels, holds, args.rally_pct)
+
+    n_bars = last_bar - warmup + 1
+    oracle = _oracle_bars(starts, last_bar, holds, args.rally_pct, warmup)
+    detector = _trend_bars(frame, warmup, last_bar, args.detector_days * BARS_PER_DAY)
+    variants = [("sin filtro", results, 0)]
+    for name, mask in (("oraculo (realizado)", oracle), (f"detector ret{args.detector_days}d>0", detector)):
+        t0 = time.perf_counter()
+        variants.append((name, sweep_continuous(frame, warmup, last_bar, starts[1:], cands, mask), len(mask)))
+        print(f"  {name} barrido en {time.perf_counter() - t0:.0f}s", flush=True)
+    report_filter(variants, holds, n_bars)
     return 0
 
 
