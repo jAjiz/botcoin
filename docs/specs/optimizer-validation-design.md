@@ -171,6 +171,48 @@ mechanisms, untested: a config change mid-position strands the bot between an ac
 barrier it was working toward and a new one, or trailing-window fits select actively bad
 configs rather than random ones. Worth resolving before any reconfiguration feature ships.
 
+### Config quality does not persist either (2026-09-05)
+
+`scripts/analysis/config_stability.py`: all 105 configs run once over 2025-04-01 ..
+2026-03-31, that single run split into six ~60-day periods by the ratio of its compounded
+growth factors, and only ranks *within* a period compared.
+
+Rank correlation between consecutive periods: **−0.19, +0.25, +0.25, +0.11, +0.01** —
+median +0.11, and +0.24 across all fifteen pairs. A config's standing in one period explains
+between 1 % and 6 % of its standing in another. **There is nothing to select on.**
+
+The apparent winner is an artefact of averaging a trend. `mm=0.130 s=0.5` has the best
+median percentile (64) but runs 57, 47, 52, 96, 87, 71 across the six. And the head of that
+table is the whole high-`min_margin` family — configs that are rarely excellent and rarely
+terrible, so their median rank flatters them. That is "loses little", not skill.
+
+**The one signal that does persist is negative:** `mm` at 0.000–0.010 sits at percentile
+0–2 in all six periods. Trading constantly is reliably ruinous. True, useful only as "do not
+overtrade", and it inflates the correlations above — strip the obviously bad region and
+persistence among the plausible configs is closer to zero still.
+
+**The finding that matters is what the periods do, not what the configs do:**
+
+| Period | Best | Median | Worst | Beat hold |
+|---|---|---|---|---|
+| Apr–May | +0.6 % | −8.1 % | −40.0 % | 7/105 |
+| Jun–Jul | **−3.7 %** | −11.1 % | −25.1 % | **0/105** |
+| Aug–Sep | +11.3 % | +7.5 % | −16.0 % | **100/105** |
+| Oct–Nov | +33.2 % | +27.5 % | −35.4 % | 92/105 |
+| Dec–Jan | +23.9 % | −0.4 % | −25.7 % | 48/105 |
+| Feb–Mar | +16.6 % | −0.0 % | −39.8 % | 14/105 |
+
+(base asset accumulated; hold is 0 % by construction.)
+
+The space moves in a block. In Jun–Jul **not one** of the 105 configs accumulates base
+asset; in Aug–Sep 100 of 105 do. The median swings 38 points between periods, while inside a
+period the gap from median to best is about 6. **Whether the bot accumulates is decided by
+the market period, not by the parameters** — which is also why in-sample fitting cannot
+predict: it fits whichever regime happened, and the next one is different.
+
+That makes regime the dimension worth measuring, and it is measured in one value only. See
+"How to continue".
+
 ### Still not established
 
 - **One regime.** Every number here comes from one 15-month bear market on one pair. In a
@@ -499,6 +541,17 @@ significant architectural simplification and has not yet been decided.
   opening buy, so such a config scores as buy-and-hold, which in a falling market is a
   *good* score. That is a feature (defect 6), but the stated reasoning was wrong.
 
+- **The Trend/Chop card's `+0.44` chop-versus-edge correlation** (`docs/BACKLOG.md`), and
+  with it `scripts/analysis/regime_filter_screen.py`, now deleted. It was measured
+  2026-09-01, *before* both engine fixes shipped — the cash leg was still paid as if the bot
+  held a short, worth up to +162 points of overstatement on exactly the low-frequency configs
+  it used, and nothing recalibrated. Two method faults compound it: every 7-day window was a
+  fresh `simulate_operations`, so a config whose barrier takes weeks to cross was scored as
+  having done nothing; and windows slid by one day, so "75 windows" over the 111 days
+  available are about eleven independent weeks. A `+0.44` on that n is not a finding. The
+  Choppiness Index itself moved into `config_stability.py`, where it is measured without
+  restarts. **Do not cite the +0.44 until it is re-measured.**
+
 **Still standing:** the structural argument for `MINIMUM_CHANGE_PCT = 0.020` (lowering it
 redefines what counts as noise rather than sampling more of it); the `stop_pcts` floor of
 0.5; that per-level fitted grids are unnecessary because `stop_pct` is scale-free; that
@@ -551,12 +604,11 @@ Kraken's OHLCVT archives directly and need no database at all.
 | Script | What it answers |
 |---|---|
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
-| `scripts/analysis/config_stability.py` | **Does config quality persist?** Sweeps all 105 configs over N disjoint consecutive windows and reports the rank correlation between them. Compares ranks within a window only, never levels across, so the per-window restart cancels. |
+| `scripts/analysis/config_stability.py` | **Does config quality persist, and does the regime predict it?** Runs all 105 configs once, continuously, then splits that single run into N periods by the ratio of compounded growth factors. Reports the rank correlation between periods, and the Choppiness Index of the bars before each period against what the space did in it. `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
 | `scripts/analysis/holdout_experiment.py` | Task 1: fit on the first N days, score on one continuous run over the remainder against hold. `--csv`. |
 | `scripts/analysis/refit_frequency_experiment.py` | Reconfiguration cadence, several cadences per run over one shared forward span, each arm on one continuous run. `--csv`. |
 | `scripts/analysis/objective_experiment.py` | 2×2: inner train/test split vs the fit window's own PnL, five free `stop_pcts` vs one shared. **Both factors are now settled — see "Decisions taken" — so this is superseded.** |
-| `scripts/analysis/regime_filter_screen.py` | Choppiness Index as a whole-window overlay, for the Trend/Chop backlog card. |
 | `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price). |
 | `scripts/analysis/grid_validation.py` | Edge-pinning, coverage, AUTO convergence. **Its `walkforward` mode uses the segment-restart method — see Harness defects; do not trust its chained figures.** |
 
@@ -564,7 +616,7 @@ The point caches exist because the in-tree `build_calibration_inputs` recomputes
 call, and a schedule over a long window costs minutes — 280–640 s for the 15-month XBTEUR
 frame (909 points), varying with machine load. `refit_frequency_experiment.py`,
 `holdout_experiment.py` and `grid_sweep_holdout.py` each compute the frame's points once
-and slice them per window (frame-anchored); `regime_filter_screen.py` shares the first.
+and slice them per window (frame-anchored).
 `objective_experiment.py` memoizes per window instead, since every arm and every seed of a
 transition re-fits the same window. All are installed by monkeypatching
 `optimizer.build_calibration_inputs`. **A new harness needs one of them**, and should
@@ -595,6 +647,12 @@ that description is accurate only until the first re-anchor.
 - **"Beats buy-and-hold" is not a result on its own.** Report where a config lands in the
   distribution of the whole search space over the same span. In the 2025-04..2026-03 window
   88 of 105 configs beat hold, so clearing that bar says almost nothing.
+- **Any measurement that slices time must say, in writing, what happens to the open
+  position at each boundary.** A restart charges an entry fee the running bot never pays and
+  liquidates a position it would have kept, and it hits low-frequency configs hardest, so it
+  distorts rankings and not merely levels. This has contaminated three separate measurements
+  in this study — the chained walk-forward, the cadence comparison, and the first stability
+  run — and each time the tell was two measurements of the same data disagreeing.
 - **Write down decisions, not only defects.** This document lost two settled decisions
   (shared `stop_pct`, `train_split = 1.0`) because it recorded only open questions, and
   both were later contradicted by work done from it. "Decisions taken" is the place.
