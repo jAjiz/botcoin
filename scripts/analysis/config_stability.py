@@ -34,6 +34,15 @@ The headline statistic is the Spearman rank correlation between consecutive wind
 0 means config quality does not persist and there is nothing to select. Near 1 means it
 does.
 
+It also carries the Trend/Chop screen that regime_filter_screen.py used to hold, since that
+script's own measurement is retracted: it was written before the cash-leg and recalibration
+fixes shipped, it restarted the simulation on every 7-day window, and it slid those windows
+by one day, so its "75 windows" were about eleven independent weeks. Here the Choppiness
+Index is computed from bars that end strictly before each period opens and correlated with
+what the whole space did in that period. Watch for the confound: CI and the bot's activation
+barrier are both functions of the same range, so a positive correlation may only be saying
+that chop predicts whether the bot trades at all.
+
 Usage (PYTHONPATH=. required; no DB env vars needed):
   PYTHONPATH=. python scripts/analysis/config_stability.py path/to/XBTEUR_15_*.csv
 """
@@ -43,6 +52,7 @@ import dataclasses
 import statistics
 import time
 
+import numpy as np
 import pandas as pd
 
 import core.database as db
@@ -272,10 +282,43 @@ def _btc(eur_pct: float, hold_pct: float) -> float:
     return ((1.0 + eur_pct / 100.0) / (1.0 + hold_pct / 100.0) - 1.0) * 100.0
 
 
+def choppiness_index(frame: pd.DataFrame, n: int) -> "np.ndarray":
+    """Choppiness Index per bar, over the ``n`` bars ending at that bar. NaN until then.
+
+    CI = 100 * log10(sum(TR, n) / (max(high, n) - min(low, n))) / log10(n)
+
+    100 means every bar of range was retraced (chop); 0 means the range was covered in one
+    direction (trend). Carried over from the deleted regime_filter_screen.py, which was the
+    only part of it worth keeping.
+    """
+    high = frame["high"].to_numpy(dtype=float)
+    low = frame["low"].to_numpy(dtype=float)
+    close = frame["close"].to_numpy(dtype=float)
+
+    prev_close = np.concatenate(([close[0]], close[:-1]))
+    true_range = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
+
+    out = np.full(len(frame), np.nan)
+    tr_sum = np.cumsum(true_range)
+    for i in range(n - 1, len(frame)):
+        window_tr = tr_sum[i] - (tr_sum[i - n] if i >= n else 0.0)
+        span = high[i - n + 1 : i + 1].max() - low[i - n + 1 : i + 1].min()
+        if span > 0 and window_tr > 0:
+            out[i] = 100.0 * np.log10(window_tr / span) / np.log10(n)
+    return out
+
+
 # --- reporting --------------------------------------------------------------
 
 
-def report(cands: list[Candidate], results: list[list[float]], labels: list[str], holds: list[float], top: int) -> None:
+def report(
+    cands: list[Candidate],
+    results: list[list[float]],
+    labels: list[str],
+    holds: list[float],
+    top: int,
+    cis: list[float] | None = None,
+) -> None:
     pcts = [_percentiles(w) for w in results]
     n_win = len(results)
 
@@ -330,16 +373,42 @@ def report(cands: list[Candidate], results: list[list[float]], labels: list[str]
     print("\n\n" + "=" * 100)
     print("POR VENTANA — que hace el espacio entero, en BTC acumulado")
     print("=" * 100)
-    print(f"\n  {'ventana':<24}{'mantener':>10}{'mejor':>10}{'mediana':>10}{'peor':>10}{'bate hold':>12}")
-    print("  " + "-" * 76)
+    print(f"\n  {'ventana':<24}{'chop':>7}{'mantener':>10}{'mejor':>10}{'mediana':>10}{'peor':>10}{'bate hold':>12}")
+    print("  " + "-" * 83)
     for w in range(n_win):
         vals = results[w]
         hold = holds[w]
+        ci = "-" if cis is None else f"{cis[w]:.1f}"
         print(
-            f"  {labels[w]:<24}{0.0:>9.1f}%{_btc(max(vals), hold):>9.1f}%"
+            f"  {labels[w]:<24}{ci:>7}{0.0:>9.1f}%{_btc(max(vals), hold):>9.1f}%"
             f"{_btc(statistics.median(vals), hold):>9.1f}%{_btc(min(vals), hold):>9.1f}%"
             f"{f'{sum(1 for v in vals if v > hold)}/{len(vals)}':>12}"
         )
+
+    if cis is None:
+        return
+
+    print("\n\n" + "=" * 100)
+    print("REGIMEN — ¿predice el chop previo lo que hara el bot en el periodo siguiente?")
+    print("=" * 100)
+    print("\n  El indice se calcula solo con velas ANTERIORES a que el periodo abra, asi que es un")
+    print("  predictor, no una descripcion. Alto = lateral, bajo = tendencia.\n")
+
+    med_btc = [_btc(statistics.median(results[w]), holds[w]) for w in range(n_win)]
+    best_btc = [_btc(max(results[w]), holds[w]) for w in range(n_win)]
+    share = [100.0 * sum(1 for v in results[w] if v > holds[w]) / len(results[w]) for w in range(n_win)]
+
+    for name, series in (
+        ("BTC del config mediano", med_btc),
+        ("BTC del mejor config", best_btc),
+        ("% que bate a hold", share),
+    ):
+        rho = statistics.correlation(_ranks(cis), _ranks(series))
+        print(f"  correlacion de rangos  chop previo vs {name:<24} = {rho:+.2f}")
+    print(
+        f"\n  n = {n_win} periodos disjuntos. Con esta n, cualquier correlacion por debajo de ~0.6"
+        "\n  es indistinguible del azar: leelo como una direccion a comprobar, no como un resultado."
+    )
 
 
 def main() -> int:
@@ -348,6 +417,7 @@ def main() -> int:
     ap.add_argument("--warmup-days", type=int, default=90, help="Dias iniciales que no se evaluan.")
     ap.add_argument("--windows", type=int, default=6, help="Ventanas disjuntas consecutivas.")
     ap.add_argument("--top", type=int, default=12)
+    ap.add_argument("--ci-days", type=int, default=30, help="Dias que mira el indice de chop, siempre pasados.")
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     args = ap.parse_args()
 
@@ -379,11 +449,18 @@ def main() -> int:
     for label, hold in zip(labels, holds, strict=True):
         print(f"  {label}  mantener={hold:+.2f}%")
 
+    # Classified from the bars that end before the period opens, so it never sees its outcome.
+    ci_series = choppiness_index(frame, args.ci_days * BARS_PER_DAY)
+    cis = [float(ci_series[s - 1]) for s in starts]
+    cis = None if any(np.isnan(c) for c in cis) else cis
+    if cis is None:
+        print(f"  AVISO: sin indice de chop (hacen falta {args.ci_days}d de velas antes del primer periodo)")
+
     t0 = time.perf_counter()
     results = sweep_continuous(frame, warmup, last_bar, starts[1:], cands)
     print(f"  barrido en {time.perf_counter() - t0:.0f}s", flush=True)
 
-    report(cands, results, labels, holds, args.top)
+    report(cands, results, labels, holds, args.top, cis)
     return 0
 
 
