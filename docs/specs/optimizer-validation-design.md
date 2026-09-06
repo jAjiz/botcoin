@@ -3,12 +3,12 @@
 Status (2026-09-06): **four defects fixed, one harness defect fixed — and five avenues closed
 by measurement.** No way of choosing a config has been found that carries forward, and no
 modification of the strategy tested here changes that. What remains is a conditional edge with
-no way to tell when it applies. See the table under "How to continue". The question
-this document exists to answer is unchanged — *can the optimizer produce a config that
-beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested on
-measurements that were wrong. Everything PnL-based in the
-previous version of this file (`optimizer-grid-derivation-design.md`) is retracted; see
-"Retracted".
+no way to tell when it applies. See the table under "How to continue".
+
+The question this document exists to answer is unchanged — *can the optimizer produce a config
+that beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested
+on measurements that were wrong. Everything PnL-based in the previous version of this file
+(`optimizer-grid-derivation-design.md`) is retracted; see "Retracted".
 
 The framing of the question has since changed too, and the change matters more than any
 single number: **the goal is accumulating the base asset, not euros.** See "The objective
@@ -55,7 +55,8 @@ so market structure shifts materially even within these fifteen months.
 Two corrections to how that window used to be described here. The ~10 700 candles in
 `ohlc_data` beyond those 43 610 are **more recent than 2026-03-31, not older than 2025** —
 about 111 days, separated from the frame by a gap, which is why the frame ends there. They
-are the bull-regime data task 2 needs. And the frame is not perfectly continuous: it holds
+are no longer needed for a bull-regime test — this frame contains one — but they remain the
+only unused data. And the frame is not perfectly continuous: it holds
 **8 gaps, the largest 27 candles**. That is ~50 bars in 43 610, negligible for
 position-indexed arithmetic (a "90-day" boundary lands a few hours late), but it is not
 zero and a harness that indexes bars by position should keep reporting it.
