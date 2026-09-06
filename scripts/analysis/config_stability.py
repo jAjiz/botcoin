@@ -59,7 +59,7 @@ import core.database as db
 import trading.optimizer.search as optimizer
 from core.config import ATR_DESV_LIMIT, ATR_PERIOD, CANDLE_TIMEFRAME, RECALIBRATION_BARS
 from core.config import VOLATILITY_LEVELS as LEVELS
-from trading.engine import mark_to_market, simulate_operations
+from trading.engine import EngineConfig, PairCalibration, mark_to_market, simulate_operations
 from trading.market_analyzer import (
     CalibrationInputs,
     _wilder_atr_from_scratch,
@@ -68,11 +68,11 @@ from trading.market_analyzer import (
     k_values_by_level,
 )
 from trading.optimizer.search import (
-    Candidate,
     GridSpec,
     OptimizerRequest,
     SearchSpace,
     _build_eval_context,
+    _quantile_ceiled,
 )
 
 CSV_COLUMNS = ["time", "open", "high", "low", "close", "volume", "count"]
@@ -90,16 +90,54 @@ def _grid(g: GridSpec) -> list[float]:
     return [round(g.start + i * g.step, 5) for i in range(n + 1)]
 
 
-def candidates() -> list[Candidate]:
-    return [
-        Candidate(k_act=None, min_margin=mm, stop_pcts=dict.fromkeys(LEVELS, stop))
-        for mm in _grid(MM_GRID)
-        for stop in _grid(STOP_GRID)
-    ]
+# A config is (min_margin, percentile applied to the sell side, percentile applied to the buy side).
+Spec = tuple[float, float, float]
 
 
-def _signature(cand: Candidate) -> str:
-    return f"mm={cand.min_margin:.3f} s={next(iter(cand.stop_pcts.values())):.1f}"
+def candidates(asym: bool = False) -> list[Spec]:
+    """The symmetric diagonal, or the full sell x buy grid when probing asymmetry."""
+    stops = _grid(STOP_GRID)
+    if not asym:
+        return [(mm, s, s) for mm in _grid(MM_GRID) for s in stops]
+    return [(mm, ss, sb) for mm in _grid(MM_GRID) for ss in stops for sb in stops]
+
+
+def _signature(spec: Spec) -> str:
+    mm, ss, sb = spec
+    return f"mm={mm:.3f} s={ss:.1f}" if ss == sb else f"mm={mm:.3f} s={ss:.1f}/{sb:.1f}"
+
+
+def _calibration(thresholds, up_k, down_k, stop_sell: float, stop_buy: float) -> PairCalibration:
+    """Per-side K_STOP from per-side pivot samples, each at its own percentile.
+
+    The engine has always carried k_stop_buy and k_stop_sell separately; what collapsed them
+    onto one number was optimizer._pair_calibration applying a single percentile to both
+    samples. Building the calibration here lets the two sides differ with no production code
+    touched at all — shipping it would need one, testing it does not.
+    """
+    return PairCalibration(
+        atr_ratio_p20=thresholds[0],
+        atr_ratio_p50=thresholds[1],
+        atr_ratio_p80=thresholds[2],
+        atr_ratio_p95=thresholds[3],
+        k_stop_buy={lvl: _quantile_ceiled(down_k[lvl], stop_buy) for lvl in LEVELS},
+        k_stop_sell={lvl: _quantile_ceiled(up_k[lvl], stop_sell) for lvl in LEVELS},
+    )
+
+
+def _engine_config(spec: Spec, ctx, no_sell: frozenset) -> EngineConfig:
+    mm, ss, sb = spec
+    return EngineConfig(
+        pair=PAIR,
+        calibration=_calibration(ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ss, sb),
+        k_act=None,
+        min_margin=mm,
+        atr_desv_limit=ATR_DESV_LIMIT,
+        calibration_schedule=tuple(
+            (p.at, _calibration(p.atr_ratio_thresholds, p.up_k, p.down_k, ss, sb)) for p in ctx.calibration_points
+        ),
+        no_sell_bars=no_sell,
+    )
 
 
 # --- data and calibration (same pattern as the other harnesses) --------------
@@ -222,7 +260,7 @@ def sweep_continuous(
     first_bar: int,
     last_bar: int,
     starts: list[int],
-    cands: list[Candidate],
+    cands: list[Spec],
     no_sell: frozenset = frozenset(),
 ) -> list[list[float]]:
     """Every config on ONE run over [first_bar, last_bar], scored per period. [period][config].
@@ -253,10 +291,7 @@ def sweep_continuous(
 
     per_config = []
     for cand in cands:
-        cfg = optimizer._build_engine_config(
-            PAIR, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT, ctx.calibration_points
-        )
-        cfg = dataclasses.replace(cfg, no_sell_bars=no_sell)
+        cfg = _engine_config(cand, ctx, no_sell)
         ops = simulate_operations(ctx.df, cfg, fee_rate=FEE / 100.0)
         per_config.append([0.0] * (len(bounds) + 1) if not ops else _period_returns(ops, bounds, final_price))
     # [config][period] -> [period][config]
@@ -318,7 +353,7 @@ def choppiness_index(frame: pd.DataFrame, n: int) -> "np.ndarray":
 
 
 def report(
-    cands: list[Candidate],
+    cands: list[Spec],
     results: list[list[float]],
     labels: list[str],
     holds: list[float],
@@ -514,6 +549,61 @@ def report_filter(variants: list[tuple[str, list[list[float]], int]], holds: lis
     )
 
 
+def report_asymmetry(cands: list[Spec], results: list[list[float]], holds: list[float], rally_pct: float) -> None:
+    """Does biasing the stop toward staying in the asset help, without predicting anything?
+
+    A wider sell-side percentile holds the position through deeper retracements, so the bot
+    leaves the asset less readily. That is the structural counterpart of the trend filter: no
+    forecast, just a standing bias. The claim to test is not "some asymmetric config wins" —
+    the predictiveness result already showed a single winner means nothing — but whether the
+    whole family shifts as the gap widens.
+    """
+    rally = [w for w in range(len(results)) if holds[w] > rally_pct]
+
+    def total(idx: int, only: list[int] | None = None) -> float:
+        factor = 1.0
+        for w in range(len(results)):
+            if only is not None and w not in only:
+                continue
+            factor *= 1.0 + _btc(results[w][idx], holds[w]) / 100.0
+        return (factor - 1.0) * 100.0
+
+    print("\n\n" + "=" * 100)
+    print("ASIMETRIA DEL STOP — percentil del lado venta menos el del lado compra")
+    print("=" * 100)
+    print("\n  Positivo = stop de venta mas ancho = el bot se queda en el activo mas tiempo.")
+
+    # Pooled medians are dominated by min_margin, which every gap group shares, so they can
+    # come out identical even when the effect is real. Pair each config against the symmetric
+    # one with the SAME min_margin and the SAME buy-side percentile: the only thing that then
+    # differs is how wide the sell stop is, which is exactly the mechanism under test.
+    base = {(mm, sb): i for i, (mm, ss, sb) in enumerate(cands) if ss == sb}
+    paired: dict[float, list[tuple[float, float]]] = {}
+    for i, (mm, ss, sb) in enumerate(cands):
+        ref = base.get((mm, sb))
+        if ref is None or ref == i:
+            continue
+        paired.setdefault(round(ss - sb, 1), []).append((total(i) - total(ref), total(i, rally) - total(ref, rally)))
+
+    print("  Pareado: mismo min_margin y mismo lado compra, solo cambia cuanto se ensancha la venta.")
+    print("  Los pares sin efecto se excluyen: un config que no llega a operar es insensible al")
+    print("  percentil del stop, y son mayoria, asi que su cero aplastaria cualquier mediana.\n")
+    print(f"  {'hueco':>7}{'pares':>8}{'cambian':>9}{'delta total':>14}{'delta subidas':>16}{'mejora':>10}")
+    print("  " + "-" * 65)
+    for gap in sorted(paired):
+        rows = [r for r in paired[gap] if r[0] != 0.0]
+        if not rows:
+            print(f"  {gap:>+7.1f}{len(paired[gap]):>8}{0:>9}{'-':>14}{'-':>16}{'-':>10}")
+            continue
+        better = sum(1 for d, _ in rows if d > 0)
+        print(
+            f"  {gap:>+7.1f}{len(paired[gap]):>8}{len(rows):>9}{statistics.median(d for d, _ in rows):>13.2f}%"
+            f"{statistics.median(r for _, r in rows):>15.2f}%{f'{better}/{len(rows)}':>10}"
+        )
+    print(f"\n  'delta subidas' agrega solo los {len(rally)} periodos alcistas, que es donde la")
+    print("  asimetria deberia notarse si el mecanismo funciona.")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="¿Persiste la calidad de un config entre ventanas?")
     ap.add_argument("files", nargs="+")
@@ -523,6 +613,7 @@ def main() -> int:
     ap.add_argument("--ci-days", type=int, default=30, help="Dias que mira el indice de chop, siempre pasados.")
     ap.add_argument("--rally-pct", type=float, default=5.0, help="Hold por encima de esto marca periodo alcista.")
     ap.add_argument("--detector-days", type=int, default=30, help="Retorno de arrastre del detector causal.")
+    ap.add_argument("--asym", action="store_true", help="Barre stop_pct de venta y de compra por separado.")
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     args = ap.parse_args()
 
@@ -537,7 +628,7 @@ def main() -> int:
     last_bar = len(frame) - 1
     width = (last_bar - warmup) // args.windows
     starts = [warmup + w * width for w in range(args.windows)]
-    cands = candidates()
+    cands = candidates(args.asym)
 
     labels, holds = [], []
     for w in range(args.windows):
@@ -567,6 +658,10 @@ def main() -> int:
 
     report(cands, results, labels, holds, args.top, cis)
     report_oracle(results, labels, holds, args.rally_pct)
+
+    if args.asym:
+        report_asymmetry(cands, results, holds, args.rally_pct)
+        return 0
 
     n_bars = last_bar - warmup + 1
     oracle = _oracle_bars(starts, last_bar, holds, args.rally_pct, warmup)
