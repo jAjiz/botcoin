@@ -1,7 +1,8 @@
 # Optimizer Validation — Design and Study State
 
-Status (2026-09-05): **four defects fixed, one harness defect fixed — and the optimizer's
-selection procedure shown to have no forward predictive value on this data.** The question
+Status (2026-09-06): **four defects fixed, one harness defect fixed — the optimizer's
+selection procedure shown to have no forward predictive value, and the strategy shown to
+lose base asset in a rally, which the frame already contains.** The question
 this document exists to answer is unchanged — *can the optimizer produce a config that
 beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested on
 measurements that were wrong. Everything PnL-based in the
@@ -11,6 +12,11 @@ previous version of this file (`optimizer-grid-derivation-design.md`) is retract
 The framing of the question has since changed too, and the change matters more than any
 single number: **the goal is accumulating the base asset, not euros.** See "The objective
 is asset accumulation".
+
+One correction runs through this file's history and is worth stating up front: the frame was
+repeatedly described as "one 15-month bear market". It is not — it holds a 23 % fall, a 33 %
+rally, a flat stretch and a 40 % crash. Reading the endpoint return as the regime hid the
+single most important result, which is what the bot does in the rally.
 
 This file supersedes that one. It is the handoff: read "Where the study stands",
 "Decisions taken" and "How to continue" first.
@@ -30,7 +36,20 @@ the same window**, measured out of sample.
 Everything below is XBTEUR, 15-minute candles, **0.4 % fee per leg** (the bot's limit
 orders usually fill as maker; the 0.8 % taker figure used earlier overstated the cost by
 2×). The window with continuous data is **2025-01-01 .. 2026-03-31** (43 610 simulated
-bars). It is bearish end to end: **buy-and-hold returns −35.1 %** over the full window.
+bars). Buy-and-hold returns **−35.1 %** end to end — but that number describes the two
+endpoints, not the path, and reading it as "one bear market" was wrong. The frame contains a
+full cycle:
+
+| Stretch | Move | Phase |
+|---|---|---|
+| Jan–Mar 2025 | 98 889 → 76 292 (−23 %) | fall |
+| Apr–Jul 2025 | 76 292 → 101 385 (**+33 %**) | **rally** |
+| Aug–Oct 2025 | 101 385 → 94 881 (−6 %) | flat |
+| Nov 2025–Feb 2026 | 94 881 → 56 786 (**−40 %**) | crash |
+
+Global high 107 361 (2025-10-06), global low 51 950 (2026-02-06): +107 % low-to-high and
+−45 % high-to-end, inside the frame. Monthly volume ranges 8 632 to 29 441, a factor of 3.4,
+so market structure shifts materially even within these fifteen months.
 
 Two corrections to how that window used to be described here. The ~10 700 candles in
 `ohlc_data` beyond those 43 610 are **more recent than 2026-03-31, not older than 2025** —
@@ -213,14 +232,65 @@ predict: it fits whichever regime happened, and the next one is different.
 That makes regime the dimension worth measuring, and it is measured in one value only. See
 "How to continue".
 
+### The rally is the problem (2026-09-06)
+
+The bull-regime test does not need new data: the frame already contains a 33 % rally. Cross
+the six stability periods with the phase each one landed in, and the answer is unambiguous.
+
+| Period | Hold € | Phase | Median BTC | Beat hold |
+|---|---|---|---|---|
+| Apr–May | **+20.4 %** | **rally** | −8.1 % | 7/105 |
+| Jun–Jul | **+11.8 %** | **rally** | −11.1 % | **0/105** |
+| Aug–Sep | −5.3 % | flat | +7.5 % | 100/105 |
+| Sep–Nov | −19.6 % | crash | +27.5 % | 92/105 |
+| Nov–Jan | −10.1 % | crash | −0.4 % | 48/105 |
+| Jan–Mar | −17.6 % | crash | −0.0 % | 14/105 |
+
+**In a rally the bot destroys base asset, and in Jun–Jul not one of the 105 configs beat
+holding.** In the flat and topping phases it accumulates strongly. That is what an
+alternating asset/cash strategy must do — a sustained trend takes it the wrong way — but it
+is now measured rather than assumed, on the same continuous run as everything else.
+
+It also explains the results that looked encouraging: the 364-day span carrying +22.3 %
+median BTC contains both the rally (bad) and the crash (good), and the crash outweighed. Over
+a span that is net *up*, the same space would be expected to lose.
+
+**The consequence for the whole study.** Beating hold requires either not trading during
+up-trends — which needs a forward regime signal — or accepting rally losses and relying on
+chop and downtrend gains to outweigh them, which is a bet on the market's net direction, not
+an edge. So the question has moved from "which config" to "can the regime be seen in advance".
+
+**And the one candidate signal has no measured predictive power.** Choppiness Index over the
+bars ending before each of twelve disjoint periods, against what the space did in that
+period: **−0.13** (median config), **−0.17** (best config), **−0.24** (share beating hold).
+All near zero, all in the *opposite* sign to the backlog card's retracted claim. With n = 12
+none is significant, but there is no evidence here that CI anticipates the phase. The phase
+matters enormously; this detector does not detect it.
+
+### Divergence: the engine cannot model `hodl_pct`
+
+`trading/inventory_manager.get_hodl_value` lets production keep a fraction of the target
+allocation permanently in the asset, never sold. `trading/engine.py` has no concept of it and
+trades the whole position in and out.
+
+Today this is harmless — `XBTEUR_HODL_PCT=0`, so simulator and production agree — but it is a
+latent version of the same defect class as 1 and 2: the moment an operator sets it non-zero,
+every backtest and optimizer result silently describes a bot that is not the one running.
+
+It also matters for the open question above. A hodl fraction is exactly the partial-allocation
+cushion that would reduce rally damage *without* predicting the regime, at the cost of some
+downtrend accumulation. It is the one lever of this kind that already exists in production,
+and the simulator cannot evaluate it.
+
 ### Still not established
 
-- **One regime.** Every number here comes from one 15-month bear market on one pair. In a
-  falling market an alternating BTC/cash strategy accumulates the base asset almost by
-  construction — every round trip that sells before a drop and rebuys lower adds BTC. The
-  median config sitting at +22.3 % BTC is that, not skill. A sustained rally should invert
-  it, and until that is measured nothing here is safe to deploy.
-- **One pair.** XBTEUR only.
+- **One pair.** XBTEUR only. This is now the main external-validity gap, the regime one
+  having been closed.
+- **Whether the strategy can beat hold at all**, given that it needs a forward regime
+  signal and the only candidate tested has none. See "The rally is the problem".
+- **What a non-zero `hodl_pct` would do.** Production can hold a fraction of the target
+  allocation permanently; the engine cannot model it (see the divergence below), so nothing
+  here measures the one lever that would soften a rally without predicting it.
 
 ## Decisions taken
 
@@ -568,13 +638,11 @@ In order.
    stability — a different objective, not a tweak of the current one. If it is near zero,
    no objective repairs this and the problem is the strategy or its parameterisation.
    Everything below is subordinate to the answer.
-2. **Measure a bull regime.** This is now the largest threat to every conclusion here, and
-   the data exists: the `ohlc_data` table holds roughly **111 days more recent than
-   2026-03-31**, and `docs/BACKLOG.md` records that stretch as a single bull regime. It
-   cannot extend the continuous frame — there is a gap between it and 2026-03-31 — but it
-   works as a separate window. In a rally an alternating strategy should *destroy* base
-   asset, since selling into a rise and rebuying higher subtracts. Importing 2023–2024 with
-   `scripts/import_kraken_ohlcvt.py` gives a longer one.
+2. **Teach the engine `hodl_pct`.** It is the only lever already in production that softens
+   a rally without requiring a forward regime signal, and no measurement here can see it.
+   Fixing the divergence is also required before any of these numbers stay true the first
+   time an operator sets it. Then sweep it: how much of the crash accumulation does a hodl
+   fraction cost, and how much of the rally damage does it prevent?
 3. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
    Needed for real once the objective has an inner split again, and it is what turns defect
    6 from a known distortion into a fixed one.
