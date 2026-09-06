@@ -549,6 +549,58 @@ def report_filter(variants: list[tuple[str, list[list[float]], int]], holds: lis
     )
 
 
+def report_robust(cands: list[Spec], results: list[list[float]], holds: list[float], top: int) -> None:
+    """Which config beat hold in the most periods, and does picking that way predict anything?
+
+    The ranking is what an operator would naturally ask for. The split-half test below is what
+    says whether to act on it: rank by consistency over the first half of the periods, then
+    look at where those configs land in the second half. If selecting on the past worked, the
+    chosen ones would sit clearly above the median config afterwards.
+    """
+    n_win = len(results)
+
+    def stats(idx: int, wins: range) -> tuple[int, float]:
+        beats, factor = 0, 1.0
+        for w in wins:
+            if results[w][idx] > holds[w]:
+                beats += 1
+            factor *= 1.0 + _btc(results[w][idx], holds[w]) / 100.0
+        return beats, (factor - 1.0) * 100.0
+
+    every = range(n_win)
+    rows = [(cands[i], *stats(i, every)) for i in range(len(cands))]
+    rows.sort(key=lambda r: (r[1], r[2]), reverse=True)
+
+    print("\n\n" + "=" * 100)
+    print("CONFIGS MAS CONSISTENTES — periodos en los que baten a mantener, y acumulacion total")
+    print("=" * 100)
+    print(f"\n  {'config':<20}{'bate hold':>12}{'acumulacion':>14}")
+    print("  " + "-" * 46)
+    for cand, beats, total in rows[:top]:
+        print(f"  {_signature(cand):<20}{f'{beats}/{n_win}':>12}{total:>13.1f}%")
+
+    half = n_win // 2
+    first, second = range(half), range(half, n_win)
+    ranked_first = sorted(range(len(cands)), key=lambda i: stats(i, first), reverse=True)
+    chosen = ranked_first[:top]
+    chosen_second = [stats(i, second) for i in chosen]
+    all_second = [stats(i, second) for i in range(len(cands))]
+
+    print(f"\n\n  VALIDACION — elegidos por los primeros {half} periodos, medidos en los {n_win - half} siguientes\n")
+    print(f"  {'grupo':<28}{'bate hold (mediana)':>22}{'acumulacion (mediana)':>24}")
+    print("  " + "-" * 74)
+    print(
+        f"  {f'los {top} mas consistentes':<28}{statistics.median(b for b, _ in chosen_second):>21.1f}"
+        f"{statistics.median(t for _, t in chosen_second):>23.1f}%"
+    )
+    print(
+        f"  {'todo el espacio':<28}{statistics.median(b for b, _ in all_second):>21.1f}"
+        f"{statistics.median(t for _, t in all_second):>23.1f}%"
+    )
+    print("\n  Si las dos filas se parecen, elegir por consistencia pasada no aporta nada, y la")
+    print("  tabla de arriba es una descripcion del pasado y no una recomendacion.")
+
+
 def report_asymmetry(cands: list[Spec], results: list[list[float]], holds: list[float], rally_pct: float) -> None:
     """Does biasing the stop toward staying in the asset help, without predicting anything?
 
@@ -658,6 +710,8 @@ def main() -> int:
 
     report(cands, results, labels, holds, args.top, cis)
     report_oracle(results, labels, holds, args.rally_pct)
+
+    report_robust(cands, results, holds, args.top)
 
     if args.asym:
         report_asymmetry(cands, results, holds, args.rally_pct)
