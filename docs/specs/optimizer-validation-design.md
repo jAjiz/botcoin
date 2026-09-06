@@ -1,8 +1,9 @@
 # Optimizer Validation — Design and Study State
 
-Status (2026-09-06): **four defects fixed, one harness defect fixed — and three avenues
-closed by measurement: config selection carries no forward signal, reconfiguration makes it
-worse, and gating the bot through rallies pays +0.6 points even with perfect hindsight.** The question
+Status (2026-09-06): **four defects fixed, one harness defect fixed — and five avenues closed
+by measurement.** No way of choosing a config has been found that carries forward, and no
+modification of the strategy tested here changes that. What remains is a conditional edge with
+no way to tell when it applies. See the table under "How to continue". The question
 this document exists to answer is unchanged — *can the optimizer produce a config that
 beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested on
 measurements that were wrong. Everything PnL-based in the
@@ -320,6 +321,66 @@ It is a volume knob, not a cushion: it shrinks the rally loss and the downtrend 
 same factor, so it can never change the sign of the edge. Simulating it adds nothing that
 scaling the result would not, and the untraded fraction's performance is the price chart.
 The engine's omission is therefore not a divergence worth fixing, and the task is dropped.
+
+### The asymmetric stop is closed too (2026-09-06)
+
+The last structural idea in this file: `k_stop_buy` and `k_stop_sell` are already calibrated
+from separate pivot samples, and the shared-`stop_pct` decision collapsed them onto one
+percentile. Widening the *sell* side should hold the position through deeper retracements, so
+the bot leaves the asset less readily — the structural counterpart of a trend filter, with no
+forecast in it.
+
+Testing it needed **no production change at all**: `PairCalibration` has always carried the
+two sides separately, so building the calibration in the harness is enough. Shipping it would
+need one (`PairConfig` stores one `stop_pct` per level, not per side), which is a cost worth
+paying only if it pays.
+
+Paired comparison — same `min_margin`, same buy-side percentile, only the sell width differs,
+excluding pairs where nothing changed:
+
+| Gap (sell − buy) | Δ total | Δ rallies | Improved |
+|---|---|---|---|
+| −0.4 (buy wider) | **+0.43 %** | +0.12 % | 13/21 |
+| −0.2 | +0.09 % | +0.06 % | 41/63 |
+| +0.2 | −0.09 % | −0.06 % | 24/63 |
+| +0.4 (sell wider) | **−0.16 %** | −0.12 % | 10/21 |
+
+**The effect is real and runs the other way.** Monotone across all eight gap levels and in
+both columns, but widening the *sell* side hurts and widening the *buy* side helps. The
+mechanism proposed above does not exist. What does: a wider buy-side stop waits for a larger
+bounce before rebuying, so the bot stays in cash longer through declines and rebuys lower —
+which pays in a frame where nine of twelve periods are not rallies, and should invert in a
+rising one. Regime, not structure.
+
+The size settles it regardless: ±0.4 points where period-to-period variation is 38, with
+13/21 pairs improving at best — 62 %, barely off a coin flip.
+
+### Selecting by past consistency does not work either (2026-09-06)
+
+The natural operator question — which config beats hold most often, with the best return —
+answered over the twelve periods, then validated by choosing on the first six and measuring on
+the last six:
+
+| Config | Beat hold | Accumulation |
+|---|---|---|
+| `mm=0.050 s=0.9` | 8/12 | +52.7 % |
+| `mm=0.050 s=0.7` | 8/12 | +44.5 % |
+| `mm=0.040 s=0.9` | 8/12 | +38.2 % |
+
+| Group chosen on periods 1–6 | Beat hold (median) | Accumulation (median) |
+|---|---|---|
+| the 10 most consistent | 3.0 / 6 | +31.7 % |
+| **the whole space** | 3.0 / 6 | **+32.2 %** |
+
+Identical, and marginally worse. That is the third selection criterion to fail, after
+in-sample PnL and reconfiguration cadence.
+
+**What survives is a weaker but usable statement.** The top ten cluster without exception at
+`min_margin` 0.040–0.070, and the rest of the space is characterised: `mm` ≤ 0.010 sits at
+percentile 0–2 in every period, `mm` ≥ 0.15 barely trades. So the *region* is identifiable
+even though the *choice within it* is not. If a config is to be deployed, take one in
+0.04–0.07 and settle `stop_pct` on operational grounds — operation count, fees, time spent out
+of the asset — because past performance carries no information at that resolution.
 
 ### Still not established
 
@@ -668,37 +729,41 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-In order.
+**Five avenues are now closed by measurement**, and none of them was a tuning question — each
+was a hypothesis about where the edge lived, and none survived:
 
-1. **Does config quality persist between windows?** `scripts/analysis/config_stability.py`.
-   With in-sample selection dead, this is the question that decides whether anything is
-   deployable. If the rank correlation between disjoint consecutive windows is meaningfully
-   positive, then a robust config exists and the search should select for cross-window
-   stability — a different objective, not a tweak of the current one. If it is near zero,
-   no objective repairs this and the problem is the strategy or its parameterisation.
-   Everything below is subordinate to the answer.
-2. **Decide whether to keep looking, and where.** Three avenues have now been closed by
-   measurement — config selection, reconfiguration cadence, trend filtering — and what
-   remains is not a tuning question. The one structural idea this study has not tested is an
-   **asymmetric stop by side**: `k_stop_buy` and `k_stop_sell` are already calibrated
-   separately, and the shared-`stop_pct` decision collapsed them onto one percentile. A wider
-   sell-side percentile biases the bot toward staying in the asset *without predicting
-   anything*, which is the structural version of what the trend filter tried to do causally.
-   Cheap to test on the existing space, but it is a strategy change and needs its own spec.
-3. **Test a second pair.** Everything here is XBTEUR. This is now the only external-validity
-   gap left, and the cheapest remaining way to learn something new.
-4. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
+| Avenue | Result |
+|---|---|
+| Selecting by in-sample PnL | percentile 50 of the forward distribution — chance |
+| Reconfiguring on a cadence | worse than not reconfiguring, at every cadence |
+| Selecting by past consistency | identical to picking at random |
+| Gating the bot through rallies | +0.6 points with perfect hindsight |
+| Asymmetric stop by side | ±0.4 points, and the effect runs against the mechanism |
+
+What is left is not a search for a better config. In order:
+
+1. **Decide whether to run the bot at all, and on what basis.** The strategy has a measured
+   conditional edge — it accumulates in flat and falling markets and loses in rallies — and no
+   way to tell which is coming. That makes deploying it a directional bet on the market, not
+   an edge, and that is a decision for the operator rather than a measurement. If it is
+   deployed, the practical guidance is in "Selecting by past consistency": take a config in
+   `min_margin` 0.04–0.07 and settle `stop_pct` on operational grounds, since past performance
+   carries no information at that resolution.
+2. **Test a second pair.** Everything here is XBTEUR. This is now the only external-validity
+   gap left, and the cheapest remaining way to learn something new — in particular whether the
+   buy-side asymmetry above is a property of this frame's direction, as suspected.
+3. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
    Reporting only, until an objective compares across windows again — see that section for
    what it does and does not change.
-5. **Decide whether shared `stop_pct` ships to production.** If it does, the deployed space
+4. **Decide whether shared `stop_pct` ships to production.** If it does, the deployed space
    becomes enumerable and Optuna/TPE/seeds/AUTO can be removed — a large simplification of
    `trading/optimizer/`. That decision needs its own spec.
-6. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
+5. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
    change: it touches `activation_distance` in both `trading/engine.py` and
    `trading/positions_manager.py`, and needs its own validation. Lower priority now that
    `k_act` is out of the experiments, but it is still the reason the profitable region only
    exists in one branch.
-7. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
+6. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
    window-anchored is what ships.
 
 Do **not** revisit `MINIMUM_CHANGE_PCT` or chase pivot density; neither addresses any
