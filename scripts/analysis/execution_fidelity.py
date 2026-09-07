@@ -60,6 +60,7 @@ import time
 import numpy as np
 import pandas as pd
 
+import trading.market_analyzer as market_analyzer  # para ajustar MINIMUM_CHANGE_PCT
 from core.config import ATR_DESV_LIMIT, ATR_PERIOD, RECALIBRATION_BARS
 from core.config import VOLATILITY_LEVELS as LEVELS
 from trading.engine import EngineConfig, PairCalibration, mark_to_market, simulate_operations
@@ -72,28 +73,39 @@ from trading.market_analyzer import (
 from trading.optimizer.search import _quantile_ceiled
 
 CSV_COLUMNS = ["time", "open", "high", "low", "close", "volume", "count"]
-FEE = 0.4
+FEE = 0.4  # porcentaje por pierna; --fee lo sustituye
+ASSET = "BTC"  # activo base del par; se fija en main a partir de --pair
 
-# La región que el estudio identificó como utilizable (min_margin 0.040-0.070), más los dos
-# extremos para que el barrido cubra tanto la familia que opera poco como la que opera mucho.
-MMS = (0.00, 0.02, 0.04, 0.05, 0.06, 0.07, 0.10)
+# La rejilla corta, como FRACCIONES del techo: sobre el 0.20 de XBTEUR reproduce exactamente
+# (0.00, 0.02, 0.04, 0.05, 0.06, 0.07, 0.10) — la región que el estudio identificó como
+# utilizable más los dos extremos — y sobre cualquier otro techo se escala con él.
+MM_FRACTIONS = (0.00, 0.10, 0.20, 0.25, 0.30, 0.35, 0.50)
 STOPS = (0.5, 0.7, 0.9)
 
 # La rejilla completa del estudio (105 configs), para comprobar si su único resultado
 # positivo — que la región min_margin 0.040-0.070 es identificable — sobrevive a 1 min.
-FULL_MMS = tuple(round(i * 0.01, 3) for i in range(21))
 FULL_STOPS = (0.5, 0.6, 0.7, 0.8, 0.9)
 
 Spec = tuple[float, float]
 
 
-def candidates(full: bool = False) -> list[Spec]:
-    mms, stops = (FULL_MMS, FULL_STOPS) if full else (MMS, STOPS)
-    return [(mm, s) for mm in mms for s in stops]
+def candidates(full: bool = False, mm_max: float = 0.20) -> list[Spec]:
+    """21 puntos de ``min_margin`` hasta ``mm_max``, cruzados con la rejilla de percentiles.
+
+    El techo es un argumento porque ``min_margin`` es una fracción del PRECIO, no del ATR, y
+    por tanto sólo significa algo en relación con cuánto se mueve el par. El 0.20 heredado
+    está calibrado para XBTEUR; sobre un par que recorre un 12 % en todo el año pediría casi
+    la mitad de ese recorrido para activarse, y el barrido mediría una rejilla mal
+    especificada en vez del par. Escalar el techo es parte de plantear la pregunta.
+    """
+    if not full:
+        return [(round(f * mm_max, 6), s) for f in MM_FRACTIONS for s in STOPS]
+    step = mm_max / 20.0
+    return [(round(i * step, 6), s) for i in range(21) for s in FULL_STOPS]
 
 
 def _signature(spec: Spec) -> str:
-    return f"mm={spec[0]:.3f} s={spec[1]:.1f}"
+    return f"mm={spec[0]:.4f} s={spec[1]:.1f}"
 
 
 # --- carga ------------------------------------------------------------------
@@ -280,7 +292,7 @@ def report_selection(cands: list[Spec], index: dict, coarse: int, fine: int, top
     print(f"  Coinciden {overlap}/{top}. Un config elegido con {coarse}m se despliega esperando")
     print("  su fila de la izquierda y obtiene la de la derecha.\n")
     print(
-        f"    {'#':>3}  {f'mejor segun {coarse}m':<20}{f'BTC {coarse}m':>10}{f'BTC {fine}m':>10}"
+        f"    {'#':>3}  {f'mejor segun {coarse}m':<20}{f'{ASSET} {coarse}m':>10}{f'{ASSET} {fine}m':>10}"
         f"   {f'mejor segun {fine}m':<20}"
     )
     print("    " + "-" * 78)
@@ -293,7 +305,9 @@ def report_selection(cands: list[Spec], index: dict, coarse: int, fine: int, top
 
     # La única afirmación positiva que el estudio conserva: la región es identificable
     # aunque la elección dentro de ella no lo sea. Se comprueba en los dos brazos.
-    region = [s for s in cands if 0.040 <= s[0] <= 0.070]
+    # Sólo tiene sentido sobre la rejilla a escala de XBTEUR, que es donde se enunció.
+    study_grid = max(s[0] for s in cands) > 0.15
+    region = [s for s in cands if 0.040 <= s[0] <= 0.070] if study_grid else []
     other = [s for s in cands if s not in region]
     if region and other:
         print(f"\n\n  Region min_margin 0.040-0.070 ({len(region)} configs) frente al resto ({len(other)}):\n")
@@ -317,7 +331,7 @@ def report(cands: list[Spec], arms: dict[int, list[dict]], holds: dict[int, floa
     print("FIDELIDAD DE EJECUCION — el mismo config a tres resoluciones, misma vista de volatilidad")
     print("=" * 100)
 
-    print(f"\n  {'resolucion':>11}{'mantener':>11}{'ops (med)':>12}{'EUR (med)':>12}{'vs hold BTC (med)':>20}")
+    print(f"\n  {'resolucion':>11}{'mantener':>11}{'ops (med)':>12}{'EUR (med)':>12}{f'vs hold {ASSET} (med)':>20}")
     print("  " + "-" * 66)
     for r in res:
         rows = arms[r]
@@ -328,12 +342,12 @@ def report(cands: list[Spec], arms: dict[int, list[dict]], holds: dict[int, floa
 
     verbose = len(cands) <= 30
     if verbose:
-        print(f"\n\n  Por config — 'vs hold' en BTC, que es el objetivo; delta contra el brazo de {coarse}m.\n")
+        print(f"\n\n  Por config — 'vs hold' en {ASSET}, que es el objetivo; delta contra el brazo de {coarse}m.\n")
     head = f"  {'config':>16}"
     for r in res:
         head += f"{f'ops {r}m':>9}"
     for r in res:
-        head += f"{f'BTC {r}m':>11}"
+        head += f"{f'{ASSET} {r}m':>11}"
     head += f"{f'd {fine}m-{coarse}m':>13}"
     if verbose:
         print(head)
@@ -378,7 +392,7 @@ def report(cands: list[Spec], arms: dict[int, list[dict]], holds: dict[int, floa
     )
     print(f"  {'cambian de signo':>34}{f'{flips}/{len(cands)}':>12}{f'{act_flips}/{len(active)}':>15}")
 
-    print("\n\n  Correlacion de rangos entre resoluciones (sobre 'vs hold' en BTC):")
+    print(f"\n\n  Correlacion de rangos entre resoluciones (sobre 'vs hold' en {ASSET}):")
     print("  Esto es lo que decide si el estudio sobrevive. El nivel puede moverse; si el ORDEN")
     print("  aguanta, las conclusiones comparativas siguen en pie. La columna 'solo activos' es")
     print("  la que vale: los configs que no operan empatan y sesgan el rho hacia arriba.\n")
@@ -409,6 +423,7 @@ def report(cands: list[Spec], arms: dict[int, list[dict]], holds: dict[int, floa
 
 
 def main() -> int:
+    global FEE, ASSET
     ap = argparse.ArgumentParser(description="¿Es un artefacto de 15 min lo que mide el estudio?")
     ap.add_argument("data_dir", help="Carpeta con XBTEUR_1.csv, XBTEUR_5.csv, XBTEUR_15.csv")
     ap.add_argument("--pair", default="XBTEUR")
@@ -419,14 +434,28 @@ def main() -> int:
     ap.add_argument("--resolutions", default="15,5,1")
     ap.add_argument("--full", action="store_true", help="La rejilla completa del estudio (105 configs).")
     ap.add_argument("--top", type=int, default=10, help="Tamano de la cabeza del ranking que se compara.")
+    ap.add_argument("--mm-max", type=float, default=0.20, help="Techo de la rejilla de min_margin (21 puntos).")
+    ap.add_argument("--fee", type=float, default=FEE, help="Comision por pierna, en porcentaje.")
+    ap.add_argument(
+        "--min-change-pct",
+        type=float,
+        default=None,
+        help="Umbral de pivote. Es una fraccion de PRECIO pero significa un multiplo de ATR: 0.02 exige "
+        "8.7 ATR medianos en XBTEUR y 38.8 en USDCEUR, que es por lo que el segundo se queda sin muestra.",
+    )
     args = ap.parse_args()
 
     cal_t0 = int(pd.Timestamp(args.cal_start).timestamp())
     sim_t0 = int(pd.Timestamp(args.start).timestamp())
     t1 = int(pd.Timestamp(args.end).timestamp()) + 86_399
     res = [int(x) for x in args.resolutions.split(",")]
+    FEE = args.fee
+    ASSET = args.pair.removesuffix("EUR") or args.pair
+    if args.min_change_pct is not None:
+        market_analyzer.MINIMUM_CHANGE_PCT = args.min_change_pct
 
     print(f"[datos] {args.pair} en {args.data_dir}")
+    print(f"  comision {FEE}%/pierna, MINIMUM_CHANGE_PCT {market_analyzer.MINIMUM_CHANGE_PCT}")
     print(f"  calibracion desde {args.cal_start}, simulacion {args.start}..{args.end}")
 
     coarse = coarse_frame(os.path.join(args.data_dir, f"{args.pair}_15.csv"), cal_t0, t1, 15)
@@ -439,7 +468,7 @@ def main() -> int:
     points = ([prior[-1]] if prior else []) + [p for p in points if p["time"] > sim_t0]
     print(f"  {len(points)} puntos aplican a la ventana de simulacion")
 
-    cands = candidates(args.full)
+    cands = candidates(args.full, args.mm_max)
     print(f"\n[barrido] {len(cands)} configs x {len(res)} resoluciones")
 
     arms, holds = {}, {}

@@ -13,6 +13,14 @@ by ±9 points, and the `min_margin` 0.040–0.070 region does not replicate. The
 that one fact is consistent with every negative result in this file. See "The simulator's own
 time resolution moves a config by ±9 points".
 
+**That last sentence is the one to act on, and USDCEUR is why.** Every negative result here
+was measured at a sample size where an edge could not have been detected had it existed. On
+USDCEUR — once `MINIMUM_CHANGE_PCT` is scaled to the pair, having been found to be an ATR
+multiple disguised as a price fraction — configs make **11 to 45 operations** instead of 3 to
+7. Nothing about predictiveness has been re-tested there yet, and until it is, the five closed
+avenues are properties of a small sample as much as of the strategy. See "USDCEUR: the pivot
+threshold is an ATR multiple wearing a price fraction".
+
 The question this document exists to answer is unchanged — *can the optimizer produce a config
 that beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested
 on measurements that were wrong. Everything PnL-based in the previous version of this file
@@ -471,10 +479,84 @@ Caveat on the data: the 1-minute series has 1 930 gaps in the window (Kraken omi
 with no trades), 393 215 bars against 396 000 nominal — 99.3 % coverage, mostly one- or
 two-bar holes.
 
+### USDCEUR: the pivot threshold is an ATR multiple wearing a price fraction (2026-09-07)
+
+The second pair, chosen for the axis the strategy actually runs on: USDCEUR's `ATR/close`
+median is **0.000516** against XBTEUR's **0.002288** — 4.4× quieter — which is the sharpest
+contrast the archives offer, and far more informative than a correlated crypto major.
+
+Transplanting the config unchanged does almost nothing, and the reason is a constant nobody
+had questioned. `MINIMUM_CHANGE_PCT` (default 0.02) filters pivots as a fraction of **price**,
+but what it means is a multiple of **ATR**, and the two only coincide on the pair it was tuned
+on:
+
+| Pair | `MINIMUM_CHANGE_PCT` | × median ATR | Structural events / side / year | Min samples per level |
+|---|---|---|---|---|
+| XBTEUR | 0.0200 | 8.7 | 169 | 41 |
+| USDCEUR | 0.0200 | **38.8** | **10** | **7** |
+| USDCEUR | 0.0045 | 8.7 | 141 | 27 |
+
+At 0.02 a "structural" move on USDCEUR is forty ATRs, so a whole year yields ten pivots per
+side and the five volatility levels are filled from the same ten episodes. The `K_STOP` values
+are then not estimates but one observation repeated — median K 26.4 at LL against XBTEUR's
+7.3. The ATR-equivalent threshold restores the sample almost exactly, and the K medians land
+on XBTEUR's too (MV 3.98 vs 3.85, HH 2.72 vs 2.26).
+
+Swept, at Kraken's real stablecoin fee of 0.20 %/leg (tier 1), 2025-04-01..2025-12-31, hold
+−7.87 %:
+
+| `MINIMUM_CHANGE_PCT` | × ATR | Fee/leg | Configs that trade | Best 15m | Best 1m |
+|---|---|---|---|---|---|
+| 0.0200 | 38.8 | 0.40 % | 12/105 | +2.90 % | +4.40 % |
+| **0.0045** | **8.7** | 0.20 % | **21/105** | **+5.94 %** | **+6.76 %** |
+| 0.0020 | 3.9 | 0.20 % | 22/105 | +3.50 % | +5.26 % |
+
+Going *below* the ATR-equivalent value is worse too, so this is not "smaller is better on a
+quiet pair" — the calibration has a natural scale in ATR units and both departures lose it.
+The two changes decompose cleanly because `fee_rate` never enters the decision path in
+`trading/engine.py` (only `_leg_pct`, `_record_stop_exit` and the opening buy): the threshold
+alone explains 12 → 21 trading configs, the fee only shifts levels.
+
+**The find worth acting on is the operation count.** With the threshold and the `min_margin`
+ceiling both scaled to the pair, USDCEUR trades **5 to 273 times** over the window where
+XBTEUR managed 3 to 7:
+
+| Config | ops 15m / 5m / 1m | USDC 15m / 5m / 1m |
+|---|---|---|
+| `mm=0.0000 s=0.5` | 270 / 268 / 273 | −42.9 % / −42.8 % / −43.1 % |
+| `mm=0.0030 s=0.7` | 31 / 35 / 45 | +1.1 % / −0.7 % / +0.2 % |
+| `mm=0.0045 s=0.9` | 13 / 15 / 17 | +4.5 % / +3.2 % / +4.1 % |
+| **`mm=0.0053 s=0.9`** | **11 / 11 / 13** | **+5.5 % / +5.4 % / +6.3 %** |
+| `mm=0.0075 s=0.9` | 5 / 5 / 5 | +3.3 % / +3.3 % / +3.3 % |
+
+This is the first setting in the study with enough operations for a predictiveness test to
+have any power, and the optimum is **not** at the quiet end — 5 operations scores +3.3 % and
+11 scores +6.3 %, which is what a mechanism looks like rather than a slow convergence on hold.
+The high-frequency end fails for the obvious reason: 270 operations at 0.4 % round trip is
+54 points of fees.
+
+The resolution result reproduces on this pair, in shape and not only in sign: median delta
+−0.16 points, largest 5.5 on returns near 5 %, top-ten overlap 8–9/10, rho +0.80 to +0.92
+between arms, and again no convergence.
+
+**Two things this is not.** The base asset here is USDC, so "accumulating the base asset"
+means accumulating dollars — a EUR/USD carry position, not the same goal as accumulating
+bitcoin. In euros the best config ends at **−2.1 %** against **−7.9 %** for holding USDC,
+which is a hedge, not a profit. And the USDCEUR series has an 11-day hole (1 077 missing
+15-minute candles, 3 229 at 5 min), so any window overlapping it is thinner than it looks.
+
+**Production consequence, unimplemented.** `MINIMUM_CHANGE_PCT` is a single global in
+`trading/market_analyzer.py`, read at call time by `detect_pivots`. Making it per-pair is the
+shallow fix; expressing it as a multiple of the pair's median `ATR/close` is the correct one,
+since that is what it already means and it would then calibrate itself for any pair. Neither
+is done — everything above is a monkeypatch in the harness.
+
 ### Still not established
 
-- **One pair.** XBTEUR only. This is now the main external-validity gap, the regime one
-  having been closed.
+- **Whether anything predicts on a pair that trades enough.** Every predictiveness and
+  persistence result in this file was measured on XBTEUR, where the winners make 3–7
+  operations. USDCEUR with a pair-scaled threshold makes 11–45, which is the first setting
+  where the test could have power. **This is now the most informative thing left to run.**
 - **Whether the strategy can beat hold at all**, given that it needs a forward regime
   signal and the only candidate tested has none. See "The rally is the problem".
 - **What a non-zero `hodl_pct` would do.** Production can hold a fraction of the target
@@ -834,6 +916,10 @@ was a hypothesis about where the edge lived, and none survived:
 | Asymmetric stop by side | ±0.4 points, and the effect runs against the mechanism |
 | Picking a config from the 0.04–0.07 region | does not replicate at 1-minute resolution |
 
+…but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
+USDCEUR below before treating them as settled properties of the strategy rather than of that
+sample size.
+
 What is left is not a search for a better config. In order:
 
 1. **Decide whether to run the bot at all, and on what basis.** The strategy has a measured
@@ -844,13 +930,13 @@ What is left is not a search for a better config. In order:
    to replicate, and the resolution check shows the whole comparison lives inside the
    simulator's own noise. Pick on operational grounds — operation count, fees, time out of the
    asset — and treat the backtested return as an illustration, not a forecast.
-2. **Test a second pair.** Everything here is XBTEUR. This is now the only external-validity
-   gap left, and the cheapest remaining way to learn something new — in particular whether the
-   buy-side asymmetry above is a property of this frame's direction, as suspected. USDCEUR
-   archives are on hand at 1/5/15 min and are the sharpest available contrast: a near-FX pair
-   whose `ATR/close` distribution is nothing like XBTEUR's, which is the axis the strategy's
-   whole mechanism runs on. Pick the second pair by that distribution, not by market cap —
-   crypto majors correlate too closely to be independent evidence.
+2. **Re-run the predictiveness test on USDCEUR.** Done as an external-validity check, it
+   turned into the most promising thread in the study: with the pivot threshold and the
+   `min_margin` ceiling scaled to the pair, configs make 11–45 operations instead of 3–7. Every
+   negative result in this file was measured where the sample was too small to detect an edge
+   even if one existed, so *repeat the enumeration and the forward-percentile test here before
+   concluding anything about the strategy*. It is cheap: the whole grid at three resolutions is
+   about six minutes.
 3. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
    Reporting only, until an objective compares across windows again — see that section for
    what it does and does not change.
@@ -880,7 +966,7 @@ Kraken's OHLCVT archives directly and need no database at all.
 | Script | What it answers |
 |---|---|
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
-| `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Reads the CSV archives directly; takes the data directory, not `--csv`. |
+| `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Also the pair-portability harness: `--pair`, `--fee`, `--mm-max` (the `min_margin` grid is a fraction of *price*, so its ceiling must scale with how far the pair moves) and `--min-change-pct` (an ATR multiple in disguise — see the USDCEUR section). Reads the CSV archives directly; takes the data directory, not `--csv`. |
 | `scripts/analysis/config_stability.py` | **Does config quality persist, and does the regime predict it?** Runs all 105 configs once, continuously, then splits that single run into N periods by the ratio of compounded growth factors. Reports the rank correlation between periods, and the Choppiness Index of the bars before each period against what the space did in it. `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
 | `scripts/analysis/holdout_experiment.py` | Task 1: fit on the first N days, score on one continuous run over the remainder against hold. `--csv`. |
