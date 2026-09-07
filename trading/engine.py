@@ -36,6 +36,12 @@ class EngineConfig:
     min_margin: float
     atr_desv_limit: float
     calibration_schedule: tuple[tuple[int, PairCalibration], ...] = ()
+    # Bars on which the bot must be fully in the base asset. A sell exit is suppressed (the stop
+    # keeps trailing, so the exit is deferred, not cancelled), and a bot sitting in cash is forced
+    # in at that bar's price, paying the entry fee. Suppressing sells alone is inert whenever the
+    # rally opens on a cash leg, which is exactly the case that costs base asset.
+    # Empty in production: this exists to bound a rally gate offline.
+    force_hold_bars: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -248,6 +254,7 @@ def simulate_operations(
     max_ops: int | None = None,
 ) -> list[Operation]:
     schedule = cfg.calibration_schedule
+    force_hold = cfg.force_hold_bars
 
     ops: list[Operation] = []
     cum_pnl = 0.0  # cumulative return in percent, compounded
@@ -322,6 +329,22 @@ def simulate_operations(
             atr, price, cal.atr_ratio_p20, cal.atr_ratio_p50, cal.atr_ratio_p80, cal.atr_ratio_p95
         )
 
+        forced = idx in force_hold
+        if forced and side == "buy":
+            # In cash while the mask demands the asset: buy at this bar's price, then hold.
+            cum_pnl = _record_stop_exit(ops, cal, "buy", price, dtime, vol, fee_rate, cum_pnl)
+            if max_ops is not None and len(ops) >= max_ops:
+                break
+            side = "sell"
+            entry_price = float(price)
+            active = False
+            activation_px = None
+            activation_atr = None
+            trailing_price = None
+            stop_px = None
+            stop_atr = None
+            continue
+
         atr_limit_max = atr * (1 + cfg.atr_desv_limit)
         atr_limit_min = atr * (1 - cfg.atr_desv_limit)
 
@@ -368,6 +391,10 @@ def simulate_operations(
 
         stop_hit = low <= stop_px if side == "sell" else high >= stop_px
         if not stop_hit:
+            continue
+
+        # The stop stays where it is and keeps trailing; the mask only defers the exit.
+        if forced:
             continue
 
         exec_price = stop_px

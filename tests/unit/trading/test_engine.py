@@ -389,3 +389,59 @@ def test_mark_to_market_of_a_priceless_operation_keeps_the_realized_total() -> N
     priceless = engine.Operation(1, "t0", "buy", 0.0, "LV", 1.0, 0.0, None, None, 7.5)
 
     assert engine.mark_to_market([priceless], 120.0) == 7.5
+
+
+# --- forced-hold mask ------------------------------------------------------
+
+
+def _with_hold(cfg: engine.EngineConfig, bars) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, force_hold_bars=frozenset(bars))
+
+
+def test_the_hold_mask_is_empty_by_default() -> None:
+    # Production never sets it, so the live path must carry no mask at all.
+    assert _cfg().force_hold_bars == frozenset()
+
+
+def test_a_masked_bar_does_not_fire_the_sell_stop() -> None:
+    # Holding the asset is what the mask is for, so the owed exit is deferred, not taken.
+    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [1]))
+
+    assert [(op.side, op.time) for op in plain][:2] == [("buy", "t0"), ("sell", "t1")]
+    assert [(op.side, op.time) for op in masked][:2] == [("buy", "t0"), ("sell", "t2")]
+
+
+def test_the_stop_keeps_trailing_under_the_mask() -> None:
+    # A frozen stop would exit at a stale level once the mask lifts; it must track the new high.
+    rows = [(100.0, 100.0, 100.0), (110.0, 105.0, 108.0), (120.0, 118.0, 119.0), (121.0, 110.0, 115.0)]
+    masked = engine.simulate_operations(_df(rows), _with_hold(_cfg(), [1]))
+
+    # Bar 1 would have sold at 108; bar 2 trails to 120 and the deferred exit lands at 118.
+    assert [op.price for op in masked] == [100.0, 118.0, 112.0]
+
+
+def test_a_masked_bar_forces_an_entry_when_the_bot_holds_cash() -> None:
+    # The whole point of (a): a bot in cash when a rally opens must be put back into the asset.
+    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [2]))
+
+    # Plain rebuys at the stop, 92; the mask buys at bar 2's own price, 95 — worse, and honest.
+    assert [op.price for op in plain] == [100.0, 108.0, 92.0, 118.0]
+    assert [op.price for op in masked] == [100.0, 108.0, 95.0, 118.0]
+
+
+def test_the_forced_entry_pays_the_entry_fee() -> None:
+    # It is a real trade, so it is charged like one — a free forced entry would flatter the bound.
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [2]), fee_rate=0.01)
+
+    forced = masked[2]
+    assert forced.side == "buy"
+    assert forced.fee_abs == pytest.approx(95.0 * 0.01)
+
+
+def test_the_mask_does_not_re_enter_a_bot_that_already_holds_the_asset() -> None:
+    # Only a cash leg is forced in; masking a long stretch must not book an operation per bar.
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [1, 2, 3]))
+
+    assert [(op.side, op.time) for op in masked] == [("buy", "t0")]
