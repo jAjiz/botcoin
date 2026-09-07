@@ -102,7 +102,7 @@ which is itself a consequence of two decisions recorded below.
 ### Task 1 — the honest out-of-sample test, re-run (2026-09-04)
 
 Fit on the first N days, score the winner on **one continuous run** over the entire
-remainder, in euros, against hold over the same span. `scripts/analysis/holdout_experiment.py`.
+remainder, in euros, against hold over the same span. Produced by `holdout_experiment.py`, since deleted.
 Five free `stop_pcts`, both branches, `min_margin` ≤ 0.10, 3 seeds:
 
 | Fit window | Median result | Hold | vs hold | Seeds beating hold |
@@ -124,7 +124,7 @@ the ceiling; and seed variance at 60 d spanned 51 points (−22.6, −18.3, +28.
 
 ### Reconfiguration cadence (2026-09-05)
 
-`scripts/analysis/refit_frequency_experiment.py`, one continuous run per arm over a single
+Produced by `refit_frequency_experiment.py` (since deleted), one continuous run per arm over a single
 shared forward span (2025-04-01 .. 2026-03-31, hold −23.68 %), shared `stop_pct`, no
 `k_act` branch, `min_margin` ≤ 0.20:
 
@@ -194,8 +194,7 @@ Three further readings:
 deployable: does a config that did well in one window tend to do well in the next? If rank
 persists, selection should target cross-window stability instead of in-sample PnL. If it
 does not, no objective repairs this and the problem is the strategy, not the optimizer.
-`scripts/analysis/config_stability.py` measures it as the rank correlation between disjoint
-consecutive windows.
+It is answered two sections down, and the answer is that it does not.
 
 ### An asymmetry worth explaining
 
@@ -210,8 +209,8 @@ configs rather than random ones. Worth resolving before any reconfiguration feat
 
 ### Config quality does not persist either (2026-09-05)
 
-`scripts/analysis/config_stability.py`: all 105 configs run once over 2025-04-01 ..
-2026-03-31, that single run split into six ~60-day periods by the ratio of its compounded
+Produced by `config_stability.py` (since deleted): all 105 configs run once over
+2025-04-01 .. 2026-03-31, that single run split into six ~60-day periods by the ratio of its compounded
 growth factors, and only ranks *within* a period compared.
 
 Rank correlation between consecutive periods: **−0.19, +0.25, +0.25, +0.11, +0.01** —
@@ -290,10 +289,11 @@ matters enormously; this detector does not detect it.
 The rally is where the strategy loses, so the next question was whether blocking the bot
 during up-trends could pay. It was bounded before it was built, and the bound says no.
 
-`EngineConfig.no_sell_bars` suppresses the *sell* side on chosen bars: in an up-trend the
-damage is leaving the asset and rebuying higher, so the exit is the harmful action, while a
-re-entry is what gets the bot back in and must never be gated. The stop keeps trailing while
-masked, so the mask defers an exit rather than cancelling it. Empty in production.
+The measurement used an `EngineConfig.no_sell_bars` mask (since removed, `ca4fc5b`)
+suppressing the *sell* side on chosen bars: in an up-trend the damage is leaving the asset
+and rebuying higher, so the exit is the harmful action, while a re-entry is what gets the
+bot back in and must never be gated. The stop kept trailing while masked, so the mask
+deferred an exit rather than cancelling it. It was always empty in production.
 
 Three variants, same continuous run, 105 configs, base asset accumulated over
 2025-04-01 .. 2026-03-31:
@@ -833,12 +833,14 @@ continuous run over the whole forward span.**
 
 **FIXED (`f130a52`, `afe7077`).** The restart was never a harness choice: `EngineConfig`
 held `min_margin` as a scalar and `simulate_operations` always starts flat, so changing a
-config mid-history *meant* calling it again. `EngineConfig.activation_schedule` now carries
+config mid-history *meant* calling it again. An `EngineConfig.activation_schedule` carried
 `(bar, ActivationParams(k_act, min_margin))` as a step function, the way
 `calibration_schedule` already carried the calibration — a new `stop_pct` needed nothing,
 since the scheduled `PairCalibration` values are what the percentile produces, but
 `min_margin` multiplies each bar's price where `k_stop` multiplies its ATR and cannot be
-folded in. Production sets neither schedule, so the live path is unchanged.
+folded in. Production never set it, and it was removed with the cadence question in
+`ca4fc5b`; `calibration_schedule`, which production does not set either but `/backtest` and
+the optimizer do, stays.
 
 This mattered most for the cadence question specifically: the number of restarts scales
 with the cadence under test, so the artifact landed on the variable being measured and
@@ -848,9 +850,9 @@ penalised exactly the arm that reconfigures most.
 `build_calibration_inputs` places its points at multiples of `recalib_bars` from the
 *window's* first bar. The live bot recalibrates on a fixed cadence regardless of where an
 analysis window happens to start. For a full-history run the two coincide; for a sliced
-job they do not. `scripts/analysis/refit_frequency_experiment.py` anchors to the frame,
-which is the faithful choice. **Open: decide whether to move the in-tree builder to a
-frame-anchored grid.** Given defect 2's sensitivity measurement, this is not cosmetic.
+job they do not. The study's harnesses anchored to the frame, which is the faithful
+choice. **Open: decide whether to move the in-tree builder to a frame-anchored grid.**
+Given defect 2's sensitivity measurement, this is not cosmetic.
 
 **~~The harnesses collapse the five per-level `stop_pcts` into one shared value.~~** —
 **WITHDRAWN.** This was recorded as a defect because the deployed `SearchSpace` searches
@@ -894,8 +896,9 @@ significant architectural simplification and has not yet been decided.
   fresh `simulate_operations`, so a config whose barrier takes weeks to cross was scored as
   having done nothing; and windows slid by one day, so "75 windows" over the 111 days
   available are about eleven independent weeks. A `+0.44` on that n is not a finding. The
-  Choppiness Index itself moved into `config_stability.py`, where it is measured without
-  restarts. **Do not cite the +0.44 until it is re-measured.**
+  Choppiness Index moved into `config_stability.py`, where it was re-measured without
+  restarts and predicted nothing. **Do not cite the +0.44.** The `docs/BACKLOG.md`
+  Trend/Chop card this figure motivated is closed on the oracle bound above.
 
 **Still standing:** the structural argument for `MINIMUM_CHANGE_PCT = 0.020` (lowering it
 redefines what counts as noise rather than sampling more of it); the `stop_pcts` floor of
@@ -963,25 +966,25 @@ All read-only, all require `PYTHONPATH=.`. Everything under `scripts/analysis/` 
 document and can be deleted once they are answered. The harnesses that take `--csv` read
 Kraken's OHLCVT archives directly and need no database at all.
 
+Five were deleted in `ca4fc5b` once their question closed — `holdout_experiment.py`,
+`refit_frequency_experiment.py`, `config_stability.py`, `objective_experiment.py` and
+`grid_validation.py`. Their results are recorded above and are **not** re-derivable from
+the tree; each section that reports one names the script that produced it. What survives is
+what still answers a question no result has closed.
+
 | Script | What it answers |
 |---|---|
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
 | `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Also the pair-portability harness: `--pair`, `--fee`, `--mm-max` (the `min_margin` grid is a fraction of *price*, so its ceiling must scale with how far the pair moves) and `--min-change-pct` (an ATR multiple in disguise — see the USDCEUR section). Reads the CSV archives directly; takes the data directory, not `--csv`. |
-| `scripts/analysis/config_stability.py` | **Does config quality persist, and does the regime predict it?** Runs all 105 configs once, continuously, then splits that single run into N periods by the ratio of compounded growth factors. Reports the rank correlation between periods, and the Choppiness Index of the bars before each period against what the space did in it. `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
-| `scripts/analysis/holdout_experiment.py` | Task 1: fit on the first N days, score on one continuous run over the remainder against hold. `--csv`. |
-| `scripts/analysis/refit_frequency_experiment.py` | Reconfiguration cadence, several cadences per run over one shared forward span, each arm on one continuous run. `--csv`. |
-| `scripts/analysis/objective_experiment.py` | 2×2: inner train/test split vs the fit window's own PnL, five free `stop_pcts` vs one shared. **Both factors are now settled — see "Decisions taken" — so this is superseded.** |
-| `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price). |
-| `scripts/analysis/grid_validation.py` | Edge-pinning, coverage, AUTO convergence. **Its `walkforward` mode uses the segment-restart method — see Harness defects; do not trust its chained figures.** |
+| `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price) — the inputs the `SearchSpace` defaults are drawn from. |
 
 The point caches exist because the in-tree `build_calibration_inputs` recomputes on every
 call, and a schedule over a long window costs minutes — 280–640 s for the 15-month XBTEUR
-frame (909 points), varying with machine load. `refit_frequency_experiment.py`,
-`holdout_experiment.py` and `grid_sweep_holdout.py` each compute the frame's points once
-and slice them per window (frame-anchored).
-`objective_experiment.py` memoizes per window instead, since every arm and every seed of a
-transition re-fits the same window. All are installed by monkeypatching
+frame (909 points), varying with machine load. `grid_sweep_holdout.py` computes the
+frame's points once and slices them per window (frame-anchored); the deleted harnesses did
+the same, except `objective_experiment.py`, which memoized per window since every arm and
+every seed of a transition re-fit the same one. All were installed by monkeypatching
 `optimizer.build_calibration_inputs`. **A new harness needs one of them**, and should
 print progress — a silent six-minute build looks like a hang.
 

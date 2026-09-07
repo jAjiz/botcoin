@@ -5,7 +5,7 @@ self-contained — there is no fixed delivery order. Cards are grouped by status
 and kept brief: the design and the reasoning behind it live in the linked spec.
 A card being implemented also links a plan, which is deleted once it ships.
 
-**Status legend:** ✅ Shipped · 📋 Planned · 💤 Deferred
+**Status legend:** ✅ Shipped · 📋 Planned · 💤 Deferred · ❌ Closed
 
 
 
@@ -90,22 +90,6 @@ pass removes the duplication that has already left `operations.md` stale.
 
 ## 💤 Deferred
 
-### Trend/Chop Regime Filter
-
-A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that gates
-new position entries while the market trends, leaving the trailing-stop exit
-logic untouched. Reuses the existing OHLC + ATR pipeline, no new external
-dependencies. Ships in two stages — observation first (publish the regime via
-API/Telegram), enforcement second (gate entries on `regime != TREND`).
-
-Gating on `CHOP`, this card's original direction, was measured backwards: over 75
-weekly XBTEUR windows the bot's edge over buy-and-hold rises with chop (rank
-correlation +0.44, monotone by quintile), because a sustained trend takes an
-alternating long/short strategy the wrong way. Measured to cut losses, not to beat
-holding — the 111 days available are all one bull regime.
-
-- Spec: _to be written_
-
 ### Auto-Lookback Window for K_STOP Calibration
 
 Replace full-history K_STOP calibration with a data-driven lookback window
@@ -131,3 +115,33 @@ needs a time series, and external deposits and withdrawals must be modelled or
 the comparison silently lies the first time the operator moves EUR.
 
 - Spec: _to be written_
+
+
+## ❌ Closed
+
+### Trend/Chop Regime Filter
+
+A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that would
+gate the bot through sustained trends, leaving the trailing-stop exit logic
+untouched. **Closed 2026-09-07: bounded before it was built, and the bound says
+no.**
+
+The upper bound was measured with a perfect-hindsight oracle — the bars to gate
+chosen *after* seeing what the price did, which no live classifier can match — by
+masking sell exits on them across 105 configs over one continuous run of
+2025-04-01 .. 2026-03-31. It is worth **+0.6 points** of accumulated base asset.
+A real classifier gets some fraction of that, and the observation stage alone
+costs more than the whole ceiling is worth.
+
+The `+0.44` rank correlation that motivated this card does not stand. It came
+from `regime_filter_screen.py` (deleted), measured before both engine fixes
+shipped: the cash leg was still paid as if the bot held a short — worth up to
++162 points of overstatement on exactly the low-frequency configs it used — and
+nothing recalibrated. Its 75 "weekly windows" over 111 days of data are about
+eleven independent weeks, each a fresh restarted simulation. **Do not cite it.**
+
+Reopening this needs a new mechanism, not a better classifier: the loss in a
+rally is selling and rebuying higher, and the oracle already prices out every
+way of not selling.
+
+- Study: [`specs/optimizer-validation-design.md`](specs/optimizer-validation-design.md) § Trend filtering is dead
