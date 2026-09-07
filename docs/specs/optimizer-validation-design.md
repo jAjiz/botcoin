@@ -551,6 +551,69 @@ shallow fix; expressing it as a multiple of the pair's median `ATR/close` is the
 since that is what it already means and it would then calibrate itself for any pair. Neither
 is done — everything above is a monkeypatch in the harness.
 
+### High volatility is not more directional (2026-09-07)
+
+The last untested lever, and the only one that was not a repeat: direction cannot be
+predicted, but volatility **can** — realized volatility is strongly autocorrelated where
+direction is not, and the bot already classifies it every tick as LL…HH. So unlike the
+trend filter, whose oracle was worth +0.6 points and whose realizable fraction was near
+zero anyway, a volatility gate would capture a real share of whatever premium exists. The
+proposal: trade the low-volatility chop, stand aside through the high-volatility episodes.
+
+**But in base-asset terms the enemy is not volatility, it is sustained direction.** A
+violent oscillation that returns to its starting price is the best case a trailing stop
+can have — maximum path, no displacement. What loses base asset is selling and not getting
+back in below. So the proposal carries a hidden empirical claim, and everything rests on it:
+
+> in BTC, high-ATR stretches are disproportionately **trending** rather than **oscillating**
+
+That is measurable directly from the price series — no engine, no configs, no fees. For a
+window of N bars, the Kaufman efficiency ratio `|net| / Σ|steps|` is 1 for a pure trend and
+0 for a pure oscillation, and it is dimensionless, so it compares across volatility levels
+where a raw return could not. `scripts/analysis/volatility_regime_screen.py`, XBTEUR
+15-minute candles over the range the archive actually covers (2025-01-01 .. 2025-12-31),
+**non-overlapping** windows so the reported n is the real n, each window classified by the
+ATR level of its own first bar.
+
+A driftless random walk does not score 0 — it scores `1/√N` — so the table reports
+**ER/null**, and the null is what a coin flip gives:
+
+| Horizon | LL | LV | MV | HV | HH | n per level |
+|---|---|---|---|---|---|---|
+| 1 h | 1.01 | 0.99 | 0.99 | 1.00 | 0.98 | 435–2 625 |
+| 4 h | 1.05 | 0.96 | 0.95 | 0.98 | 1.03 | 113–673 |
+| 12 h | 1.01 | 0.99 | 1.06 | 0.98 | 0.98 | 43–217 |
+| 24 h | 1.01 | 0.89 | 0.98 | 0.89 | 1.11 | 17–118 |
+
+**Flat, at every horizon, with no monotone rise from LL to HH.** The 72-hour row is omitted
+because its levels carry 5–38 windows. USDCEUR shows the same flatness. High-ATR stretches
+are exactly as directional as low-ATR ones, which is to say not directional at all.
+
+**The metric is not broken — it was checked against synthetic series before the null was
+believed**, which the Choppiness episode in this document is the reason for: a pure trend
+scores ER 1.000, a pure sawtooth 0.000, a trend buried in noise 1.08 (N=16) rising to 1.41
+(N=96), and a random walk 1.07–1.11. Full dynamic range. Against that empirical baseline of
+~1.07, BTC's pooled 0.95–1.04 is if anything *marginally less* efficient than a coin flip.
+
+That last point is larger than the question that prompted it: **over 1 h to 3 d, BTC's price
+path is statistically indistinguishable from a driftless random walk at every volatility
+level.** There is no trend structure at these horizons for any filter to find.
+
+**One pattern was not acted on, deliberately.** Mean signed return rises with horizon for HH
+(+0.03 / +0.15 / +0.79 / +1.96 %) and falls for HV (−0.02 / −0.05 / −0.26 / −0.58 %), which
+would be the worst case for the bot if real — the top volatility band skewed *up* is exactly
+the rally it cannot survive. It is not actionable: n is 17–43 at the horizons where the
+effect appears, roughly 2.5 standard errors, and the two adjacent bands carry **opposite**
+signs, which is not what a genuine volatility-direction link looks like. Recorded so it is
+not rediscovered as news.
+
+**What this closes:** gating on volatility, and with it the stated rationale for
+differentiating `stop_pct` by level (wide in HV/HH so the position rides the episode, normal
+in LL/LV/MV). **What it does not close:** per-level stops as a tuning question — the 105-config
+sweep uses `dict.fromkeys(LEVELS, stop)`, one shared value, so per-level differentiation is
+genuinely unexplored. There is simply no hypothesis left proposing it, and the study's record
+on searching a space with no mechanism behind it is five for five.
+
 ### Still not established
 
 - **Whether anything predicts on a pair that trades enough.** Every predictiveness and
@@ -907,8 +970,8 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Five avenues are now closed by measurement**, and none of them was a tuning question — each
-was a hypothesis about where the edge lived, and none survived:
+**Seven avenues are now closed by measurement**, and none of them was a tuning question —
+each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
 |---|---|
@@ -918,6 +981,7 @@ was a hypothesis about where the edge lived, and none survived:
 | Gating the bot through rallies | +0.6 points with perfect hindsight |
 | Asymmetric stop by side | ±0.4 points, and the effect runs against the mechanism |
 | Picking a config from the 0.04–0.07 region | does not replicate at 1-minute resolution |
+| Gating on volatility instead of direction | high-ATR stretches are no more directional than low-ATR ones |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -977,6 +1041,7 @@ what still answers a question no result has closed.
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
 | `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Also the pair-portability harness: `--pair`, `--fee`, `--mm-max` (the `min_margin` grid is a fraction of *price*, so its ceiling must scale with how far the pair moves) and `--min-change-pct` (an ATR multiple in disguise — see the USDCEUR section). Reads the CSV archives directly; takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
+| `scripts/analysis/volatility_regime_screen.py` | **Are high-ATR stretches more directional than low-ATR ones?** Kaufman efficiency ratio by volatility level over non-overlapping windows at five horizons, against the `1/√N` random-walk null. No engine, no configs, no fees — a descriptive measure of the market, seconds to run. Takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price) — the inputs the `SearchSpace` defaults are drawn from. |
 
 The point caches exist because the in-tree `build_calibration_inputs` recomputes on every
