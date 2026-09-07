@@ -1,9 +1,17 @@
 # Optimizer Validation — Design and Study State
 
-Status (2026-09-06): **four defects fixed, one harness defect fixed — and five avenues closed
+Status (2026-09-07): **four defects fixed, one harness defect fixed — and five avenues closed
 by measurement.** No way of choosing a config has been found that carries forward, and no
 modification of the strategy tested here changes that. What remains is a conditional edge with
 no way to tell when it applies. See the table under "How to continue".
+
+The last positive claim went with the resolution check. Re-running the whole grid at 1-minute
+resolution — production's actual decision cadence, against the 15 minutes everything here was
+measured on — leaves the rank-based negative findings intact but scatters individual configs
+by ±9 points, and the `min_margin` 0.040–0.070 region does not replicate. The winners make
+**3 to 7 operations in 275 days**, which is too few to tell an edge from a run of luck, and
+that one fact is consistent with every negative result in this file. See "The simulator's own
+time resolution moves a config by ±9 points".
 
 The question this document exists to answer is unchanged — *can the optimizer produce a config
 that beats buy-and-hold out of sample?* — but the answer it carried before 2026-09-02 rested
@@ -383,6 +391,86 @@ even though the *choice within it* is not. If a config is to be deployed, take o
 0.04–0.07 and settle `stop_pct` on operational grounds — operation count, fees, time spent out
 of the asset — because past performance carries no information at that resolution.
 
+**This is the claim the resolution check below fails to replicate.** Read the next section
+before acting on it.
+
+### The simulator's own time resolution moves a config by ±9 points (2026-09-07)
+
+Every number above was produced on 15-minute candles, and the engine resolves the whole
+trailing-stop decision once per candle. Production polls every `SLEEPING_INTERVAL` — 60 s —
+so the deployed bot ratchets its trailing stop **fifteen times more often** than the thing
+that was measured. The 15-minute arm is not a lower-resolution view of the bot; it is a
+different bot.
+
+There is also a genuine look-ahead inside a single bar. On a `sell` leg
+`simulate_operations` raises `trailing_price` to the bar's **high**, recomputes `stop_px`
+from it, and only then tests the bar's **low** against that raised stop. On a bar that fell
+before it rose, the live bot still held the older, lower stop when the low happened and
+would not have exited; the engine exits, and books the exit at a price that was gone.
+
+`scripts/analysis/execution_fidelity.py` isolates resolution from everything else: ATR is
+always computed on the 15-minute series and forward-filled onto the finer grid, and the
+calibration schedule is built once on 15-minute bars and remapped by timestamp. So the
+volatility levels, the `K_STOP` values and the stop distances are identical in all three
+arms, and the only thing that varies is how often the logic is evaluated. XBTEUR,
+2025-04-01..2025-12-31 (275 days, hold −2.2 %), calibration from 2025-01-01, fee 0.4 %/leg.
+
+| | 21 configs (the middle of the space) | 105 configs (the full grid) |
+|---|---|---|
+| rho 15m vs 1m | +0.722 | **+0.905** |
+| rho 15m vs 5m | +0.879 | +0.945 |
+| rho 5m vs 1m | +0.856 | +0.923 |
+| top-10 overlap 15m/1m | — | **9/10** |
+| median delta 1m−15m | +0.00 pts | +0.00 pts |
+| largest \|delta\| | 18.4 pts | 19.2 pts |
+| sign flips | 0/21 | 3/105 |
+
+**No bias, but real dispersion.** The median delta is 0.00 and the mean +0.09, so the
+look-ahead does not systematically inflate anything. What it does is scatter: σ ≈ 9 points
+per config over 275 days, with individual configs moving up to 19. `mm=0.050 s=0.7` goes
+from +22.3 % (near the top of its region) to +4.5 %; `mm=0.060 s=0.5` goes from +5.5 % (the
+worst of its region) to +23.9 %. Nothing changed but the clock.
+
+**Gross rankings survive; fine ones do not.** Across the full grid rho is +0.905 and 9 of
+the top 10 coincide, because the grid is dominated by structure resolution cannot touch —
+the `mm = 0.00` family loses 60–80 % in every arm. Restricted to the middle of the space,
+where a deployment choice is actually made, rho falls to +0.722. Both numbers are true and
+they answer different questions.
+
+**It does not converge.** If the coarse arm were an approximation of a true result,
+refining 5m→1m would reshuffle far less than 15m→5m. It reshuffles the same amount
+(+0.945 then +0.923; +0.879 then +0.856 on the subset). There is no true ranking being
+approached — which is what one expects when the winners are decided by a handful of trades.
+
+**The consequences, in order of importance:**
+
+1. **The rank-based negative findings stand.** "Fitting does not predict", "quality does not
+   persist", "trend filtering is dead", "the asymmetric stop is closed" are all comparative,
+   and comparisons are what the resolution check shows to be stable at the gross level. The
+   framework is not broken.
+2. **The `min_margin` 0.040–0.070 region does not replicate.** Over 2025-04..2025-12, scored
+   as total base-asset accumulation on one continuous run, the region's median is **−0.42
+   points** against the rest of the space at 15m and **−2.20 points** at 1m, and it holds
+   3/10 and 2/10 of the top ten where 20 of 105 configs would give ~1.9/10 by chance. The
+   original claim used a different window (2025-04..2026-03) and a different statistic (rank
+   consistency across twelve periods), so this is a failure to replicate rather than a clean
+   refutation — but it removes the only positive result the study still had.
+3. **The winners barely trade.** `mm=0.070 s=0.5` tops both arms at +27.0 % on **7
+   operations in 275 days**; the grid's median config makes 3. Four configs at
+   `mm = 0.17..0.20` tie at exactly 24.70 % — the quiescent corner, where the activation
+   barrier is almost never crossed. A 27-point base-asset gain drawn from seven trades
+   cannot separate skill from luck, and that single fact explains why nothing persists and
+   nothing predicts.
+
+**Still unmeasured: slippage.** All three arms fill at exactly `stop_px`. Production detects
+the breach at a 60 s poll and then places a *limit at the market price*, which on a falling
+market is below the stop. That term is strictly negative and none of these numbers contain
+it. The 1-minute arm matches production's decision *cadence*, not its fill.
+
+Caveat on the data: the 1-minute series has 1 930 gaps in the window (Kraken omits candles
+with no trades), 393 215 bars against 396 000 nominal — 99.3 % coverage, mostly one- or
+two-bar holes.
+
 ### Still not established
 
 - **One pair.** XBTEUR only. This is now the main external-validity gap, the regime one
@@ -392,6 +480,10 @@ of the asset — because past performance carries no information at that resolut
 - **What a non-zero `hodl_pct` would do.** Production can hold a fraction of the target
   allocation permanently; the engine cannot model it (see the divergence below), so nothing
   here measures the one lever that would soften a rally without predicting it.
+- **What slippage costs.** Every arm of every measurement here fills at exactly `stop_px`.
+  Production places a limit at the market price after detecting the breach, and chases it
+  with `reprice_closing_order`. The term is strictly negative and entirely unmeasured; at 3–7
+  operations per run it is small in aggregate, but so is everything else being compared.
 
 ## Decisions taken
 
@@ -740,19 +832,25 @@ was a hypothesis about where the edge lived, and none survived:
 | Selecting by past consistency | identical to picking at random |
 | Gating the bot through rallies | +0.6 points with perfect hindsight |
 | Asymmetric stop by side | ±0.4 points, and the effect runs against the mechanism |
+| Picking a config from the 0.04–0.07 region | does not replicate at 1-minute resolution |
 
 What is left is not a search for a better config. In order:
 
 1. **Decide whether to run the bot at all, and on what basis.** The strategy has a measured
    conditional edge — it accumulates in flat and falling markets and loses in rallies — and no
    way to tell which is coming. That makes deploying it a directional bet on the market, not
-   an edge, and that is a decision for the operator rather than a measurement. If it is
-   deployed, the practical guidance is in "Selecting by past consistency": take a config in
-   `min_margin` 0.04–0.07 and settle `stop_pct` on operational grounds, since past performance
-   carries no information at that resolution.
+   an edge, and that is a decision for the operator rather than a measurement. There is no
+   longer a config recommendation to attach to it: the `min_margin` 0.04–0.07 guidance failed
+   to replicate, and the resolution check shows the whole comparison lives inside the
+   simulator's own noise. Pick on operational grounds — operation count, fees, time out of the
+   asset — and treat the backtested return as an illustration, not a forecast.
 2. **Test a second pair.** Everything here is XBTEUR. This is now the only external-validity
    gap left, and the cheapest remaining way to learn something new — in particular whether the
-   buy-side asymmetry above is a property of this frame's direction, as suspected.
+   buy-side asymmetry above is a property of this frame's direction, as suspected. USDCEUR
+   archives are on hand at 1/5/15 min and are the sharpest available contrast: a near-FX pair
+   whose `ATR/close` distribution is nothing like XBTEUR's, which is the axis the strategy's
+   whole mechanism runs on. Pick the second pair by that distribution, not by market cap —
+   crypto majors correlate too closely to be independent evidence.
 3. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
    Reporting only, until an objective compares across windows again — see that section for
    what it does and does not change.
@@ -782,6 +880,7 @@ Kraken's OHLCVT archives directly and need no database at all.
 | Script | What it answers |
 |---|---|
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
+| `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Reads the CSV archives directly; takes the data directory, not `--csv`. |
 | `scripts/analysis/config_stability.py` | **Does config quality persist, and does the regime predict it?** Runs all 105 configs once, continuously, then splits that single run into N periods by the ratio of compounded growth factors. Reports the rank correlation between periods, and the Choppiness Index of the bars before each period against what the space did in it. `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
 | `scripts/analysis/holdout_experiment.py` | Task 1: fit on the first N days, score on one continuous run over the remainder against hold. `--csv`. |
@@ -846,3 +945,14 @@ that description is accurate only until the first re-anchor.
 - Before trusting any number, ask what it would look like if the harness were wrong. Three
   of the defects here were invisible until a second, independently written measurement
   disagreed with the first.
+- **Report the operation count next to every result.** A config that made 3–7 trades in 275
+  days can post +27 % base-asset accumulation on luck alone, and every "dead" effect this
+  study measured (+0.6 for the trend filter, ±0.4 for the asymmetry) is far below the ±9
+  points that changing only the simulator's clock produces. A difference smaller than the
+  harness's own dispersion is unresolved, not disproved — the action is the same, but the
+  claim must not be stated as knowledge.
+- **The simulation's bar interval is a parameter of the bot, not of the measurement.**
+  Production evaluates the trailing stop every `SLEEPING_INTERVAL` (60 s). A 15-minute
+  simulation ratchets it fifteen times less often and is a different strategy. Anything
+  re-run from here runs at 1 minute; it costs 186 s for 105 configs over 275 days, against
+  30 s at 15 minutes, and the calibration schedule — the expensive part at 185 s — is shared.
