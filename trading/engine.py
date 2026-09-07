@@ -22,29 +22,12 @@ class PairCalibration:
 
 
 @dataclass(frozen=True)
-class ActivationParams:
-    """The two scalars that decide the activation barrier, so they can vary over a run."""
-
-    k_act: float | None
-    min_margin: float
-
-
-@dataclass(frozen=True)
 class EngineConfig:
     """Everything a simulation needs, with no module-level globals.
 
     ``calibration_schedule`` mirrors the live recalibration every ``PARAM_SESSIONS``
     ticks: ``(bar index, calibration in force from that bar on)``, ascending. An
     empty schedule keeps ``calibration`` for the whole run.
-
-    ``activation_schedule`` models the *operator* changing the pair's config mid-run,
-    the way ``PATCH /config/{pair}`` does: same shape, ascending, empty by default.
-    It exists because ``k_act``/``min_margin`` are the only parameters a reconfiguration
-    changes that do not already flow through the calibration — a new ``stop_pct`` is
-    baked into the scheduled ``PairCalibration`` values, while ``min_margin`` multiplies
-    each bar's price and cannot be folded into ``k_stop``. Production never sets it,
-    so the live path keeps reading the scalars and stays an exact mirror of
-    ``positions_manager.calculate_activation_distance``.
     """
 
     pair: str
@@ -53,12 +36,6 @@ class EngineConfig:
     min_margin: float
     atr_desv_limit: float
     calibration_schedule: tuple[tuple[int, PairCalibration], ...] = ()
-    activation_schedule: tuple[tuple[int, ActivationParams], ...] = ()
-    # Bars on which a *sell* exit is suppressed, so the position rides instead of leaving the
-    # asset. Sell-only because the damage an up-trend does to base-asset accumulation is
-    # selling into the rise and rebuying higher; a re-entry is the cure, never the disease.
-    # Empty in production: this exists to score a trend filter offline.
-    no_sell_bars: frozenset[int] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -102,16 +79,6 @@ def _calibration_at(cfg: EngineConfig, idx: int) -> PairCalibration:
             break
         cal = scheduled
     return cal
-
-
-def _activation_at(cfg: EngineConfig, idx: int) -> ActivationParams:
-    """The activation params in force at bar ``idx``: the last scheduled entry at or before it."""
-    params = ActivationParams(cfg.k_act, cfg.min_margin)
-    for at, scheduled in cfg.activation_schedule:
-        if at > idx:
-            break
-        params = scheduled
-    return params
 
 
 def _k_for_level(cal: PairCalibration, side: str, vol: str) -> float | None:
@@ -160,19 +127,12 @@ def activation_distance(
     atr_val: float,
     close: float,
     cal: PairCalibration | None = None,
-    params: ActivationParams | None = None,
 ) -> float:
-    """``reference_price`` anchors the distance; ``close`` classifies the level.
-
-    ``params`` overrides the config scalars for callers that walk an activation schedule.
-    """
-    if params is None:
-        params = ActivationParams(cfg.k_act, cfg.min_margin)
-    k_act = params.k_act
-    if k_act is not None:
-        return float(k_act) * atr_val
+    """``reference_price`` anchors the distance; ``close`` classifies the level."""
+    if cfg.k_act is not None:
+        return float(cfg.k_act) * atr_val
     k_stop = lookup_k_stop(cfg, side, atr_val, close, cal) or 0.0
-    return float(k_stop) * atr_val + (params.min_margin * reference_price)
+    return float(k_stop) * atr_val + (cfg.min_margin * reference_price)
 
 
 def activation_price(
@@ -182,9 +142,8 @@ def activation_price(
     atr_val: float,
     close: float,
     cal: PairCalibration | None = None,
-    params: ActivationParams | None = None,
 ) -> float:
-    distance = activation_distance(cfg, side, entry_price, atr_val, close, cal, params)
+    distance = activation_distance(cfg, side, entry_price, atr_val, close, cal)
     if side == "sell":
         return entry_price + distance
     return entry_price - distance
@@ -289,8 +248,6 @@ def simulate_operations(
     max_ops: int | None = None,
 ) -> list[Operation]:
     schedule = cfg.calibration_schedule
-    reconfigs = cfg.activation_schedule
-    no_sell = cfg.no_sell_bars
 
     ops: list[Operation] = []
     cum_pnl = 0.0  # cumulative return in percent, compounded
@@ -346,17 +303,12 @@ def simulate_operations(
 
     cal = cfg.calibration
     next_change = 0
-    params = ActivationParams(cfg.k_act, cfg.min_margin)
-    next_reconfig = 0
 
     for idx, row in enumerate(df.itertuples(index=False)):
         # `<= idx` so an entry due on a bar the loop skips still applies at the next usable one.
         while next_change < len(schedule) and schedule[next_change][0] <= idx:
             cal = schedule[next_change][1]
             next_change += 1
-        while next_reconfig < len(reconfigs) and reconfigs[next_reconfig][0] <= idx:
-            params = reconfigs[next_reconfig][1]
-            next_reconfig += 1
 
         atr = float(row.atr)
         if atr <= 0 or np.isnan(atr):
@@ -374,19 +326,19 @@ def simulate_operations(
         atr_limit_min = atr * (1 - cfg.atr_desv_limit)
 
         if activation_px is None:
-            activation_px = activation_price(cfg, side, entry_price, atr, price, cal, params)
+            activation_px = activation_price(cfg, side, entry_price, atr, price, cal)
             activation_atr = atr
 
         if not active:
             if activation_atr is not None and (activation_atr < atr_limit_min or activation_atr > atr_limit_max):
-                activation_px = activation_price(cfg, side, entry_price, atr, price, cal, params)
+                activation_px = activation_price(cfg, side, entry_price, atr, price, cal)
                 activation_atr = atr
 
             # Mirrors positions_manager.reanchor_activation_price: stored ATR, not the bar ATR.
-            exp_dist = activation_distance(cfg, side, price, activation_atr, price, cal, params)
+            exp_dist = activation_distance(cfg, side, price, activation_atr, price, cal)
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
             if gap > exp_dist:
-                activation_px = activation_price(cfg, side, price, activation_atr, price, cal, params)
+                activation_px = activation_price(cfg, side, price, activation_atr, price, cal)
 
             # A sell activates on the high crossing up, then trails the highs; a buy mirrors it.
             crossed = high >= activation_px if side == "sell" else low <= activation_px
@@ -416,10 +368,6 @@ def simulate_operations(
 
         stop_hit = low <= stop_px if side == "sell" else high >= stop_px
         if not stop_hit:
-            continue
-
-        # The stop stays where it is and keeps trailing; the mask only defers the exit.
-        if side == "sell" and idx in no_sell:
             continue
 
         exec_price = stop_px
