@@ -308,6 +308,11 @@ Three variants, same continuous run, 105 configs, base asset accumulated over
 median.** The causal detector adds +0.1. There is no prize to claim, so no classifier is
 worth building — which is what the oracle was for.
 
+**Read this as bounding *deferred sell exits*, not as bounding a rally gate.** Suppressing
+sells is inert whenever the rally opens on a cash leg, which is most of them. The stronger
+intervention — forced full allocation — is bounded two sections down, and is also negative,
+for a different and more interesting reason.
+
 Both gates do compress the distribution: the worst config improves from −89.1 % to −77.1 %
 and −63.7 %, and the share beating hold rises to 96/105. That is variance reduction, not
 edge, measured on one span, and it should not be read as a result.
@@ -613,6 +618,74 @@ in LL/LV/MV). **What it does not close:** per-level stops as a tuning question �
 sweep uses `dict.fromkeys(LEVELS, stop)`, one shared value, so per-level differentiation is
 genuinely unexplored. There is simply no hypothesis left proposing it, and the study's record
 on searching a space with no mechanism behind it is five for five.
+
+### The rally loss and the crash gain are the same position (2026-09-07)
+
+The `+0.6` above bounds a weaker intervention than its name suggests, and reading it as the
+ceiling on *avoiding rallies* was wrong. It suppressed only **sells**. The loss a rally
+inflicts has two halves — selling into the rise, which that mask covered, and sitting in cash
+while the price rises and having to rebuy higher, which it could not cover, because the
+re-entry was deliberately excluded from the gate. Whenever the rally opened on a **cash leg**
+the mask was inert: no sell to suppress, and the bot ate the rise from outside exactly as it
+would have ungated. The deleted script's own docstring said so and it was read as a footnote.
+
+So `+0.6` bounds "defer sell exits during a rally". `EngineConfig.force_hold_bars` and
+`scripts/analysis/rally_gate_oracle.py` bound the intervention that was meant: on a masked
+bar the bot must be **fully in the base asset** — the sell is suppressed with the stop still
+trailing, and a bot holding cash is **forced in** at that bar's price, paying the entry fee.
+Within this bot's action space (hold, or flip) there is no stronger response to a detected
+rally, which is what makes it a ceiling. XBTEUR 2025-04-01 .. 2025-12-31, 105 configs, one
+continuous run per arm, 60-day periods, a period gated when hold rose above +5 % (2 of 5
+periods, 44 % of bars):
+
+| Arm | Median | Best | Worst | Beat hold | Ops |
+|---|---|---|---|---|---|
+| ungated | **+18.8 %** | +27.0 % | −79.5 % | 88/105 | 14.6 |
+| oracle (forced allocation) | **+15.5 %** | +38.4 % | −55.0 % | 96/105 | 9.3 |
+
+**A perfect rally detector, given the strongest response this bot has, costs 3.2 points of
+median.** But the per-period breakdown is the finding, not the total:
+
+| Period | hold | ungated | oracle | delta |
+|---|---|---|---|---|
+| 2025-04-01..05-30 **(gated)** | +20.4 % | −7.5 % | **−0.4 %** | **+7.1** |
+| 2025-05-31..07-29 **(gated)** | +11.3 % | −10.2 % | **−0.0 %** | **+10.2** |
+| 2025-07-30..09-28 | −8.2 % | +9.0 % | +9.3 % | +0.3 |
+| 2025-09-28..11-27 | −15.5 % | **+27.7 %** | **+6.3 %** | **−21.4** |
+| 2025-11-27..12-31 | −5.9 % | +0.0 % | +0.0 % | −0.0 |
+
+**Inside the gate it works perfectly.** The two rally periods go from −7.5 % and −10.2 % to
+zero — holding the asset *is* zero in base-asset terms, and the gate recovers essentially the
+whole loss, +17.3 points. The premise that the rally is where the bot bleeds is confirmed
+exactly.
+
+**Then it gives back −21.4 in the crash it never touched**, two months after the mask lifted.
+The ungated bot earns +27.7 % in the September–November fall; the gated one manages +6.3 %,
+having arrived there frozen for four months, out of position, with its activation barrier and
+trailing stop anchored to a price the other arm never saw. Trade count falls 14.6 → 9.3.
+
+**The mechanism, and it is the deepest result in this file.** This strategy is a
+mean-reversion harvester: it is permanently positioned to sell into strength and buy into
+weakness. In a rally that positioning costs base asset. In a crash the *same* positioning
+earns it. They are not two behaviours, one good and one bad — they are one behaviour seen in
+two regimes, and the gate cannot disarm the losing half without disarming the winning half
+too. **The rally loss is not a defect a filter can remove; it is the price of the position
+that earns in the fall.**
+
+That also explains the standing puzzle of the "conditional edge with no way to tell which is
+coming". The condition is not something the bot could exploit even with perfect foresight,
+because foresight only lets it stop trading, and stopping trading is what costs it the fall.
+
+The tails move a great deal — worst −79.5 % → −55.0 %, best +27.0 % → +38.4 %, share beating
+hold 88 → 96 — but that is variance reduction on one span, the same pattern the weaker oracle
+showed, and "best of 105" is the statistic this document has already shown does not predict.
+
+**Scope.** One window, two rally periods, one pair. Per-period medians are medians across
+configs, so they do not compound to the total (the median config differs per period);
+compounding them gives +15.6 % and +15.7 % against the reported +18.8 % and +15.5 %, which is
+the expected size of that gap. A finer gate — blocking only the sharply trending sub-stretches
+rather than whole 60-day periods — is untested, but the mechanism argues against it: the cost
+is being out of position when the gate lifts, and every gate lifts.
 
 ### Still not established
 
@@ -970,7 +1043,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Seven avenues are now closed by measurement**, and none of them was a tuning question —
+**Eight avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -982,6 +1055,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Asymmetric stop by side | ±0.4 points, and the effect runs against the mechanism |
 | Picking a config from the 0.04–0.07 region | does not replicate at 1-minute resolution |
 | Gating on volatility instead of direction | high-ATR stretches are no more directional than low-ATR ones |
+| Forcing full allocation through rallies | −3.2 points with perfect hindsight: the gate recovers +17.3 in the rallies and gives back −21.4 in the crash after it |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1041,6 +1115,7 @@ what still answers a question no result has closed.
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
 | `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Also the pair-portability harness: `--pair`, `--fee`, `--mm-max` (the `min_margin` grid is a fraction of *price*, so its ceiling must scale with how far the pair moves) and `--min-change-pct` (an ATR multiple in disguise — see the USDCEUR section). Reads the CSV archives directly; takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
+| `scripts/analysis/rally_gate_oracle.py` | **What is a perfect rally detector worth?** Gates whole rally periods with hindsight and forces full allocation through them (`force_hold_bars`), re-simulated continuously — never as an overlay. Reports the arms and the per-period breakdown that separates what the gate recovers from what it costs downstream. Takes the 15-minute CSV path. |
 | `scripts/analysis/volatility_regime_screen.py` | **Are high-ATR stretches more directional than low-ATR ones?** Kaufman efficiency ratio by volatility level over non-overlapping windows at five horizons, against the `1/√N` random-walk null. No engine, no configs, no fees — a descriptive measure of the market, seconds to run. Takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price) — the inputs the `SearchSpace` defaults are drawn from. |
 
