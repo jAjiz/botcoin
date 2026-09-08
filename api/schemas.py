@@ -151,7 +151,12 @@ class SearchSpace(BaseModel):
     """Search grids for an OPTIMIZE/AUTO run. All three grids must be informed
     (no defaults). A ``null`` activation grid disables that whole branch — ``k_act``
     null runs only the min_margin branch and vice versa; at least one must be set.
-    To *fix* (rather than disable) a dimension, pass ``start == end``."""
+    To *fix* (rather than disable) a dimension, pass ``start == end``.
+
+    ``stop_pcts`` is capped at 0.9: ``K_STOP`` is a percentile over one K value per trend
+    leg per level, a sample of 50-200, so 1.0 is a sample *maximum* set by a single
+    observation and it drifts as history grows (a 35-point swing between 0.9 and 1.0 in
+    the validation study)."""
 
     stop_pcts: GridSpec
     k_act: GridSpec | None
@@ -161,8 +166,8 @@ class SearchSpace(BaseModel):
     def _validate(self) -> SearchSpace:
         if self.k_act is None and self.min_margin is None:
             raise ValueError("at least one of k_act / min_margin must be provided")
-        if self.stop_pcts.start < 0.0 or self.stop_pcts.end > 1.0:
-            raise ValueError("stop_pcts grid must lie within [0, 1]")
+        if self.stop_pcts.start < 0.0 or self.stop_pcts.end > 0.9:
+            raise ValueError("stop_pcts grid must lie within [0, 0.9]; 1.0 is a sample maximum, not a percentile")
         if self.k_act is not None and self.k_act.start < 0.0:
             raise ValueError("k_act grid must be >= 0")
         if self.min_margin is not None and self.min_margin.start < 0.0:
@@ -209,7 +214,9 @@ class OptimizerRequest(BaseModel):
     # for the same reason as search_space below.
     start: str | None = None
     end: str | None = None
-    train_split: float = Field(default=0.67, ge=0.5, le=1.0)
+    # 1.0 = no inner split: a window that influences the selection is training, not test,
+    # so the honest test is the forward span. Set below 1.0 only for AUTO's robust ranking.
+    train_split: float = Field(default=1.0, ge=0.5, le=1.0)
     min_ops: int = 0
     min_test_ops: int = 0
     n_trials: int = Field(default=1_000, ge=1, le=10_000)

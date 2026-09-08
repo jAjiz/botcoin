@@ -20,7 +20,7 @@ _TS = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 
 # Minimal valid search space; OPTIMIZE/AUTO require one at the schema level.
 _SPACE = {
-    "stop_pcts": {"start": 0.20, "end": 0.95, "step": 0.25},
+    "stop_pcts": {"start": 0.15, "end": 0.90, "step": 0.25},
     "k_act": {"start": 0.0, "end": 4.0, "step": 1.0},
     "min_margin": None,
 }

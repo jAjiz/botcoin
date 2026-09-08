@@ -25,7 +25,7 @@ _LEVELS = ("LL", "LV", "MV", "HV", "HH")
 def _space(*, k_act: bool = True, min_margin: bool = True) -> SearchSpace:
     """A small coarse search space. Toggle a branch off by passing False."""
     return SearchSpace(
-        stop_pcts=GridSpec(0.20, 0.95, 0.25),  # {0.20, 0.45, 0.70, 0.95}
+        stop_pcts=GridSpec(0.15, 0.90, 0.25),  # {0.15, 0.40, 0.65, 0.90}
         k_act=GridSpec(0.0, 4.0, 1.0) if k_act else None,
         min_margin=GridSpec(0.0, 0.01, 0.002) if min_margin else None,
     )
@@ -98,7 +98,7 @@ def test_run_optimize_grid_honored(monkeypatch) -> None:
         OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=12, search_space=_space()), calibration=None
     )
 
-    allowed = {0.20, 0.45, 0.70, 0.95}
+    allowed = {0.15, 0.40, 0.65, 0.90}
     for cand in result.top_candidates:
         for v in cand["stop_pcts"].values():
             assert round(v, 2) in allowed

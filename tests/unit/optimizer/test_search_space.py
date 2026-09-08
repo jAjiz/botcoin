@@ -15,7 +15,7 @@ from trading.optimizer.search import AutoSettings, CurrentParams, GridSpec, Opti
 
 def _api_space() -> dict:
     return {
-        "stop_pcts": {"start": 0.20, "end": 0.95, "step": 0.25},
+        "stop_pcts": {"start": 0.15, "end": 0.90, "step": 0.25},
         "k_act": {"start": 0.0, "end": 4.0, "step": 1.0},
         "min_margin": {"start": 0.0, "end": 0.01, "step": 0.002},
     }
@@ -50,7 +50,7 @@ def test_gridspec_allows_fixed_value() -> None:
 
 def test_searchspace_requires_at_least_one_branch() -> None:
     with pytest.raises(ValidationError, match="at least one"):
-        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.2, end=0.95, step=0.25), k_act=None, min_margin=None)
+        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.15, end=0.9, step=0.25), k_act=None, min_margin=None)
 
 
 def test_searchspace_rejects_stop_out_of_bounds() -> None:
@@ -65,7 +65,7 @@ def test_searchspace_rejects_stop_out_of_bounds() -> None:
 def test_searchspace_branches_are_required_fields() -> None:
     """k_act/min_margin have no defaults — they must be informed (even as null)."""
     with pytest.raises(ValidationError):
-        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.2, end=0.95, step=0.25))
+        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.15, end=0.9, step=0.25))
 
 
 # --- OptimizerRequest mode/search_space interaction ------------------------
@@ -159,3 +159,31 @@ def test_dataclass_current_params_all_none_is_default() -> None:
     assert req.current_params.k_act == 1.0
     assert req.current_params.min_margin is None
     assert req.current_params.stop_pcts is None
+
+
+# --- decisions from the validation study -----------------------------------
+
+
+def test_searchspace_rejects_stop_ceiling_above_0_9() -> None:
+    """1.0 is a sample maximum, not a percentile: the stop would be set by one observation."""
+    with pytest.raises(ValidationError, match=r"0.9"):
+        ApiSearchSpace(
+            stop_pcts=ApiGridSpec(start=0.5, end=1.0, step=0.1),
+            k_act=None,
+            min_margin=ApiGridSpec(start=0.0, end=0.01, step=0.002),
+        )
+
+
+def test_searchspace_accepts_stop_ceiling_at_0_9() -> None:
+    space = ApiSearchSpace(
+        stop_pcts=ApiGridSpec(start=0.5, end=0.9, step=0.1),
+        k_act=None,
+        min_margin=ApiGridSpec(start=0.0, end=0.01, step=0.002),
+    )
+    assert space.stop_pcts.end == 0.9
+
+
+def test_train_split_defaults_to_the_whole_window() -> None:
+    """A window that influences the selection is training, not test; the honest test is forward."""
+    assert ApiOptimizerRequest(pair="XBTEUR", mode="OPTIMIZE").train_split == 1.0
+    assert OptimizerRequest(pair="XBTEUR", mode="OPTIMIZE").train_split == 1.0

@@ -256,7 +256,7 @@ Telegram is notified on start, completion, and failure.
 # Submit
 JOB=$(curl -s -X POST http://localhost:8000/optimizer/jobs \
   -H "X-Api-Token: $API_SECRET_TOKEN" -H "Content-Type: application/json" \
-  -d '{"pair":"XBTEUR","mode":"OPTIMIZE","fee_pct":0.4,"train_split":0.8,"n_trials":1000}' \
+  -d '{"pair":"XBTEUR","mode":"OPTIMIZE","fee_pct":0.4,"n_trials":1000}' \
   | jq -r .job_id)
 
 # Poll a single job
@@ -284,7 +284,7 @@ a single continuous run (no mid-history reset).
 | `mode` | — | all | Required; `OPTIMIZE` \| `CURRENT` \| `AUTO` (else `422`) |
 | `fee_pct` | `0.0` | all | Per-side fee percentage |
 | `start` / `end` | `null` | all | Optional date slice |
-| `train_split` | `0.8` | all | Train fraction for the train/test split (0.5–1.0) |
+| `train_split` | `1.0` | all | Train fraction (0.5–1.0). `1.0` = no inner split: the in-sample window is all training and the honest test is forward. Lower it only for AUTO's robust (train/test) ranking |
 | `min_ops` / `min_test_ops` | `0` | OPTIMIZE, AUTO | Prune trials below these op counts |
 | `n_trials` | `1000` | OPTIMIZE, AUTO | Optuna TPE trials (the initial count in AUTO) |
 | `seed` | `42` | OPTIMIZE | Sampler seed |

@@ -289,7 +289,7 @@ class OptimizerRequest:
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
-    train_split: float = 0.8
+    train_split: float = 1.0
     min_ops: int = 0
     min_test_ops: int = 0
     n_trials: int = 1_000
