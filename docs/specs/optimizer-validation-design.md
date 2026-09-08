@@ -1281,6 +1281,55 @@ document already measured in-sample selection landing at percentile 50 of the fo
 distribution. Settling that needs the fit-forward test run on the free space, not another
 in-sample sweep.
 
+### One config, eight years, only against hold (2026-09-08)
+
+Every fee reading in this document came from one window, 2025-04..2025-12, picked because
+the price came back -- the most favourable stretch in the data. The owner asked for the same
+configuration on intervals that were not chosen for their result, compared against nothing
+but holding. `scripts/analysis/capped_mm0_across_years.py` runs exactly that: `min_margin =
+0`, `stop_pct = 0.9` on all five levels, `reanchor_cap_at_entry = True`, on the eight
+calendar years 2018-2025, each calibrated from six months of prior history, scored in base
+asset at 0.40 % and at Kraken's 0.16 % maker rate. No grid, no median, no other candidate.
+
+| year | hold (EUR) | base @0.40 % | base @0.16 % | ops | in cash |
+|---|---|---|---|---|---|
+| 2018 | −72.6 % | **+67.3 %** | **+89.1 %** | 50 | 16 % |
+| 2019 | +97.6 % | −49.7 % | −48.5 % | 9 | 98 % |
+| 2020 | +269.8 % | −72.3 % | −71.5 % | 11 | 95 % |
+| 2021 | +72.7 % | −27.3 % | −21.1 % | 33 | 77 % |
+| 2022 | −62.2 % | **+11.8 %** | **+21.6 %** | 34 | 13 % |
+| 2023 | +149.3 % | −58.9 % | −58.7 % | 1 | 99 % |
+| 2024 | +133.5 % | −53.9 % | −52.5 % | 11 | 94 % |
+| 2025 | −17.4 % | **+4.4 %** | **+10.8 %** | 24 | 22 % |
+
+**The sign separation is perfect, 8 of 8.** The configuration beats holding in exactly the
+three years holding lost money and loses in exactly the five it made money. Nothing in the
+study has separated this cleanly, and it is not a coincidence to be explained away -- it is
+the mechanism already established (the side held when a regime begins decides the regime)
+observed one year at a time on data that were not selected.
+
+**Time in cash is bimodal and it is the whole story.** In the three winning years the bot is
+in cash 13-22 % of the time: it holds the asset and cycles productively, 24-50 operations,
+selling into strength and rebuying lower. In the five losing years it is in cash 77-99 %: it
+gets stopped out early in a rise and, with the re-anchor capped at the sell, never re-enters
+because the price never returns. 2023 is the pure case -- **one operation, 99 % of the year
+in cash, −58.9 %**. It sold once in January and watched the price two and a half times away.
+
+**The maker rate changes magnitude, never sign, and the gain scales with turnover.** Moving
+from 0.40 % to 0.16 % is worth +21.8 points in 2018 (50 ops), +9.8 in 2022 (34 ops) and +6.4
+in 2025 (24 ops), and under 2 points in every year the config barely trades. That is the
+rotation threshold from the fee sweep showing up again on unselected data: the fee only
+matters where the cycles are, and the cycles are only in the falling years.
+
+**What it is, stated plainly.** Median −21.1 % at maker, 3 of 8 years positive, best +89.1 %,
+worst −71.5 %. This is not a strategy with an edge; it is a clean conditional instrument
+whose payoff is known and whose condition is "the year falls" -- a synthetic short-drift
+position denominated in the base asset. The magnitudes are large enough to be useful to
+somebody who holds a directional view, and this document has already measured, twice, that
+the bot cannot supply that view. Chaining the yearly factors is not a valid eight-year
+result (each year restarts the position; see the harness defect on segmented scoring); the
+continuous three-year run is the one that stands, at −76 %.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1332,6 +1381,7 @@ contradicted by later work that had only this document to go on.
 - **The activation re-anchor stays, on both sides.** Removing it makes every cycle clean and turns the bot into one that sells once and waits for the price to come back; on 2024-10..2025-03 that is −22 % for all 105 configs with the whole window spent in cash. `reanchor_sell`/`reanchor_buy`/`reanchor_cap_at_entry` remain in the engine as inert switches.
 - **A high AUC against a pivot-derived label is not evidence of a signal.** Pivots alternate, so "which leg am I on" is knowable from the trailing return and carries the label with it; any labelling scheme built from future extrema must be checked against a fixed-horizon forward label and a money test before it is believed. This cost one run that looked like a discovery. See "Reverse-engineering the strategy from ideal trades is closed".
 - **There is no config recommendation, and the previous one was not skill.** `mm=0.05/0.9` loses 78 % of the base asset over 2023–2025 in four operations; it made one sell in the one year that fell. No config in the grid beats holding in 2023, 2024, or the three years continuous, under any re-anchor arm. See "Three years, and what the recommended config actually does".
+- **The conditional edge is now separated cleanly, 8 years out of 8.** `mm=0` with the capped re-anchor beats holding in exactly the three calendar years 2018-2025 in which holding lost money, and loses in exactly the five in which it made money; time in cash is bimodal, 13-22 % in the winners against 77-99 % in the losers. It is a conditional instrument, not a strategy, and the condition is unpredictable by this document's own measurements. See "One config, eight years, only against hold".
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -1747,6 +1797,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/capped_mm0_across_years.py` | **How does one configuration behave on intervals nobody chose?** A single config (`mm=0`, `stop=0.9`, capped re-anchor) over calendar years, scored in base asset against holding and nothing else, at two fee levels, with operation count and time in cash beside it. Deliberately has no grid and no median: it answers "what does this do", not "which is best". About 9 minutes per year, calibration-bound. |
 | `scripts/analysis/kact_and_free_stops.py` | **The two gaps in the record: `k_act = 0` and the five free stops.** Runs the 105 shared-stop reference, the whole `k_act` branch broken out by multiplier, and a random sample of the free-stop space on one shared calibration schedule and window, scored in base asset. Reports the distribution and not only the best, because the best is where the selection effect hides. About 15 minutes for one year at 600 samples. |
 | `scripts/analysis/dca_trailing_entry.py` | **Does the bot's trailing entry place the monthly buy better?** The live activation mechanism applied to the DCA's entry on 15-minute bars: run the low from the month's open, buy on a `bounce` x ATR reversal, optionally after a `fall` x ATR drop, market at the month's close otherwise. Reports median hours waited and the share of months entered below the day-one price beside the money, because the rule can win on both and lose on the third. |
 | `scripts/analysis/dca_overlay.py` | **On a monthly DCA, what does automating the placement add?** Arms that contribute identical euros and differ only in where the buy lands (day one, split weekly/daily, dip limits with a month-end fallback, drawdown-scaled), scored as final value over euros contributed, on daily bars resampled from the 15-minute CSV. Seconds to run; `--fee` sizes the one positive lever. |
