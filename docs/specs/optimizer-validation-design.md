@@ -1142,6 +1142,51 @@ family: **any signal-free allocation rule over these data is bounded above by ab
 year, and only in a falling market.** No amount of engineering on the rule's mechanics
 reaches the +384 % the window handed to anyone who did nothing.
 
+### Under a monthly DCA the benchmark changes, and placement still loses (2026-09-08)
+
+The owner reframed the goal: the euros are not a lump sum, they arrive as a fixed monthly
+contribution. That is a genuinely different question, because the benchmark stops being
+buy-and-hold from `T0` and becomes the **naive DCA itself**. It is also a fairer fight in
+one respect and a harder one in another: fairer because the bot is no longer competing with
+a single perfect entry, harder because a fixed-euro monthly purchase already buys more coins
+when the price is low -- it *is* the convexity harvest, bought for free, with no rule.
+
+`scripts/analysis/dca_overlay.py` measures what automating the *placement* of that purchase
+adds. No engine and no prediction: every arm contributes exactly the same euros and differs
+only in where the buy lands. Scored as final value (coins at the final price plus unspent
+cash) over euros contributed.
+
+| arm | 2018–2025 | 2021–2025 | 2023–2025 |
+|---|---|---|---|
+| day 1, whole amount | **reference** | **reference** | **reference** |
+| split weekly | −0.54 % | −0.71 % | −2.84 % |
+| split daily | −0.70 % | −0.82 % | −2.91 % |
+| limit −5 %, market at month end if unfilled | −2.91 % | −0.71 % | −2.99 % |
+| limit −10 % | −1.90 % | −0.87 % | −2.63 % |
+| limit −20 % | −0.79 % | −1.77 % | −5.80 % |
+| double on a 20 % drawdown, half otherwise | −7.69 % | −7.66 % | −21.37 % |
+
+**Buying the whole contribution on day one wins in all three windows.** The mechanism is the
+one this document keeps arriving at: every arm delays exposure, and against a positive drift
+delay is a systematically losing trade. The dip-limit arms make it explicit -- when the limit
+fills you save the dip, and when it does not you buy at the month's close, which under drift
+is the more common and more expensive branch.
+
+One honesty note on the last arm: it holds cash back to fund the doubling, so part of its
+loss is under-deployment rather than mistiming, and it is not a clean placement test. The
+split and limit arms are clean -- same total, fully deployed, only the placement differs.
+
+The fee lever, by contrast, is small, certain and positive: the same naive DCA over
+2018–2025 is worth +0.24 % moving from taker (0.40 %) to maker (0.16 %). That is the only
+overlay measured in this study with a positive expected value, and its size is a quarter of
+one percent over eight years.
+
+What this settles for the DCA framing: **the bot's contribution is execution, not timing.**
+Placing the buy, paying the maker fee, keeping the record, running the alerting -- all real,
+all small, none of it alpha. And layering the trading strategy on top of a DCA stack is not
+a separate question: the three-year run already measured that behaviour at −76 % of base
+asset, and a stack that grows by contribution changes the size of the bet, not its sign.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1522,7 +1567,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Fourteen avenues are now closed by measurement**, and none of them was a tuning question —
+**Fifteen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1542,6 +1587,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Reverse-engineering the rules from ideal trades | the pivot label is worth +406 % traded perfectly, but no causal feature predicts the honest target (sign of the forward return at a fixed horizon: AUC 0.43–0.52 for all 16, price and flow alike); a model scoring 0.767 against the pivot label captures +10.6 of those 406 points at zero fee and −33.1 % at maker |
 | Trading more often to dilute luck | confirmed, in the direction that hurts: over three years the configs making 100–784 operations converge *below* the passive ones (−93.0 % against −78.0 %), which is what a negative per-operation expectation looks like with more draws |
 | Replacing the bot with a threshold-rebalanced constant mix | the rebalancing premium is negative in every rising window (−5.3 to −7.7 points at `w=0.5`) and worth +1.9 points in the one falling year; over three years −18.4 %, of which only 0.8 is fees and 17 is drift. Bounds the whole signal-free family at about +2 % a year, and only when the market falls |
+| Overlaying entry timing on a monthly DCA | buying the whole contribution on day one wins in all three windows; splitting weekly or daily costs 0.5–2.9 points and dip limits 0.7–5.8, because every arm delays exposure against a positive drift. The fee lever is the only positive one measured anywhere in the study: +0.24 % over eight years moving from taker to maker |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1604,6 +1650,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/dca_overlay.py` | **On a monthly DCA, what does automating the placement add?** Arms that contribute identical euros and differ only in where the buy lands (day one, split weekly/daily, dip limits with a month-end fallback, drawdown-scaled), scored as final value over euros contributed, on daily bars resampled from the 15-minute CSV. Seconds to run; `--fee` sizes the one positive lever. |
 | `scripts/analysis/constant_mix_rebalance.py` | **What is a signal-free allocation rule worth here?** A constant-mix portfolio rebalanced when the weight leaves a band, checked every bar, swept over weight, band and fee. No engine, no configs, no calibration -- seconds to run. Reports against two benchmarks: holding (which a half-weight portfolio loses to by construction) and the same mix never rebalanced (which isolates the premium). |
 | `scripts/analysis/signal_screen.py` | **Does anything visible at `t` predict the ideal action, and is it worth money?** Three parts that must all pass: what the perfect pivot label is worth when traded, per-feature AUC against both the pivot label and a fixed-horizon forward label, and the model's prediction run as an allocation in base asset at zero and maker fees. Causal features in two families (price/volatility as control, flow — volume and trade count — as the untested one), circular-shift null, temporal split fixed in advance. No engine, no configs; minutes to run. |
 | `scripts/analysis/reanchor_ablation.py` | **Is the bot viable without the activation re-anchor?** The 105 configs under production, no buy re-anchor, no re-anchor on either side, and the re-anchor capped at the leg's entry price; reports the base-asset distribution, the per-`min_margin` medians, time in cash and how many configs end the window in cash. Run it on both a window where the price came back and one where it did not; `--fee` sweeps the fee per trade. Takes the 15-minute CSV path. |
