@@ -42,6 +42,12 @@ class EngineConfig:
     # rally opens on a cash leg, which is exactly the case that costs base asset.
     # Empty in production: this exists to bound a rally gate offline.
     force_hold_bars: frozenset[int] = frozenset()
+    # Per-side overrides of ``min_margin``; ``None`` keeps the shared value, so production —
+    # which sets neither — is unchanged. Exists to measure whether selling reluctantly and
+    # rebuying eagerly accumulates base asset: being out during a rise loses coins for good,
+    # being in during a fall costs none, so the two sides do not carry the same risk.
+    min_margin_sell: float | None = None
+    min_margin_buy: float | None = None
 
 
 @dataclass(frozen=True)
@@ -126,6 +132,12 @@ def lookup_k_stop(
     return _k_for_level(cal, side, vol)
 
 
+def _min_margin_for(cfg: EngineConfig, side: str) -> float:
+    """The side's own margin when one is set, else the shared ``min_margin``."""
+    override = cfg.min_margin_sell if side == "sell" else cfg.min_margin_buy
+    return cfg.min_margin if override is None else float(override)
+
+
 def activation_distance(
     cfg: EngineConfig,
     side: str,
@@ -138,7 +150,7 @@ def activation_distance(
     if cfg.k_act is not None:
         return float(cfg.k_act) * atr_val
     k_stop = lookup_k_stop(cfg, side, atr_val, close, cal) or 0.0
-    return float(k_stop) * atr_val + (cfg.min_margin * reference_price)
+    return float(k_stop) * atr_val + (_min_margin_for(cfg, side) * reference_price)
 
 
 def activation_price(

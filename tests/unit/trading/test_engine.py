@@ -445,3 +445,39 @@ def test_the_mask_does_not_re_enter_a_bot_that_already_holds_the_asset() -> None
     masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [1, 2, 3]))
 
     assert [(op.side, op.time) for op in masked] == [("buy", "t0")]
+
+
+# --- per-side min_margin ---------------------------------------------------
+
+# k_act=None so activation goes through K_STOP * ATR + min_margin * price; with ATR 2.0 and
+# K 1.0 the shared 0.05 margin puts a sell barrier at 107 and a buy barrier at 93.
+_SHARED = dict(k_act=None, min_margin=0.05)
+
+
+def test_without_overrides_both_sides_use_the_shared_margin() -> None:
+    cfg = _cfg(**_SHARED)
+
+    assert cfg.min_margin_sell is None and cfg.min_margin_buy is None
+    assert engine.activation_price(cfg, "sell", 100.0, 2.0, 100.0) == pytest.approx(107.0)
+    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(93.0)
+
+
+def test_a_sell_override_moves_only_the_sell_barrier() -> None:
+    cfg = dataclasses.replace(_cfg(**_SHARED), min_margin_sell=0.10)
+
+    assert engine.activation_price(cfg, "sell", 100.0, 2.0, 100.0) == pytest.approx(112.0)
+    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(93.0)
+
+
+def test_a_buy_override_moves_only_the_buy_barrier() -> None:
+    cfg = dataclasses.replace(_cfg(**_SHARED), min_margin_buy=0.01)
+
+    assert engine.activation_price(cfg, "sell", 100.0, 2.0, 100.0) == pytest.approx(107.0)
+    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(97.0)
+
+
+def test_a_zero_override_is_an_override_not_a_fallback() -> None:
+    # 0.0 is a legitimate "no margin" choice and must not be mistaken for "unset".
+    cfg = dataclasses.replace(_cfg(**_SHARED), min_margin_buy=0.0)
+
+    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(98.0)
