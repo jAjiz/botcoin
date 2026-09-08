@@ -1231,6 +1231,56 @@ mechanism was right -- it does follow the price down and it does buy the bounce 
 mechanism does what it promises. What it cannot do is change the sign, because the months it
 loses are the months the price ran away, and those are the months that carry the drift.
 
+### Immediate activation is closed; free stops move no distribution (2026-09-08)
+
+Two gaps the owner spotted in the record, and they were real gaps. The `k_act` branch is
+disabled in every sweep in this document -- all 105 configs carry `k_act=None` -- so
+`k_act = 0`, immediate activation, had never been evaluated at all; what stood against the
+branch was the structural argument in defect 5 plus a stale count of 12 hold-out fits. And
+the free per-level stops were measured once, by Optuna, on 2025 with `min_margin` pinned at
+0.004, returning `converged: False` -- which says the *search* does not identify an optimum,
+not that the region lacks one. `scripts/analysis/kact_and_free_stops.py` puts all three
+groups on one calibration schedule and one window so they are comparable, on 2025 (hold
+−17.41 %, a falling year and therefore the bot's favourable case).
+
+| group | median | p25 | p75 | best | worst | beats hold | ops | in cash |
+|---|---|---|---|---|---|---|---|---|
+| 105 shared (reference) | +24.4 % | −0.4 % | +35.3 % | +59.0 % | −88.4 % | 75/105 | 23.7 | 38 % |
+| `k_act` branch | −80.7 % | −95.2 % | −32.9 % | +30.3 % | −99.6 % | 5/35 | 499.7 | 45 % |
+| 600 free stops | +24.6 % | −0.4 % | +35.8 % | +73.5 % | −83.4 % | 423/600 | 27.2 | 40 % |
+
+**Immediate activation is the worst configuration the strategy has.** Broken out by
+multiplier, the branch is monotone and the direction is the study's:
+
+| `k_act` | median | best | worst | beats hold | ops |
+|---|---|---|---|---|---|
+| **0** | **−95.3 %** | −80.7 % | −99.6 % | 0/5 | **807** |
+| 1 | −94.9 % | −80.5 % | −99.5 % | 0/5 | 776 |
+| 4 | −80.4 % | −65.6 % | −88.1 % | 0/5 | 378 |
+| 8 | −29.7 % | −2.7 % | −33.0 % | 0/5 | 84 |
+| 16 | +19.4 % | +30.3 % | +12.0 % | 5/5 | 15 |
+
+At `k_act = 0` the activation distance is zero, the stop arms at the entry price, and the
+bot trades **807 times in a year** to lose 95 % of the base asset -- in the one year of the
+three that holding lost money. Defect 5's structural argument is now a measurement: with no
+ATR-independent floor the barrier collapses and the whole branch degenerates into churn.
+Only `k_act = 16` beats holding, at 15 operations, which is the study's standing result that
+what helps is trading less, not a property of the branch.
+
+**Freeing the five levels moves the best config and nothing else.** Median +24.6 % against
++24.4 %, p25 identical, p75 +35.8 against +35.3, and the share beating hold 70.5 % against
+71.4 %. The distributions are the same distribution. What does move is the maximum, +73.5 %
+against +59.0 %, and that is what 600 draws from a superset do to 105 draws from a subset
+even when nothing is there: the shared space is a point set *inside* the free space, so its
+maximum can only be lower, and the gap is an order statistic, not a region.
+
+That is as far as this run goes, and it is worth being exact about the boundary. It closes
+"do free stops shift the distribution" -- no -- and it does **not** close "does the free
+maximum survive forward", because +73.5 % is an in-sample maximum and avenue 1 of this
+document already measured in-sample selection landing at percentile 50 of the forward
+distribution. Settling that needs the fit-forward test run on the free space, not another
+in-sample sweep.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1276,6 +1326,7 @@ contradicted by later work that had only this document to go on.
   fixed in the engine.
 - **The base asset, not euros, is the objective.** See the next section.
 - **The current optimizer is closed as a research tool, and free per-level stops with it.** The deployed AUTO search on the fixed engine returns four different answers from four seeds; see "Free per-level stops do not converge". Any remaining question goes through the exhaustive sweep and the forward-percentile test.
+- **Free per-level stops move the maximum and not the distribution.** On 2025 with the calibration schedule shared across groups, 600 random free-stop configs land at median +24.6 % against the 105 shared configs' +24.4 %, with the same quartiles and the same share beating hold; only the best moves (+73.5 % against +59.0 %), which is the order statistic of 600 draws from a superset. Whether that maximum survives forward is NOT settled. See "Immediate activation is closed; free stops move no distribution".
 - **Per-side activation is closed.** Measured on the fixed engine and worse in the hypothesis direction; the per-side `min_margin` overrides stay in the engine as inert, tested fields.
 - **Switching the config by regime is closed, operator-declared or otherwise.** With perfect regime labels the switched run is 18–19 points below the best fixed config; a regime's outcome is set by the side the bot holds when it begins, which no config can change. See "Switching the config by regime is closed".
 - **The activation re-anchor stays, on both sides.** Removing it makes every cycle clean and turns the bot into one that sells once and waits for the price to come back; on 2024-10..2025-03 that is −22 % for all 105 configs with the whole window spent in cash. `reanchor_sell`/`reanchor_buy`/`reanchor_cap_at_entry` remain in the engine as inert switches.
@@ -1611,7 +1662,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Sixteen avenues are now closed by measurement**, and none of them was a tuning question —
+**Seventeen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1633,6 +1684,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Replacing the bot with a threshold-rebalanced constant mix | the rebalancing premium is negative in every rising window (−5.3 to −7.7 points at `w=0.5`) and worth +1.9 points in the one falling year; over three years −18.4 %, of which only 0.8 is fees and 17 is drift. Bounds the whole signal-free family at about +2 % a year, and only when the market falls |
 | Overlaying entry timing on a monthly DCA | buying the whole contribution on day one wins in all three windows; splitting weekly or daily costs 0.5–2.9 points and dip limits 0.7–5.8, because every arm delays exposure against a positive drift. The fee lever is the only positive one measured anywhere in the study: +0.24 % over eight years moving from taker to maker |
 | The bot's trailing entry as the DCA's buy rule | without a fall requirement it triggers in a median 0.8-6.8 hours and never once reaches a month's close untriggered, so it degenerates into buying on day one (±0.16 %); with one, 87 of 96 months enter below the day-one price and it still finishes 0.6-2.2 points behind, because the 7-9 months that never trigger buy after the rally. A high hit rate with a negative expectation |
+| Immediate activation (`k_act = 0`) | the worst configuration the strategy has: 807 operations in 2025 for a median −95.3 % of base asset, 0/5 beating hold, in the one year holding lost money. The branch is monotone in the multiplier and only `k_act = 16` (15 ops) beats hold, which is the standing "trade less" result rather than anything about the branch |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1695,6 +1747,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/kact_and_free_stops.py` | **The two gaps in the record: `k_act = 0` and the five free stops.** Runs the 105 shared-stop reference, the whole `k_act` branch broken out by multiplier, and a random sample of the free-stop space on one shared calibration schedule and window, scored in base asset. Reports the distribution and not only the best, because the best is where the selection effect hides. About 15 minutes for one year at 600 samples. |
 | `scripts/analysis/dca_trailing_entry.py` | **Does the bot's trailing entry place the monthly buy better?** The live activation mechanism applied to the DCA's entry on 15-minute bars: run the low from the month's open, buy on a `bounce` x ATR reversal, optionally after a `fall` x ATR drop, market at the month's close otherwise. Reports median hours waited and the share of months entered below the day-one price beside the money, because the rule can win on both and lose on the third. |
 | `scripts/analysis/dca_overlay.py` | **On a monthly DCA, what does automating the placement add?** Arms that contribute identical euros and differ only in where the buy lands (day one, split weekly/daily, dip limits with a month-end fallback, drawdown-scaled), scored as final value over euros contributed, on daily bars resampled from the 15-minute CSV. Seconds to run; `--fee` sizes the one positive lever. |
 | `scripts/analysis/constant_mix_rebalance.py` | **What is a signal-free allocation rule worth here?** A constant-mix portfolio rebalanced when the weight leaves a band, checked every bar, swept over weight, band and fee. No engine, no configs, no calibration -- seconds to run. Reports against two benchmarks: holding (which a half-weight portfolio loses to by construction) and the same mix never rebalanced (which isolates the premium). |
