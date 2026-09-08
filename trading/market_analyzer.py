@@ -242,9 +242,7 @@ def build_calibration_inputs(
 ) -> tuple[CalibrationInputs, ...]:
     """Calibration inputs every ``recalib_bars`` bars of ``df``, each from ``df_full`` up to that bar.
 
-    Entry 0 always exists and carries what was already in force when ``df`` opens, so
-    the schedule governs the run from its very first bar. Each point sees the past only,
-    which is what the live bot has when it recalibrates.
+    Entry 0 always exists, and every point sees the past only. See CLAUDE.md Design choices.
     """
     if recalib_bars <= 0 or df.empty:
         return ()

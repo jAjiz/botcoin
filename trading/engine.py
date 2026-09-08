@@ -25,9 +25,8 @@ class PairCalibration:
 class EngineConfig:
     """Everything a simulation needs, with no module-level globals.
 
-    ``calibration_schedule`` mirrors the live recalibration every ``PARAM_SESSIONS``
-    ticks: ``(bar index, calibration in force from that bar on)``, ascending. An
-    empty schedule keeps ``calibration`` for the whole run.
+    ``calibration_schedule`` is ``(bar index, calibration in force from there)``, ascending;
+    empty keeps ``calibration`` for the whole run. See CLAUDE.md Design choices.
     """
 
     pair: str
@@ -36,16 +35,9 @@ class EngineConfig:
     min_margin: float
     atr_desv_limit: float
     calibration_schedule: tuple[tuple[int, PairCalibration], ...] = ()
-    # Bars on which the bot must be fully in the base asset. A sell exit is suppressed (the stop
-    # keeps trailing, so the exit is deferred, not cancelled), and a bot sitting in cash is forced
-    # in at that bar's price, paying the entry fee. Suppressing sells alone is inert whenever the
-    # rally opens on a cash leg, which is exactly the case that costs base asset.
-    # Empty in production: this exists to bound a rally gate offline.
+    # Bars the bot must hold the asset: the sell is deferred, a cash leg is forced in. Empty in production.
     force_hold_bars: frozenset[int] = frozenset()
-    # Per-side overrides of ``min_margin``; ``None`` keeps the shared value, so production —
-    # which sets neither — is unchanged. Exists to measure whether selling reluctantly and
-    # rebuying eagerly accumulates base asset: being out during a rise loses coins for good,
-    # being in during a fall costs none, so the two sides do not carry the same risk.
+    # Per-side overrides of ``min_margin``; ``None`` keeps the shared value. Unset in production.
     min_margin_sell: float | None = None
     min_margin_buy: float | None = None
 
@@ -232,13 +224,9 @@ def _record_stop_exit(
 
 
 def mark_to_market(ops: list[Operation], final_price: float) -> float:
-    """Cumulative return with the still-open position valued at ``final_price``.
+    """Cumulative return with the still-open long leg valued at ``final_price``.
 
-    A leg is booked only when it closes, so a run that ends mid-position reports
-    only what it realized: the move since the last operation is missing. A run
-    ending in euros has nothing to value, so only an open long leg adds anything.
-    This is a valuation, not a liquidation — the position carries on past the end
-    of the window, so it is charged no exit fee.
+    A valuation, not a liquidation, so no exit fee. See CLAUDE.md Design choices.
     """
     if not ops:
         return 0.0

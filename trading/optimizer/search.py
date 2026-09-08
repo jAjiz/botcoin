@@ -22,9 +22,7 @@ from trading.market_analyzer import (
     k_values_by_level,
 )
 
-# AUTO is gone from the search: with one shared stop_pct the space is enumerable, so there is
-# no sampler for seeds to reach consensus about. It stays in HISTORICAL_MODES because stored
-# jobs carry it and must still read back.
+# AUTO is retired (the space is enumerated); HISTORICAL_MODES keeps it so stored jobs read back.
 MODES = ("OPTIMIZE", "CURRENT")
 HISTORICAL_MODES = ("OPTIMIZE", "CURRENT", "AUTO")
 
@@ -94,8 +92,7 @@ _k_values_by_level = k_values_by_level
 
 
 def _grid_values(g: GridSpec) -> list[float]:
-    """Every point on the grid, both ends inclusive. GridSpec validation guarantees
-    (end - start) is an integer multiple of step, so the count is exact."""
+    """Every point on the grid, both ends inclusive; GridSpec validation makes the count exact."""
     n = round((g.end - g.start) / g.step)
     return [round(g.start + i * g.step, 10) for i in range(n + 1)]
 
@@ -103,12 +100,8 @@ def _grid_values(g: GridSpec) -> list[float]:
 def enumerate_candidates(space: SearchSpace) -> list["Candidate"]:
     """Every config in the space, both branches, in a deterministic order.
 
-    One shared ``stop_pct`` across the five levels rather than five searched independently:
-    at the operation counts these configs produce, a run exercises two or three levels, so
-    the rest are unidentified and a search fills them with noise. Freeing them was measured
-    and the deployed search does not converge (0/4 seeds after 12 000 trials). Shared, the
-    space is a small product that can simply be enumerated -- no sampler, no seed, no
-    convergence question, and an identical request always returns an identical ranking.
+    One shared ``stop_pct`` across the five levels; freeing them does not converge.
+    See docs/specs/optimizer-simplification-design.md.
     """
     stops = _grid_values(space.stop_pcts)
     out: list[Candidate] = []
@@ -333,11 +326,7 @@ class EvalContext:
     down_k: dict[str, np.ndarray]
     min_ops: int
     min_test_ops: int
-    # Buy-and-hold over the window and over each half, in percent. Reported beside every
-    # euro figure and never ranked on: the objective is base-asset accumulation, and the
-    # two disagree in sign whenever a half falls (a -5.19 % euro result over 2025 is
-    # +14.79 % of base asset accumulated). Ranking on it would be worse, not better --
-    # `min(train, test)` collapses onto one half once the halves sit in opposite regimes.
+    # Buy-and-hold over the window and each half. Reported beside every euro figure, never ranked on.
     hold_pct: float = 0.0
     train_hold_pct: float = 0.0
     test_hold_pct: float = 0.0
@@ -361,8 +350,7 @@ def _evaluate(cand: Candidate, ctx: EvalContext) -> _Eval:
 
 
 def _base_asset_pct(eur_pct: float | None, hold_pct: float) -> float | None:
-    """Base asset accumulated: (1 + r_bot) / (1 + r_hold) - 1, in percent. Holding is 0 % by
-    construction, in any regime, which is what makes it the comparable figure."""
+    """Base asset accumulated: (1 + r_bot) / (1 + r_hold) - 1, in percent. Holding is 0 % by construction."""
     if eur_pct is None:
         return None
     divisor = 1.0 + hold_pct / 100.0
@@ -410,8 +398,7 @@ def _result_from_evaluated(
     req: OptimizerRequest, scored: list[tuple[Candidate, _Eval]], ctx: EvalContext
 ) -> OptimizerResult:
     """Rank the evaluated candidates and format the top five."""
-    # By robust_pnl, ties broken by in-sample, then test, then train PnL. Enumeration is
-    # already deterministic, so an identical request returns an identical ranking.
+    # By robust_pnl, ties broken by in-sample, then test, then train PnL; enumeration is deterministic.
     ranked = sorted(
         scored,
         key=lambda ce: (ce[1].robust_pnl, ce[1].in_sample.total_pnl, ce[1].test.total_pnl, ce[1].train.total_pnl),

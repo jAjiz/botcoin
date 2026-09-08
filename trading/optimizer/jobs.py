@@ -97,13 +97,11 @@ class JobStore:
                 self._active.pop(active.job_id, None)
 
     def _notify_done(self, active: _ActiveJob, payload: dict) -> None:
-        """One message for every completed job: the search is a deterministic enumeration,
-        so there is no convergence outcome to report and no second message shape."""
+        """One message for every completed job; an enumeration has no convergence outcome to report."""
         best = (payload.get("top_candidates") or [{}])[0]
         robust = best.get("robust_pnl_pct")
         robust_str = f"{robust:.2f}%" if robust is not None else "n/a"
-        # The objective is base-asset accumulation, and the euro figure inverts in sign
-        # whenever the window falls — so the message carries both or it misleads.
+        # The euro figure inverts in sign whenever the window falls, so the message carries both.
         base = best.get("in_sample_base_pct")
         base_str = f"{base:.2f}%" if base is not None else "n/a"
         env_lines = "\n".join(payload.get("suggested_env_lines") or [])
