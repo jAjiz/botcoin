@@ -839,6 +839,73 @@ operations a month is 19–24 % a year of fees, and nothing in the grid earns th
 
 This closes the eleventh avenue, and the first one framed on the operator side of the bot.
 
+### Where the loss of operating comes from (2026-09-08)
+
+The regime result left the bot's owner with the right diagnosis: the more a config trades,
+the worse it does, and the best fixed config (6 operations) simply sold and rebought at
+good moments. That is a statement about the strategy, not the search, so this measures the
+strategy at the level of the single cycle. `scripts/analysis/cycle_decomposition.py`
+pairs every sell with the buy that follows it, across the 105 configs on
+2025-04-01 .. 2025-12-31, and scores each cycle in base asset with both fees
+(`P_sell / P_buy × (1 − f)² − 1`; a cycle costs −0.80 %).
+
+**The arithmetic first.** In base asset the in-asset leg is worth 0 by construction; only
+the cash leg (sell, then rebuy) changes how many coins there are. The buy cannot activate
+until the price has fallen `K·ATR + mm·P_sell` below the sell, and it executes `K·ATR`
+above the low — so a *clean* cycle rebuys at most at `P_sell · (1 − mm)`, and gains at
+least `mm − 0.8 %`. It cannot lose. The only way to rebuy higher is the re-anchor of the
+buy activation (the mirror of `reanchor_activation_price`): as soon as the price exceeds
+`P_sell`, the activation follows it up, and the rebuy comes after a `K·ATR + mm` dip from
+the new high. It exists so a bot in cash re-enters after a rally instead of staying out
+forever, and in euros it costs nothing — cash is cash. In base asset it costs the whole
+excursion. So the cash leg has a **take-profit** (the trailing buy closes it at the first
+`K·ATR` bounce) and **no stop-loss** (the re-anchor lets the excursion run): the bot was
+designed in euros, where the cash leg carries no risk, and in the base-asset objective the
+cash leg is the *only* leg that carries any.
+
+**Measured** (five configs per `min_margin`, `stop_pct` 0.5 .. 0.9):
+
+| `mm` | floor | cycles | win | median win | Σ win | lose | median loss | Σ loss | worst | time in cash |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0.00 | −0.8 % | 466 | 132 | +1.2 % | +195 % | 334 | −1.3 % | −660 % | −10.8 % | 54 % |
+| 0.01 | +0.2 % | 123 | 79 | +0.9 % | +105 % | 44 | −4.7 % | −220 % | −13.8 % | 59 % |
+| 0.02 | +1.2 % | 49 | 37 | +1.8 % | +86 % | 12 | −3.9 % | −119 % | −24.5 % | 76 % |
+| 0.03 | +2.2 % | 10 | 8 | +3.2 % | +30 % | 2 | −5.5 % | −11 % | −5.8 % | 85 % |
+| 0.04 … 0.20 | +3.2 … +19.2 % | 5–13 | all | +5.9 … +25.2 % | | **0** | | | | 71–88 % |
+
+Read across a row. At `mm = 0.01` the wins sit on the floor (median +0.9 % against a floor
+of +0.2 %) and the losses are five times larger (median −4.7 %, worst −13.8 %); the sum
+of the losses is twice the sum of the wins. Break-even on that asymmetry needs a win rate
+of about 80 %; the measured one is 64 %. At `mm = 0.02` it is 76 % measured against 81 %
+needed, and one cycle costs −24.5 %. At `mm = 0.00` the floor itself is the fee, so 72 %
+of cycles lose. This is the whole "more operations, worse result" effect: each clean cycle
+earns roughly `mm`, each re-anchored one loses roughly the excursion, and the ratio between
+the two is set by the market, not by the config.
+
+From `mm = 0.04` up there is **not one losing cycle**, and that is the other half of the
+owner's diagnosis: those configs make one to three cycles, spend 71–88 % of the window in
+cash, and their result is a single sell in April rebought in November after the fall —
++24 % on that one cycle. The loss of sitting in cash through a +30 % rally is real but never
+becomes a cycle, because the rebuy only came once the price was back below the sell.
+
+**What this bounds.** With no directional signal — and every measurement here says there is
+none at 1 h–3 d — the expected base-asset return of a cash leg is the variance realised
+during it minus the drift during it (`E[P_sell / P_T] = exp((σ² − μ)τ)` for a driftless
+walk), and no entry or exit rule changes that expectation: a rule only chooses *when* the
+bot is in cash. Capping the cash-leg loss (a rebuy above `P_sell`) turns rare large losses
+into frequent small ones plus fees — a change of variance, not of sign — and removing the
+re-anchor is a bet that the price returns, unbounded in the other direction. Neither makes
+an operation profitable; both are directional bets in disguise. The one signal-free lever
+the arithmetic leaves is *where* the cash time falls: variance clusters and is forecastable
+where direction is not, and a cash leg earns `σ²τ` — which is also why "avoid high
+volatility" was the wrong instinct in base asset: a violent oscillation that returns to its
+start is the best thing that can happen to a bot in cash. Its ceiling is `σ² × time in
+cash`, about 16 % a year at σ = 40 % if the bot were always in cash, before fees and before
+the drift term that a rising year dwarfs. That is not an operation-level edge and it will
+not make 4–5 trades a month pay; it makes the cash time better placed. Whether it is worth
+even that needs `σ² − μ` measured per volatility level, which is a descriptive run of the
+regime screen, not a simulation.
+
 ### Still not established
 
 - **Whether anything predicts on a pair that trades enough.** Every predictiveness and
@@ -1288,6 +1355,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
+| `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
 | `scripts/analysis/regime_switch_oracle.py` | **What is switching the config by regime worth, with perfect labels?** Labels the window by shape (impulse-first: M % in ≤ K days; ≥ D-day gaps are lateral), ranks all 105 configs per class from sliced continuous runs, and runs the switched config as one continuous run against the best fixed, the recommended, and the median — with and without full allocation through rallies. `--move-pct`, `--max-days`, `--min-days`, `--active`, `--labels-only`. Takes the 15-minute CSV path. |
 | `scripts/analysis/rally_gate_oracle.py` | **What is a perfect rally detector worth?** Gates whole rally periods with hindsight and forces full allocation through them (`force_hold_bars`), re-simulated continuously — never as an overlay. Reports the arms and the per-period breakdown that separates what the gate recovers from what it costs downstream. Takes the 15-minute CSV path. |
 | `scripts/analysis/volatility_regime_screen.py` | **Are high-ATR stretches more directional than low-ATR ones?** Kaufman efficiency ratio by volatility level over non-overlapping windows at five horizons, against the `1/√N` random-walk null. No engine, no configs, no fees — a descriptive measure of the market, seconds to run. Takes the data directory, not `--csv`. |
