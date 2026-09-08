@@ -757,6 +757,88 @@ symmetric against +20.6 … +27.3 %), and best-of-105 does not predict anyway.
 
 This was declared the last avenue before it was run. It is.
 
+### Switching the config by regime is closed (2026-09-08)
+
+The proposal, after the per-side result: since the bot cannot tell direction, let the
+*operator* declare the regime — lateral, falling, rising — and run one config per regime
+(a lateral config that trades at least 4–5 times a month, a falling config, and hold or
+nothing in a rally), switched through `PATCH /config`. The question is not whether such
+configs exist per segment (with hindsight one always does — that is the percentile-50
+result) but whether switching them, even with *perfect* regime labels, beats one fixed
+config. If it does not, no detector and no operator can recover it.
+
+**Labels by shape, not by clock.** BTC's 2025 moves are impulses of days between weeks of
+range, so fixed windows mix the two. A box-containment rule (the longest stretch fitting in
+a 10 % box) was tried first and absorbed the impulses — they were one- or two-day jumps
+between adjacent boxes, and 97 % of days came out lateral. The rule that respects the shape
+detects the movement first: a day is part of an **impulse** when it lies inside any pair of
+daily closes ≤ K days apart with |net| ≥ M (direction by the impulse's net sign); a gap
+between impulses of ≥ D days is **lateral**, shorter gaps are **short** (a pause, reported
+and not excluded). `M = 10 %`, `K = 7 d`, `D = 7 d`, fixed before any config was ranked;
+control at `M = 7 %`, `K = 5 d`. Primary labels on 2025-04-01 .. 2025-12-31 (hold −2.24 %):
+
+| Class | Segments | Days | Median length | Median \|hold\| |
+|---|---|---|---|---|
+| lateral | 6 | 207 (75 %) | 39 d | 2.0 % |
+| falling | 3 | 28 (10 %) | 8 d | 12.7 % |
+| rising | 4 | 35 (13 %) | 8 d | 11.2 % |
+| short | 2 | 5 (2 %) | 4 d | 3.5 % |
+
+**Method.** `scripts/analysis/regime_switch_oracle.py`. Every one of the 105 configs runs
+once, continuously, and is sliced at the segment boundaries by marking to market (quotient
+of growth factors), so the per-class ranking sees the state each config carried into the
+segment. The class winner is the config with the best compounded base-asset accumulation
+over that class's segments. The switched arm is then **one** continuous run whose
+`min_margin` and `stop_pct` change at each boundary — the retired `activation_schedule`
+reproduced without touching the engine: the switched run's calibration-schedule entries
+carry their `min_margin` (a `PairCalibration` subclass) and `activation_distance` is
+patched in the script to read it. A second switched arm also forces full allocation through
+the rising segments (`force_hold_bars`), the strongest thing the bot can do with a known
+rally.
+
+**Per class** (primary labels; "all" = beats hold in every segment of the class):
+
+| Class | Configs beating hold in all | Best config | Compounded | Ops/month | Best with ≥ 4 ops/month |
+|---|---|---|---|---|---|
+| lateral | 0/105 (best: 4/6) | `mm=0.07 s=0.5` | +27.0 % | 0.6 | `mm=0.01 s=0.7` +6.8 %, 4/6, 5.9/mo |
+| falling | 95/105 | `mm=0.04 s=0.7` | +50.3 % | 3.2 | `mm=0.03 s=0.7` +36.7 %, 4.3/mo |
+| rising | 0/105 | `mm=0.20 s=0.9` | −18.8 % | 0.9 | `mm=0.01 s=0.9` −24.9 % |
+
+**Switched against fixed** (base asset over the window, hold = 0 %):
+
+| Arm | Primary (M=10, K=7) | Control (M=7, K=5) | Ops |
+|---|---|---|---|
+| median of the 105 fixed | +18.8 % | +18.8 % | |
+| best fixed (`mm=0.07 s=0.5`, chosen in-sample) | +27.0 % | +27.0 % | 6 |
+| recommended fixed (`mm=0.05 s=0.9`) | +20.9 % | +20.9 % | 6 |
+| **switched, perfect labels** | **+7.6 %** | **+8.9 %** | 4 |
+| switched + full allocation through rallies | +12.8 % | +10.8 % | 10–14 |
+
+The oracle is 18–19 points *below* the best fixed config and below the median of the
+105 — at both labelings, so it is not the thresholds.
+
+**Why, and this is the mechanism the whole idea runs into.** Look at the operation counts:
+the class winners make 0–1 operations per segment. A falling segment scores +14.6 % or
++24.6 % with **zero** operations — the bot was already in cash when the fall began; a rising
+segment scores −10.1 % with zero operations — the bot was already in cash when the rise
+began. What a regime returns is decided by the side the bot holds when the regime starts,
+and that was fixed by the previous regime's path, not by the config now in force. The
+config cannot change the side either, because activation needs a *favourable* move first:
+a "falling" config cannot make a bot that holds the asset sell into a fall (the sell never
+activates), and a "rising" config cannot make a bot in cash buy into a rise. The forced
+arm shows the other half: buying in at each rally start does recover the rallies (−10.1 →
+−0.6 / −0.3 / −0.0) and then gives it back in the November fall (+24.6 → +0.0, zero ops: in
+the asset, sell never activated) and the December range (+14.2 → −0.0). It is the same
+divergence the rally gate found, now with the config free to change and the labels perfect.
+
+**On the operation-count requirement.** No class winner exceeds 1.1 operations a month.
+Over the whole window 8 of the 105 configs reach 4 a month; the best of them,
+`mm=0.01 s=0.6`, accumulates **−20.7 %** with 60 operations — at 0.4 % a trade, 4–5
+operations a month is 19–24 % a year of fees, and nothing in the grid earns that back.
+"Trades at least 4–5 times a month" is a fee floor, not an objective.
+
+This closes the eleventh avenue, and the first one framed on the operator side of the bot.
+
 ### Still not established
 
 - **Whether anything predicts on a pair that trades enough.** Every predictiveness and
@@ -799,6 +881,7 @@ contradicted by later work that had only this document to go on.
 - **The base asset, not euros, is the objective.** See the next section.
 - **The current optimizer is closed as a research tool, and free per-level stops with it.** The deployed AUTO search on the fixed engine returns four different answers from four seeds; see "Free per-level stops do not converge". Any remaining question goes through the exhaustive sweep and the forward-percentile test.
 - **Per-side activation is closed.** Measured on the fixed engine and worse in the hypothesis direction; the per-side `min_margin` overrides stay in the engine as inert, tested fields.
+- **Switching the config by regime is closed, operator-declared or otherwise.** With perfect regime labels the switched run is 18–19 points below the best fixed config; a regime's outcome is set by the side the bot holds when it begins, which no config can change. See "Switching the config by regime is closed".
 
 ## The objective is asset accumulation
 
@@ -1128,7 +1211,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Ten avenues are now closed by measurement**, and none of them was a tuning question —
+**Eleven avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1143,6 +1226,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Forcing full allocation through rallies | −3.2 points with perfect hindsight: the gate recovers +17.3 in the rallies and gives back −21.4 in the crash after it |
 | Five free per-level `stop_pcts` | the deployed AUTO search does not converge: 0/4 seeds agree after 12 000 trials |
 | Per-side `min_margin` (sell reluctant, buy eager) | −5.5 to −7.0 points median, worsening with the asymmetry; the opposite direction is zero |
+| Switching the config by regime (lateral / falling / rising), perfect labels | −18 to −19 points below the best fixed config and below the median of the 105, at two labelings; the class winners make 0–1 operations per regime, because the side held when a regime begins decides it and activation cannot change that side |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1203,7 +1287,8 @@ what still answers a question no result has closed.
 | `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Also the pair-portability harness: `--pair`, `--fee`, `--mm-max` (the `min_margin` grid is a fraction of *price*, so its ceiling must scale with how far the pair moves) and `--min-change-pct` (an ATR multiple in disguise — see the USDCEUR section). Reads the CSV archives directly; takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
-| `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE`/`AUTO` in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. Used once, to close free per-level stops. |
+| `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
+| `scripts/analysis/regime_switch_oracle.py` | **What is switching the config by regime worth, with perfect labels?** Labels the window by shape (impulse-first: M % in ≤ K days; ≥ D-day gaps are lateral), ranks all 105 configs per class from sliced continuous runs, and runs the switched config as one continuous run against the best fixed, the recommended, and the median — with and without full allocation through rallies. `--move-pct`, `--max-days`, `--min-days`, `--active`, `--labels-only`. Takes the 15-minute CSV path. |
 | `scripts/analysis/rally_gate_oracle.py` | **What is a perfect rally detector worth?** Gates whole rally periods with hindsight and forces full allocation through them (`force_hold_bars`), re-simulated continuously — never as an overlay. Reports the arms and the per-period breakdown that separates what the gate recovers from what it costs downstream. Takes the 15-minute CSV path. |
 | `scripts/analysis/volatility_regime_screen.py` | **Are high-ATR stretches more directional than low-ATR ones?** Kaufman efficiency ratio by volatility level over non-overlapping windows at five horizons, against the `1/√N` random-walk null. No engine, no configs, no fees — a descriptive measure of the market, seconds to run. Takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price) — the inputs the `SearchSpace` defaults are drawn from. |
