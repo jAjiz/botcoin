@@ -295,7 +295,15 @@ a single continuous run (no mid-history reset).
 
 A completed job's `result` holds the ranked `top_candidates` (each with its
 `k_act`/`min_margin`, per-level stop percentiles, and in-sample/train/test/robust
-PnL) and ready-to-paste `suggested_env_lines`. AUTO results additionally report
+PnL) and ready-to-paste `suggested_env_lines`. Every candidate also carries
+`hold_pct`/`train_hold_pct`/`test_hold_pct` (buy-and-hold over the window and each
+half) and the same results denominated in the base asset
+(`in_sample_base_pct`/`train_base_pct`/`test_base_pct`), where holding is 0 % by
+construction. **Read the base-asset figures if the goal is accumulating the asset
+rather than euros: the two disagree in sign whenever a window falls** — a run that
+returns -5.19 % in euros across a -17.41 % year accumulated +14.8 % of base asset.
+Ranking is on euros only; see the validation spec for why denominating the ranking
+would be worse, not better. AUTO results additionally report
 `converged`, `seeds_used`, `n_seeds_agreed`. To check
 whether the winner beats the live config, run `CURRENT` and compare the robust PnL.
 Applying them is manual: copy the suggested lines into `.env` and redeploy (hot-reload

@@ -354,6 +354,14 @@ class EvalContext:
     down_k: dict[str, np.ndarray]
     min_ops: int
     min_test_ops: int
+    # Buy-and-hold over the window and over each half, in percent. Reported beside every
+    # euro figure and never ranked on: the objective is base-asset accumulation, and the
+    # two disagree in sign whenever a half falls (a -5.19 % euro result over 2025 is
+    # +14.79 % of base asset accumulated). Ranking on it would be worse, not better --
+    # `min(train, test)` collapses onto one half once the halves sit in opposite regimes.
+    hold_pct: float = 0.0
+    train_hold_pct: float = 0.0
+    test_hold_pct: float = 0.0
     calibration_points: tuple[CalibrationInputs, ...] = ()
     search_space: SearchSpace | None = None
 
@@ -373,17 +381,42 @@ def _evaluate(cand: Candidate, ctx: EvalContext) -> _Eval:
     return _Eval(in_sample, train, test, robust_pnl, train.pnl_samples, test.pnl_samples)
 
 
-def _scores_dict(ev: _Eval) -> dict:
+def _base_asset_pct(eur_pct: float | None, hold_pct: float) -> float | None:
+    """Base asset accumulated: (1 + r_bot) / (1 + r_hold) - 1, in percent. Holding is 0 % by
+    construction, in any regime, which is what makes it the comparable figure."""
+    if eur_pct is None:
+        return None
+    divisor = 1.0 + hold_pct / 100.0
+    if divisor <= 0.0:  # the asset went to zero; accumulation is undefined, not infinite
+        return None
+    return _round2(((1.0 + eur_pct / 100.0) / divisor - 1.0) * 100.0)
+
+
+def _hold_dict(in_sample: float | None, train: float | None, test: float | None, ctx: "EvalContext") -> dict:
+    """Buy-and-hold over the window and each half, and the same results in base asset."""
+    return {
+        "hold_pct": _round2(ctx.hold_pct),
+        "train_hold_pct": _round2(ctx.train_hold_pct),
+        "test_hold_pct": _round2(ctx.test_hold_pct),
+        "in_sample_base_pct": _base_asset_pct(_round2(in_sample), ctx.hold_pct),
+        "train_base_pct": _base_asset_pct(_round2(train), ctx.train_hold_pct),
+        "test_base_pct": _base_asset_pct(_round2(test), ctx.test_hold_pct),
+    }
+
+
+def _scores_dict(ev: _Eval, ctx: "EvalContext") -> dict:
     def _clean(v: float) -> float | None:
         return None if v <= -1e17 else _round2(v)
 
+    in_sample, train, test = _clean(ev.in_sample.total_pnl), _clean(ev.train.total_pnl), _clean(ev.test.total_pnl)
     return {
-        "in_sample_pnl_pct": _clean(ev.in_sample.total_pnl),
-        "train_pnl_pct": _clean(ev.train.total_pnl),
-        "test_pnl_pct": _clean(ev.test.total_pnl),
+        "in_sample_pnl_pct": in_sample,
+        "train_pnl_pct": train,
+        "test_pnl_pct": test,
         "robust_pnl_pct": _clean(ev.robust_pnl),
         "train_ops": ev.train_samples,
         "test_ops": ev.test_samples,
+        **_hold_dict(in_sample, train, test, ctx),
     }
 
 
@@ -489,7 +522,9 @@ def _advance_seed_to(
     return completed, n_total
 
 
-def _result_from_completed(req: OptimizerRequest, all_completed: list[tuple], n_total: int) -> OptimizerResult:
+def _result_from_completed(
+    req: OptimizerRequest, all_completed: list[tuple], n_total: int, ctx: EvalContext
+) -> OptimizerResult:
     """Rank, deduplicate and format the completed trials into an OptimizerResult."""
     # Rank by robust_pnl, breaking ties by in-sample, then test, then train PnL for determinism.
     ranked = sorted(
@@ -523,6 +558,7 @@ def _result_from_completed(req: OptimizerRequest, all_completed: list[tuple], n_
             "robust_pnl_pct": _round2(value),
             "train_ops": user_attrs.get("train_ops"),
             "test_ops": user_attrs.get("test_ops"),
+            **_hold_dict(user_attrs.get("in_sample_pnl"), user_attrs.get("train_pnl"), user_attrs.get("test_pnl"), ctx),
         }
 
     best_cand = _candidate_from_params(top[0][0])
@@ -557,6 +593,10 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
     split_boundary_time = None if test_df.empty else str(df.iloc[split_idx]["dtime"])
     final_price = float(df.iloc[-1]["close"])
     boundary_price = final_price if test_df.empty else float(test_df.iloc[0]["close"])
+    first_price = float(df.iloc[0]["close"])
+    hold_pct = (final_price / first_price - 1.0) * 100.0
+    train_hold_pct = (boundary_price / first_price - 1.0) * 100.0
+    test_hold_pct = 0.0 if test_df.empty else (final_price / boundary_price - 1.0) * 100.0
 
     if calibration is not None:
         up_events = calibration["up_events"]
@@ -593,6 +633,9 @@ def _build_eval_context(req: OptimizerRequest, calibration: dict | None) -> Eval
         down_k=down_k,
         min_ops=req.min_ops,
         min_test_ops=req.min_test_ops,
+        hold_pct=hold_pct,
+        train_hold_pct=train_hold_pct,
+        test_hold_pct=test_hold_pct,
         calibration_points=calibration_points,
         search_space=req.search_space,
     )
@@ -605,7 +648,7 @@ def _current_result(req: OptimizerRequest, ctx: EvalContext) -> OptimizerResult:
     return OptimizerResult(
         pair=req.pair,
         mode=req.mode,
-        top_candidates=[{**_candidate_to_dict(cand), **_scores_dict(ev)}],
+        top_candidates=[{**_candidate_to_dict(cand), **_scores_dict(ev, ctx)}],
         suggested_env_lines=_format_env_lines(req.pair, cand),
         n_trials_run=1,
     )
@@ -668,7 +711,7 @@ def _seed_result(
     completed, n_total = _advance_seed_to(state, target_n_trials, ctx, executor)
     if not completed:
         raise ValueError("No candidate met the min_ops / min_test_ops constraints")
-    return _result_from_completed(req, completed, n_total)
+    return _result_from_completed(req, completed, n_total, ctx)
 
 
 def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerResult:

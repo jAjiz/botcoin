@@ -187,3 +187,29 @@ def test_train_split_defaults_to_the_whole_window() -> None:
     """A window that influences the selection is training, not test; the honest test is forward."""
     assert ApiOptimizerRequest(pair="XBTEUR", mode="OPTIMIZE").train_split == 1.0
     assert OptimizerRequest(pair="XBTEUR", mode="OPTIMIZE").train_split == 1.0
+
+
+# --- base-asset reporting --------------------------------------------------
+
+
+def test_base_asset_pct_is_zero_when_the_bot_matches_hold() -> None:
+    """Holding is 0 % by construction, in any regime — that is what makes it comparable."""
+    from trading.optimizer.search import _base_asset_pct
+
+    assert _base_asset_pct(-17.41, -17.41) == 0.0
+    assert _base_asset_pct(+20.0, +20.0) == 0.0
+
+
+def test_base_asset_pct_inverts_the_sign_of_a_losing_euro_result_in_a_falling_market() -> None:
+    """The case that nearly hid a real result: -5.19 % in euros over 2025 accumulated base asset."""
+    from trading.optimizer.search import _base_asset_pct
+
+    assert _base_asset_pct(-5.19, -17.41) == pytest.approx(14.80, abs=0.01)
+
+
+def test_base_asset_pct_is_none_when_undefined() -> None:
+    """No euro figure, or an asset that went to zero: undefined, not infinite."""
+    from trading.optimizer.search import _base_asset_pct
+
+    assert _base_asset_pct(None, -17.41) is None
+    assert _base_asset_pct(-5.0, -100.0) is None

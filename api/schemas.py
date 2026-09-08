@@ -253,6 +253,15 @@ class CandidateResult(BaseModel):
     robust_pnl_pct: float | None = None
     train_ops: int | None = None
     test_ops: int | None = None
+    # Buy-and-hold over the window and each half, and the same results denominated in the
+    # base asset, where holding is 0 % by construction. Reported, never ranked on: the euro
+    # figure inverts in sign whenever a half falls. Absent on jobs that predate the field.
+    hold_pct: float | None = None
+    train_hold_pct: float | None = None
+    test_hold_pct: float | None = None
+    in_sample_base_pct: float | None = None
+    train_base_pct: float | None = None
+    test_base_pct: float | None = None
 
 
 class AutoResult(BaseModel):
