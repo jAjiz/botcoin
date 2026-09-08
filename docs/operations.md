@@ -256,7 +256,7 @@ Telegram is notified on start, completion, and failure.
 # Submit
 JOB=$(curl -s -X POST http://localhost:8000/optimizer/jobs \
   -H "X-Api-Token: $API_SECRET_TOKEN" -H "Content-Type: application/json" \
-  -d '{"pair":"XBTEUR","mode":"OPTIMIZE","fee_pct":0.4,"n_trials":1000}' \
+  -d '{"pair":"XBTEUR","mode":"OPTIMIZE","fee_pct":0.4}' \
   | jq -r .job_id)
 
 # Poll a single job
@@ -279,17 +279,17 @@ branch off). The grid that actually ran is stored on the job.
 
 | Mode | Behavior |
 |---|---|
-| `OPTIMIZE` | Run the TPE search at a fixed `n_trials` / `seed`; returns the ranked top candidates. |
+| `OPTIMIZE` | Enumerate the search space and rank every candidate; returns the top five. Deterministic — the same request always returns the same ranking. |
 | `CURRENT` | Evaluate the live `.env` config only (1 trial) — a baseline to compare against. |
 | ~~`AUTO`~~ | **Retired.** It existed to check whether independently seeded samplers converged on the same config; with the space enumerated there is no sampler to disagree. Submitting it returns `422`. Stored AUTO jobs still read back. |
 
 | Field | Default | Applies to | Meaning |
 |---|---|---|---|
 | `pair` | — | all | Required; must be a configured pair (else `400`) |
-| `mode` | — | all | Required; `OPTIMIZE` \| `CURRENT` \| `AUTO` (else `422`) |
+| `mode` | — | all | Required; `OPTIMIZE` \| `CURRENT` (else `422`). `AUTO` is retired and rejected on submit, but still parses so stored jobs read back |
 | `fee_pct` | `0.0` | all | Per-side fee percentage |
 | `start` / `end` | `null` | all | Optional date slice |
-| `train_split` | `1.0` | all | Train fraction (0.5–1.0). `1.0` = no inner split: the in-sample window is all training and the honest test is forward. Lower it only for AUTO's robust (train/test) ranking |
+| `train_split` | `1.0` | all | Train fraction (0.5–1.0). `1.0` = no inner split: the in-sample window is all training and the honest test is forward. Lower it only when you want the robust `min(train, test)` ranking |
 | `min_ops` / `min_test_ops` | `0` | OPTIMIZE | Drop candidates below these op counts |
 | `search_space` | study grid | OPTIMIZE | Grids to enumerate; see above |
 

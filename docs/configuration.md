@@ -41,7 +41,7 @@ Set automatically by Docker Compose via `docker-compose.yml`. Override only when
 |---|---|---|---|
 | `API_SECRET_TOKEN` | yes* | — | Bearer token protecting all `botc` REST endpoints and the `telegram` `/notify` webhook. Both services read this from the same `.env`. If unset, the app refuses to start unless `ALLOW_NO_AUTH=true` is also set |
 | `ALLOW_NO_AUTH` | no | `false` | Set to `true` to start without authentication (development only; never use in production) |
-| `MAX_CONCURRENT_JOBS` | no | `1` | Maximum number of concurrent optimizer jobs. `0` disables the optimizer entirely (`POST /optimizer/jobs` returns `503`); `≥1` allows up to N jobs in flight (`409` when all slots are busy). On a resource-constrained host (e.g. a free-tier micro VM) set to `0` to prevent the CPU-bound search from starving the trading engine. Each `AUTO` job spawns ~2 extra worker processes. |
+| `MAX_CONCURRENT_JOBS` | no | `1` | Maximum number of concurrent optimizer jobs. `0` disables the optimizer entirely (`POST /optimizer/jobs` returns `503`); `≥1` allows up to N jobs in flight (`409` when all slots are busy). On a resource-constrained host (e.g. a free-tier micro VM) set to `0` to prevent the CPU-bound search from starving the trading engine. Each job runs in one worker process. |
 
 ---
 
