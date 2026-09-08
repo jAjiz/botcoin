@@ -1051,6 +1051,46 @@ any strategy built on these data — grid, trailing, or otherwise. What would re
 data this study does not have (order book, trades tape, cross-asset, funding), not a better
 rule over the same OHLCV.
 
+### Three years, and what the recommended config actually does (2026-09-08)
+
+Every figure above was measured on nine months of 2025, and the owner put the obvious
+objection: a config making five operations wins by picking two moments, which is a sample
+of size five, and *more* operations would make luck matter less. Both halves are right, and
+the second one only holds when the expected value per operation is positive — the cycle
+decomposition says it is not. So: the same four arms over 2023, 2024 and 2025 separately,
+and over one continuous run of all three.
+
+| Window | hold (EUR) | production median | beats hold | best | `mm=0.05/0.9` | `mm=0.07/0.5` | `mm=0.00/0.9` |
+|---|---|---|---|---|---|---|---|
+| 2023 | +149 % | −55.3 % | 0/105 | −44.1 % | −56.6 % (1 op) | −57.4 % (1) | −57.9 % (100) |
+| 2024 | +134 % | −48.6 % | 0/105 | −29.9 % | −49.9 % (3) | −45.4 % (5) | −76.3 % (143) |
+| 2025 | −17 % | +24.4 % | 75/105 | +59.0 % | +32.7 % (10) | +42.4 % (10) | −42.9 % (128) |
+| **2023-01 .. 2025-12, continuous** | **+384 %** | **−76.0 %** | **0/105** | −59.4 % | **−78.0 %** (4) | −78.4 % (4) | −93.0 % (366) |
+
+The recommended config loses **78 % of the base asset over three years**, in four
+operations. It did not time the market; it made one sell in the one year that fell, and the
+same behaviour costs half the coins in each of the two years that rose. Nothing in the grid
+beats holding in 2023, in 2024, or over the three years together — 0 of 105 under all four
+re-anchor arms.
+
+The arms without the chase collapse to a single behaviour over three years: **1.0 operations,
+99 % of the window in cash, 105/105 ending in cash, −77 to −79 %**. They sell once in early
+2023 and never rebuy, because the price never returns. Removing the chase bounds the
+per-cycle loss and, over a long rising span, converts the bot into a one-shot exit.
+
+On the operation-count argument: it is confirmed, in the direction that hurts. In 2023 and
+2024 the configs making 100–784 operations do not scatter around the passive ones — they
+converge *below* them (`mm=0.00` at −93.0 % over three years against −78.0 % for
+`mm=0.05`), which is what a negative expectation per operation looks like when you take more
+draws from it. Frequency reduces variance around a mean that is negative.
+
+What the three years establish, and it is the study's closing number: in base asset a run
+returns roughly `−drift × time in cash + convexity − fees`, and with drifts of +134 % and
++149 % the first term is an order of magnitude larger than the other two. The bot is a bet
+on flat or falling years — it gains a quarter to a third of the coins in the year that falls
+and loses half in each year that rises — and no configuration, re-anchor variant, operation
+frequency or fee level changes that, because none of them changes the first term.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1100,6 +1140,7 @@ contradicted by later work that had only this document to go on.
 - **Switching the config by regime is closed, operator-declared or otherwise.** With perfect regime labels the switched run is 18–19 points below the best fixed config; a regime's outcome is set by the side the bot holds when it begins, which no config can change. See "Switching the config by regime is closed".
 - **The activation re-anchor stays, on both sides.** Removing it makes every cycle clean and turns the bot into one that sells once and waits for the price to come back; on 2024-10..2025-03 that is −22 % for all 105 configs with the whole window spent in cash. `reanchor_sell`/`reanchor_buy`/`reanchor_cap_at_entry` remain in the engine as inert switches.
 - **A high AUC against a pivot-derived label is not evidence of a signal.** Pivots alternate, so "which leg am I on" is knowable from the trailing return and carries the label with it; any labelling scheme built from future extrema must be checked against a fixed-horizon forward label and a money test before it is believed. This cost one run that looked like a discovery. See "Reverse-engineering the strategy from ideal trades is closed".
+- **There is no config recommendation, and the previous one was not skill.** `mm=0.05/0.9` loses 78 % of the base asset over 2023–2025 in four operations; it made one sell in the one year that fell. No config in the grid beats holding in 2023, 2024, or the three years continuous, under any re-anchor arm. See "Three years, and what the recommended config actually does".
 
 ## The objective is asset accumulation
 
@@ -1447,6 +1488,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Switching the config by regime (lateral / falling / rising), perfect labels | −18 to −19 points below the best fixed config and below the median of the 105, at two labelings; the class winners make 0–1 operations per regime, because the side held when a regime begins decides it and activation cannot change that side |
 | Removing the activation re-anchor, or capping it at the sell price | fixes the cycle loss (worst −79.5 % → −1.4 %) but the active configs still trail the median of the grid; on a window where the price does not come back, 105/105 sell once, never rebuy, and land at −22 % |
 | Reverse-engineering the rules from ideal trades | the pivot label is worth +406 % traded perfectly, but no causal feature predicts the honest target (sign of the forward return at a fixed horizon: AUC 0.43–0.52 for all 16, price and flow alike); a model scoring 0.767 against the pivot label captures +10.6 of those 406 points at zero fee and −33.1 % at maker |
+| Trading more often to dilute luck | confirmed, in the direction that hurts: over three years the configs making 100–784 operations converge *below* the passive ones (−93.0 % against −78.0 %), which is what a negative per-operation expectation looks like with more draws |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that

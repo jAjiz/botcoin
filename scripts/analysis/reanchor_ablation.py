@@ -86,7 +86,7 @@ def _median(xs):
     return xs[len(xs) // 2] if xs else float("nan")
 
 
-def report(results: dict[str, list[dict]], hold: float) -> None:
+def report(results: dict[str, list[dict]], hold: float, show: list[str] = ()) -> None:
     print(f"\n[resultado] activo base sobre la ventana, mantener = 0 % (hold {hold:+.2f} % en euros)")
     print(
         f"  {'brazo':<26} {'mediana':>8} {'p25':>7} {'p75':>7} {'mejor':>7} {'peor':>7} {'bate':>8} {'ops':>5} {'en caja':>8} {'acaba en caja':>14}"
@@ -112,6 +112,16 @@ def report(results: dict[str, list[dict]], hold: float) -> None:
         print(line)
     print("  (activo base %, operaciones medias)")
 
+    if show:
+        print("\n[configs concretas] activo base y operaciones, por brazo")
+        print(f"  {'config':<22}" + "".join(f"{a[:22]:>24}" for a in arms))
+        for sig in show:
+            line = f"  {sig:<22}"
+            for arm in arms:
+                row = next(r for r in results[arm] if gsh._signature(r["cand"]) == sig)
+                line += f"{row['base']:>+17.1f}% {row['ops']:>5}"
+            print(line)
+
     base = results[arms[0]]
     for arm in arms[1:]:
         deltas = sorted(b["base"] - a["base"] for a, b in zip(base, results[arm], strict=True))
@@ -130,6 +140,12 @@ def main() -> int:
     ap.add_argument("--end", default="2025-12-31")
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     ap.add_argument("--fee", type=float, default=gsh.FEE, help="Comision por operacion, en %.")
+    ap.add_argument(
+        "--show",
+        nargs="*",
+        default=["mm=0.050 stop=0.9", "mm=0.070 stop=0.5", "mm=0.000 stop=0.9", "mm=0.010 stop=0.9"],
+        help="Firmas de configs a detallar, p. ej. 'mm=0.050 stop=0.9'.",
+    )
     args = ap.parse_args()
     gsh.FEE = args.fee
     print(f"[comision] {gsh.FEE:.2f} % por operacion")
@@ -153,7 +169,7 @@ def main() -> int:
     t0 = time.perf_counter()
     results = {arm: sweep(ctx, cands, overrides, hold) for arm, overrides in ARMS.items()}
     print(f"  {time.perf_counter() - t0:.0f}s")
-    report(results, hold)
+    report(results, hold, args.show)
     print(
         "\n[lectura] Sin reanclaje, un bot en caja cuyo precio no vuelve no recompra nunca: 'acaba en caja'\n"
         "          dice cuantas configs terminan la ventana fuera del activo. Comparar las dos ventanas."
