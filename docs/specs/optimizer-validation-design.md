@@ -687,6 +687,75 @@ the expected size of that gap. A finer gate — blocking only the sharply trendi
 rather than whole 60-day periods — is untested, but the mechanism argues against it: the cost
 is being out of position when the gate lifts, and every gate lifts.
 
+### Free per-level stops do not converge (2026-09-08)
+
+The one region the study's sweeps never entered is five independently searched `stop_pcts`
+— every sweep uses `dict.fromkeys(LEVELS, stop)` — and the claim that it holds profitable
+high-operation configs came from the optimizer *before* this branch, i.e. scored with the
+cash leg paid as if the bot held a short (worth up to +162 points, and most on exactly the
+configs that spend the most time in cash) and with a single calibration. So the deployed
+search was re-run on the fixed engine through `scripts/analysis/run_optimizer_csv.py`:
+XBTEUR 2025, `AUTO`, fee 0.4 %, `train_split` 0.67, `stop_pcts` 0.0–1.0 step 0.1 on all five
+levels, `min_margin` fixed at 0.004, `k_act` off.
+
+**`converged: False` — 0 of 4 seeds agreed on a config after escalating to 3 000 trials each**
+(12 000 evaluations, 4 832 s). AUTO judges convergence on the config, and four TPE searches
+returned four different answers. That is the identifiability problem behind the shared-stop
+decision, now measured rather than argued.
+
+Two more things the run settled. Operation counts did rise (47–53 train, 8–12 test, against
+3–7 for the shared-stop sweeps) — but that is `min_margin = 0.004`, a barrier ten times
+narrower than the 0.04–0.07 region, not the free stops: given 0.0–1.0 the search fled to the
+*top* of the grid (LV/MV/HV/HH at 0.9–1.0), the widest stops it could find, which is the fee
+pushing back. And every top-5 candidate is negative in euros (best `robust_pnl` −3.27 %).
+
+In base asset the same top candidate reads differently, and that is the last finding:
+
+| | bot (EUR) | hold (EUR) | base asset |
+|---|---|---|---|
+| 2025 | −5.19 % | −17.41 % | **+14.79 %** |
+| train (Jan–Sep) | −1.98 % | +5.21 % | −6.84 % |
+| test (Sep–Dec) | −3.27 % | −21.48 % | **+23.19 %** |
+
+The two halves are in opposite regimes, and on the test half the ranking metric and the
+objective disagree in *sign*. See defect 6 for what that does and does not imply.
+
+**Decision:** the current optimizer is closed as a research tool, and the shared-stop decision
+stands. The cost of the run that reached this: the first attempt lost its result to a
+formatting error after 80 minutes, which is why the runner now writes to disk first.
+
+### Per-side activation is closed too (2026-09-08)
+
+The last structural lever, and the only one whose rationale came from the base-asset
+objective instead of from guessing the regime: being out during a rise loses coins for good,
+being in during a fall costs none, so the sell side carries the real risk and the buy side
+only opportunity cost. That argues, statically, for a wide activation barrier to sell and a
+narrow one to rebuy. Per-side `k_act`/`min_margin` were removed from production for "no
+observable benefit", but on the buggy engine; `EngineConfig.min_margin_sell` /
+`min_margin_buy` (overrides of the shared value, `None` in production) re-measure it on the
+fixed one. `scripts/analysis/side_margin_sweep.py`: for each of the 105 symmetric configs,
+its asymmetric neighbours at δ in both directions, one continuous run each, XBTEUR
+2025-04-01 .. 2025-12-31, delta of base-asset accumulation against the symmetric config:
+
+| δ | direction | median | mean | p25 | p75 | share > 0 | ops |
+|---|---|---|---|---|---|---|---|
+| 0.01 | sell reluctant / buy eager | +0.00 | −1.54 | −6.25 | +0.97 | 30 % | 8.4 |
+| 0.01 | sell eager / buy reluctant | +0.00 | +1.92 | −1.89 | +4.28 | 36 % | 7.2 |
+| 0.02 | sell reluctant / buy eager | **−5.47** | −3.63 | −11.30 | +0.15 | 26 % | 5.1 |
+| 0.02 | sell eager / buy reluctant | +0.00 | +1.57 | −3.87 | +4.05 | 39 % | 3.7 |
+| 0.04 | sell reluctant / buy eager | **−6.99** | −5.68 | −12.41 | −5.35 | 14 % | 3.8 |
+| 0.04 | sell eager / buy reluctant | −5.81 | −1.78 | −8.75 | −1.50 | 18 % | 1.9 |
+
+**The hypothesis direction is the worse one, and it gets worse with δ** — median 0.00 →
+−5.47 → −6.99, share improving 30 % → 26 % → 14 %. The opposite direction sits at zero. The
+same sign as the asymmetric-stop result, for presumably the same reason: a side made
+reluctant also acts later and worse when the market moves the way that side profits from,
+and the asymmetry cancels. Operation counts fall under any asymmetry (14.6 → 8.4/7.2 →
+3.8/1.9), so what a per-side margin mostly does is trade less. Best-of-arm is flat (+27.0 %
+symmetric against +20.6 … +27.3 %), and best-of-105 does not predict anyway.
+
+This was declared the last avenue before it was run. It is.
+
 ### Still not established
 
 - **Whether anything predicts on a pair that trades enough.** Every predictiveness and
@@ -727,6 +796,8 @@ contradicted by later work that had only this document to go on.
 - **Scoring is one continuous run, never restarted segments.** See the harness defect, now
   fixed in the engine.
 - **The base asset, not euros, is the objective.** See the next section.
+- **The current optimizer is closed as a research tool, and free per-level stops with it.** The deployed AUTO search on the fixed engine returns four different answers from four seeds; see "Free per-level stops do not converge". Any remaining question goes through the exhaustive sweep and the forward-percentile test.
+- **Per-side activation is closed.** Measured on the fixed engine and worse in the hypothesis direction; the per-side `min_margin` overrides stay in the engine as inert, tested fields.
 
 ## The objective is asset accumulation
 
@@ -945,6 +1016,19 @@ with zero forward operations. Widening the bound moved the corner rather than re
 of this section claimed: within one fit window the divisor is a constant, so the ranking
 and the selected config are unchanged. See "The objective is asset accumulation".
 
+That argument is right for a single-window score and **wrong for `robust_pnl`**, which is
+`min()` over two windows with different holds — two different transformations, and `min()`
+of differently transformed values does not preserve order. On the 2025 AUTO run (train hold
++5.21 %, test hold −21.48 %) the top five reorder from `1,2,3,4,5` in euros to `1,3,5,2,4` in
+base asset. **But the corrected metric is worse, not better:** in euros the binding half
+alternates across candidates; in base asset the *train* half binds for all five, because a
+21 % fall makes every config accumulate on the test half (+17 % to +31 %). A two-window guard
+collapses into a one-window score whenever the halves sit in opposite regimes, which the
+regime swings measured here make the usual case. So: report the base-asset figure beside the
+euro one (the euro sign inverted on this run's headline and nearly hid a +14.79 %
+accumulation), and do **not** rank by it. The closing sentence of this section still holds —
+no objective tweak manufactures a forward signal.
+
 The corner is also not obviously a distortion. In a window where most configs lose more
 than holding, "do nothing" genuinely *is* the in-sample optimum — the honest answer to the
 question asked. The real problem is one level up: that answer does not generalise, because
@@ -1043,7 +1127,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Eight avenues are now closed by measurement**, and none of them was a tuning question —
+**Ten avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1056,6 +1140,8 @@ each was a hypothesis about where the edge lived, and none survived:
 | Picking a config from the 0.04–0.07 region | does not replicate at 1-minute resolution |
 | Gating on volatility instead of direction | high-ATR stretches are no more directional than low-ATR ones |
 | Forcing full allocation through rallies | −3.2 points with perfect hindsight: the gate recovers +17.3 in the rallies and gives back −21.4 in the crash after it |
+| Five free per-level `stop_pcts` | the deployed AUTO search does not converge: 0/4 seeds agree after 12 000 trials |
+| Per-side `min_margin` (sell reluctant, buy eager) | −5.5 to −7.0 points median, worsening with the asymmetry; the opposite direction is zero |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1115,6 +1201,8 @@ what still answers a question no result has closed.
 | `scripts/import_kraken_ohlcvt.py` | Loads Kraken's CSV archives into `ohlc_data` (REST only returns ~720 candles). |
 | `scripts/analysis/execution_fidelity.py` | **How much of a result is the simulator's 15-minute clock?** Runs the same configs at 15/5/1 min with ATR and the calibration schedule held fixed on the 15-minute series, so only the evaluation cadence varies. Reports per-config deltas, the rank correlation between arms, the top-N overlap, and whether the effect converges. Also the pair-portability harness: `--pair`, `--fee`, `--mm-max` (the `min_margin` grid is a fraction of *price*, so its ceiling must scale with how far the pair moves) and `--min-change-pct` (an ATR multiple in disguise — see the USDCEUR section). Reads the CSV archives directly; takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_sweep_holdout.py` | **Enumerates all 105 configs** in-sample and forward, and reports where the in-sample winner lands in the forward distribution, at several decision dates. No sampler, no seed. Reports euros and base asset. `--csv`. |
+| `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
+| `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE`/`AUTO` in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. Used once, to close free per-level stops. |
 | `scripts/analysis/rally_gate_oracle.py` | **What is a perfect rally detector worth?** Gates whole rally periods with hindsight and forces full allocation through them (`force_hold_bars`), re-simulated continuously — never as an overlay. Reports the arms and the per-period breakdown that separates what the gate recovers from what it costs downstream. Takes the 15-minute CSV path. |
 | `scripts/analysis/volatility_regime_screen.py` | **Are high-ATR stretches more directional than low-ATR ones?** Kaufman efficiency ratio by volatility level over non-overlapping windows at five horizons, against the `1/√N` random-walk null. No engine, no configs, no fees — a descriptive measure of the market, seconds to run. Takes the data directory, not `--csv`. |
 | `scripts/analysis/grid_derivation_explore.py` | Reports the structural distributions behind each grid (K per level, leg/ATR, ATR/price) — the inputs the `SearchSpace` defaults are drawn from. |
