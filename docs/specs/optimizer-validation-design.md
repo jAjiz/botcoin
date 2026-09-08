@@ -1187,6 +1187,50 @@ all small, none of it alpha. And layering the trading strategy on top of a DCA s
 a separate question: the three-year run already measured that behaviour at −76 % of base
 asset, and a stack that grows by contribution changes the size of the bet, not its sign.
 
+### The trailing entry on a DCA buys cheaper 9 months in 10 and still loses (2026-09-08)
+
+The owner pushed back on the previous section, correctly: the arms measured there used
+*fixed* limits, and a fixed limit never fills in a month that only rises, whereas the bot's
+trailing entry always fills, because any bounce triggers it. That is a different mechanism
+with a different trade-off -- pay the bounce every month, collect the intramonth drawdown
+when there is one -- and it deserved its own measurement rather than an argument.
+`scripts/analysis/dca_trailing_entry.py` runs it on the 15-minute bars, which is the
+resolution the live bot ticks at: track the running low from the month's open, buy when the
+price rises `bounce` x ATR off it, optionally requiring a fall of `fall` x ATR first, and
+buy at the month's close if the month ends without a trigger.
+
+Two families, and they fail in opposite ways.
+
+| arm | 2018–2025 | 2021–2025 | 2023–2025 | median wait | entered below day 1 | never triggered |
+|---|---|---|---|---|---|---|
+| bounce 0.5x ATR | −0.03 % | −0.09 % | +0.14 % | 0.8 h | 38/96 | 0/96 |
+| bounce 1x ATR | +0.05 % | −0.13 % | +0.12 % | 1.5 h | 34/96 | 0/96 |
+| bounce 3x ATR | +0.10 % | −0.07 % | +0.16 % | 6.8 h | 36/96 | 0/96 |
+| fall 1x + bounce 1x | −0.85 % | −1.18 % | −1.78 % | 5.8 h | **80/96** | 4/96 |
+| fall 2x + bounce 1x | −0.58 % | −1.89 % | −1.94 % | 9.8 h | **87/96** | 7/96 |
+| fall 3x + bounce 1x | −1.22 % | −2.15 % | −1.81 % | 15.8 h | **87/96** | 9/96 |
+
+**The pure trailing entry does not lose -- because it does not wait.** Its median wait is
+0.8 to 6.8 hours and it never once reaches the month's close untriggered in 96 months: the
+price bounces `bounce` x ATR off its running low almost immediately, so the rule degenerates
+into buying on day one, and lands within ±0.16 % of it. It is not a better entry, it is the
+same entry wearing a mechanism. This is the more useful half of the result, because the rule
+*looks* like it should wait and the wait column is what shows it does not.
+
+**Make it actually wait, and it buys cheaper almost every month and still loses.** Requiring
+a fall first is what binds, and it works exactly as intended on the metric it was designed
+for: with `fall 2x`, 87 of 96 months entered below the day-one price -- a 91 % hit rate on
+"did I get a better price" -- and the arm still finishes 0.58 points behind buying on day
+one, and 1.9 points behind over the two shorter windows. The 7 to 9 months that never
+trigger buy at the month's close after a rally has already happened, and those few months
+cost more than ninety small victories return.
+
+That is worth stating plainly because it is the shape of every negative result in this
+document: **a high hit rate with a negative expectation.** The owner's intuition about the
+mechanism was right -- it does follow the price down and it does buy the bounce -- and the
+mechanism does what it promises. What it cannot do is change the sign, because the months it
+loses are the months the price ran away, and those are the months that carry the drift.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1567,7 +1611,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Fifteen avenues are now closed by measurement**, and none of them was a tuning question —
+**Sixteen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1588,6 +1632,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Trading more often to dilute luck | confirmed, in the direction that hurts: over three years the configs making 100–784 operations converge *below* the passive ones (−93.0 % against −78.0 %), which is what a negative per-operation expectation looks like with more draws |
 | Replacing the bot with a threshold-rebalanced constant mix | the rebalancing premium is negative in every rising window (−5.3 to −7.7 points at `w=0.5`) and worth +1.9 points in the one falling year; over three years −18.4 %, of which only 0.8 is fees and 17 is drift. Bounds the whole signal-free family at about +2 % a year, and only when the market falls |
 | Overlaying entry timing on a monthly DCA | buying the whole contribution on day one wins in all three windows; splitting weekly or daily costs 0.5–2.9 points and dip limits 0.7–5.8, because every arm delays exposure against a positive drift. The fee lever is the only positive one measured anywhere in the study: +0.24 % over eight years moving from taker to maker |
+| The bot's trailing entry as the DCA's buy rule | without a fall requirement it triggers in a median 0.8-6.8 hours and never once reaches a month's close untriggered, so it degenerates into buying on day one (±0.16 %); with one, 87 of 96 months enter below the day-one price and it still finishes 0.6-2.2 points behind, because the 7-9 months that never trigger buy after the rally. A high hit rate with a negative expectation |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1650,6 +1695,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/dca_trailing_entry.py` | **Does the bot's trailing entry place the monthly buy better?** The live activation mechanism applied to the DCA's entry on 15-minute bars: run the low from the month's open, buy on a `bounce` x ATR reversal, optionally after a `fall` x ATR drop, market at the month's close otherwise. Reports median hours waited and the share of months entered below the day-one price beside the money, because the rule can win on both and lose on the third. |
 | `scripts/analysis/dca_overlay.py` | **On a monthly DCA, what does automating the placement add?** Arms that contribute identical euros and differ only in where the buy lands (day one, split weekly/daily, dip limits with a month-end fallback, drawdown-scaled), scored as final value over euros contributed, on daily bars resampled from the 15-minute CSV. Seconds to run; `--fee` sizes the one positive lever. |
 | `scripts/analysis/constant_mix_rebalance.py` | **What is a signal-free allocation rule worth here?** A constant-mix portfolio rebalanced when the weight leaves a band, checked every bar, swept over weight, band and fee. No engine, no configs, no calibration -- seconds to run. Reports against two benchmarks: holding (which a half-weight portfolio loses to by construction) and the same mix never rebalanced (which isolates the premium). |
 | `scripts/analysis/signal_screen.py` | **Does anything visible at `t` predict the ideal action, and is it worth money?** Three parts that must all pass: what the perfect pivot label is worth when traded, per-feature AUC against both the pivot label and a fixed-horizon forward label, and the model's prediction run as an allocation in base asset at zero and maker fees. Causal features in two families (price/volatility as control, flow — volume and trade count — as the untested one), circular-shift null, temporal split fixed in advance. No engine, no configs; minutes to run. |
