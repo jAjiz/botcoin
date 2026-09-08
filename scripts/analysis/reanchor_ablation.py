@@ -20,6 +20,9 @@ Un resultado que solo gane en la primera es la apuesta direccional, medida. Tres
   base            el motor de produccion (ambos lados reanclan)
   sin compra      `reanchor_buy=False`: la recompra espera a que el precio vuelva
   sin ninguno     `reanchor_sell=False, reanchor_buy=False`
+  hasta la venta  `reanchor_cap_at_entry=True`: la activacion sigue al precio pero nunca cruza el
+                  precio de la venta, asi que la recompra llega cuando el precio VUELVE al nivel de
+                  la venta (K*ATR por encima, y no mm + K*ATR por debajo como sin reanclaje)
 
 Puntuacion en ACTIVO BASE: (1 + r_bot) / (1 + r_hold) - 1, mantener = 0 %. Se reporta
 la distribucion de las 105 configs por brazo, la mediana por min_margin, y el tiempo en caja.
@@ -52,6 +55,7 @@ ARMS = {
     "base": {},
     "sin reanclaje de compra": {"reanchor_buy": False},
     "sin reanclaje (ambos)": {"reanchor_sell": False, "reanchor_buy": False},
+    "reanclaje hasta la venta": {"reanchor_cap_at_entry": True},
 }
 
 

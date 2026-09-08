@@ -43,6 +43,8 @@ class EngineConfig:
     # Whether the activation follows a price that runs away from it, per side. Both true in production.
     reanchor_sell: bool = True
     reanchor_buy: bool = True
+    # A re-anchored activation never crosses the leg's entry price (a rebuy at most at the sell). Off in production.
+    reanchor_cap_at_entry: bool = False
 
 
 @dataclass(frozen=True)
@@ -365,6 +367,10 @@ def simulate_operations(
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
             if gap > exp_dist and (cfg.reanchor_sell if side == "sell" else cfg.reanchor_buy):
                 activation_px = activation_price(cfg, side, price, activation_atr, price, cal)
+                if cfg.reanchor_cap_at_entry:
+                    activation_px = (
+                        max(activation_px, entry_price) if side == "sell" else min(activation_px, entry_price)
+                    )
 
             # A sell activates on the high crossing up, then trails the highs; a buy mirrors it.
             crossed = high >= activation_px if side == "sell" else low <= activation_px

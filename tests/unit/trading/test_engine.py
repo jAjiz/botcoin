@@ -504,6 +504,35 @@ def test_the_buy_switch_leaves_the_sell_side_alone() -> None:
     assert [(op.side, op.price) for op in buy_off] == [(op.side, op.price) for op in plain]
 
 
+# k_act=1 (distance 2): sell @108 leaves a buy activation at 106; the rally re-anchors it.
+_RALLY_THEN_DIP_TO_THE_SELL = [
+    (100.0, 100.0, 100.0),  # buy @100
+    (110.0, 105.0, 108.0),  # trailing 110, stop 108; low 105 <= 108 -> sell @108
+    (130.0, 125.0, 128.0),  # in cash; re-anchor would put the activation at 126
+    (112.0, 107.0, 110.0),  # dips to the sell price, not below the original 106 activation
+]
+
+
+def test_the_cap_is_off_by_default() -> None:
+    assert _cfg().reanchor_cap_at_entry is False
+
+
+def test_the_capped_re_anchor_rebuys_at_the_sell_level_not_above_it() -> None:
+    plain = engine.simulate_operations(_df(_RALLY_THEN_DIP_TO_THE_SELL), _cfg(k_act=1.0))
+    capped = engine.simulate_operations(
+        _df(_RALLY_THEN_DIP_TO_THE_SELL), dataclasses.replace(_cfg(k_act=1.0), reanchor_cap_at_entry=True)
+    )
+    never = engine.simulate_operations(
+        _df(_RALLY_THEN_DIP_TO_THE_SELL), dataclasses.replace(_cfg(k_act=1.0), reanchor_buy=False)
+    )
+
+    # Plain chases to 126 and rebuys at 127 on bar 2; capped holds the activation at 108 and rebuys at 109
+    # on bar 3; without any re-anchor the 106 activation is never reached.
+    assert [(op.time, op.price) for op in plain][2] == ("t2", 127.0)
+    assert [(op.time, op.price) for op in capped][2] == ("t3", 109.0)
+    assert len(never) == 2
+
+
 # --- per-side min_margin ---------------------------------------------------
 
 # k_act=None so activation goes through K_STOP * ATR + min_margin * price; with ATR 2.0 and
