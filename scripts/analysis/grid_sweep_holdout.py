@@ -192,8 +192,6 @@ def _context(frame: pd.DataFrame, first_bar: int, last_bar: int, decided_at: str
         start=_dtime(frame, first_bar),
         end=_dtime(frame, last_bar),
         train_split=1.0,
-        n_trials=1,
-        seed=0,
         search_space=SPACE,
     )
     return _build_eval_context(req, _calibration_at(frame, decided_at))
