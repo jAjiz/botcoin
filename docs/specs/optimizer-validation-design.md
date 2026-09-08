@@ -998,8 +998,65 @@ Removing the re-anchor turns a bot that loses when it operates into a bot that s
 and waits. The switches stay in the engine as inert, tested fields, like the per-side
 margins; production keeps both sides re-anchoring.
 
+### Reverse-engineering the strategy from ideal trades is closed (2026-09-08)
+
+The owner's proposal after the per-cycle result: label a year with the moments the bot
+*should* have bought and sold, then design the operating rules to replicate them. It is a
+real method (label-then-learn), and it decomposes into a free step and a hard one. Labelling
+is free — with the future in hand the perfect label always exists. Replicating is not a
+design problem but a **prediction** problem: it needs a function of what is visible at `t`
+that predicts the label. `scripts/analysis/signal_screen.py` measures that second step and
+only that, with no strategy built: 15-minute XBTEUR, fit on 2021-01-01 .. 2024-12-31,
+measured on 2025, samples strided at the median bars-to-next-pivot (48) so no two share an
+episode, null by **circular shift** of the labels (a plain shuffle destroys their
+autocorrelation and gives a null band far too narrow).
+
+Features are strictly causal, in two families: price/volatility (returns at five lags,
+ATR/close, signed Kaufman ER, distance to moving averages, RSI) as a **control**, since the
+regime screen already measured that family null; and **flow** — z-scores of volume, trade
+count and mean trade size, plus signed volume imbalance. Flow is the one class of feature
+this study had never touched: `volume` and `count` are columns of the Kraken CSVs that no
+earlier experiment read.
+
+**The first run looked like a discovery, and it was a methodological trap worth recording.**
+Against the pivot label — +1 when the next pivot is above the close, i.e. "the bot should
+have been in the asset" — the out-of-sample AUCs were 0.68–0.73 for single features and
+**0.767** for a logistic on the price family. That is the control family, which the script
+itself says should come out null; a control that fires means the method is wrong, not that
+a signal was found. Three measurements together resolve it:
+
+| | |
+|---|---|
+| 1. What the label is worth | The pivot label, traded with perfect foresight at Kraken's maker fee: **+406 %** base asset over 2025 in 229 side changes. The label is not a weak target — it is a fortune. |
+| 2. AUC against the honest label | Sign of the forward return at a *fixed* horizon. Every one of the 16 features, at 12 h / 1 d / 3 d: **0.43–0.52**. Nothing. `ret_4h`, which scored 0.722 against the pivot label, scores 0.499 / 0.494 / 0.482 here. |
+| 3. The money test | The AUC-0.756 model's prediction used as the allocation, revised at every sample: **+10.6 %** at *zero* fee, **−33.1 %** at maker. The price family alone: +19.6 % at zero fee, −26.7 % at maker. |
+
+**Why the pivot label leaks.** Pivots alternate min/max, so a bar in the middle of an
+up-leg has a positive trailing return *and* label +1 — for the same reason, that the leg has
+already begun. The classifier is not predicting the future, it is reading the present, and
+the present is already in the price. Against a label that cannot be reached this way, every
+feature collapses to the null. The value of the label sits entirely in *when the leg ends*,
+which is exactly the part no feature predicts: a model that classifies the label at 0.756
+captures 10.6 of the 406 points available, and only if trading is free.
+
+**Flow specifically.** `vol_z`, `cnt_z` and `trade_size_z` are inside the null even against
+the tautological label (AUC 0.465–0.505, p 0.24–0.85); only the signed imbalances rise with
+it, exactly as the price features do and for the same reason. On the honest label, flow is
+0.44–0.52 like everything else, and a flow-only model loses money at zero fee (−8.3 %). The
+one untested feature class in the data is tested, and it is null.
+
+This closes the reverse-engineering avenue, and it closes it more broadly than the others:
+the result is a property of the market at this resolution, not of the bot, so it applies to
+any strategy built on these data — grid, trailing, or otherwise. What would reopen it is
+data this study does not have (order book, trades tape, cross-asset, funding), not a better
+rule over the same OHLCV.
+
 ### Still not established
 
+- **Whether any data this study does not hold predicts.** Order book, trades tape, funding
+  rates, cross-asset. The signal screen tested everything in the OHLCV archives, including the
+  volume and trade-count columns nothing else had read, and found the null. That bounds these
+  data, not all data.
 - **Whether anything predicts on a pair that trades enough.** Every predictiveness and
   persistence result in this file was measured on XBTEUR, where the winners make 3–7
   operations. USDCEUR with a pair-scaled threshold makes 11–45, which is the first setting
@@ -1042,6 +1099,7 @@ contradicted by later work that had only this document to go on.
 - **Per-side activation is closed.** Measured on the fixed engine and worse in the hypothesis direction; the per-side `min_margin` overrides stay in the engine as inert, tested fields.
 - **Switching the config by regime is closed, operator-declared or otherwise.** With perfect regime labels the switched run is 18–19 points below the best fixed config; a regime's outcome is set by the side the bot holds when it begins, which no config can change. See "Switching the config by regime is closed".
 - **The activation re-anchor stays, on both sides.** Removing it makes every cycle clean and turns the bot into one that sells once and waits for the price to come back; on 2024-10..2025-03 that is −22 % for all 105 configs with the whole window spent in cash. `reanchor_sell`/`reanchor_buy`/`reanchor_cap_at_entry` remain in the engine as inert switches.
+- **A high AUC against a pivot-derived label is not evidence of a signal.** Pivots alternate, so "which leg am I on" is knowable from the trailing return and carries the label with it; any labelling scheme built from future extrema must be checked against a fixed-horizon forward label and a money test before it is believed. This cost one run that looked like a discovery. See "Reverse-engineering the strategy from ideal trades is closed".
 
 ## The objective is asset accumulation
 
@@ -1371,7 +1429,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Twelve avenues are now closed by measurement**, and none of them was a tuning question —
+**Thirteen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1388,6 +1446,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Per-side `min_margin` (sell reluctant, buy eager) | −5.5 to −7.0 points median, worsening with the asymmetry; the opposite direction is zero |
 | Switching the config by regime (lateral / falling / rising), perfect labels | −18 to −19 points below the best fixed config and below the median of the 105, at two labelings; the class winners make 0–1 operations per regime, because the side held when a regime begins decides it and activation cannot change that side |
 | Removing the activation re-anchor, or capping it at the sell price | fixes the cycle loss (worst −79.5 % → −1.4 %) but the active configs still trail the median of the grid; on a window where the price does not come back, 105/105 sell once, never rebuy, and land at −22 % |
+| Reverse-engineering the rules from ideal trades | the pivot label is worth +406 % traded perfectly, but no causal feature predicts the honest target (sign of the forward return at a fixed horizon: AUC 0.43–0.52 for all 16, price and flow alike); a model scoring 0.767 against the pivot label captures +10.6 of those 406 points at zero fee and −33.1 % at maker |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1450,6 +1509,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/signal_screen.py` | **Does anything visible at `t` predict the ideal action, and is it worth money?** Three parts that must all pass: what the perfect pivot label is worth when traded, per-feature AUC against both the pivot label and a fixed-horizon forward label, and the model's prediction run as an allocation in base asset at zero and maker fees. Causal features in two families (price/volatility as control, flow — volume and trade count — as the untested one), circular-shift null, temporal split fixed in advance. No engine, no configs; minutes to run. |
 | `scripts/analysis/reanchor_ablation.py` | **Is the bot viable without the activation re-anchor?** The 105 configs under production, no buy re-anchor, no re-anchor on either side, and the re-anchor capped at the leg's entry price; reports the base-asset distribution, the per-`min_margin` medians, time in cash and how many configs end the window in cash. Run it on both a window where the price came back and one where it did not; `--fee` sweeps the fee per trade. Takes the 15-minute CSV path. |
 | `scripts/analysis/regime_switch_oracle.py` | **What is switching the config by regime worth, with perfect labels?** Labels the window by shape (impulse-first: M % in ≤ K days; ≥ D-day gaps are lateral), ranks all 105 configs per class from sliced continuous runs, and runs the switched config as one continuous run against the best fixed, the recommended, and the median — with and without full allocation through rallies. `--move-pct`, `--max-days`, `--min-days`, `--active`, `--labels-only`. Takes the 15-minute CSV path. |
 | `scripts/analysis/rally_gate_oracle.py` | **What is a perfect rally detector worth?** Gates whole rally periods with hindsight and forces full allocation through them (`force_hold_bars`), re-simulated continuously — never as an overlay. Reports the arms and the per-period breakdown that separates what the gate recovers from what it costs downstream. Takes the 15-minute CSV path. |
