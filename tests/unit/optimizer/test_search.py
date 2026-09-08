@@ -9,12 +9,11 @@ import core.config as config
 import trading.market_analyzer as market_analyzer
 import trading.optimizer.search as optimizer
 from trading.optimizer.search import (
-    AutoSettings,
     GridSpec,
     OptimizerRequest,
     OptimizerResult,
     SearchSpace,
-    run_auto_optimize,
+    enumerate_candidates,
     run_optimize,
 )
 
@@ -61,13 +60,13 @@ def _calibration() -> dict:
 
 
 def _result(robust: float, *, mode: str = "OPTIMIZE", k_act: float = 0.0) -> OptimizerResult:
-    """Minimal OptimizerResult with one candidate; ``k_act`` steers the config signature for AUTO convergence."""
+    """Minimal OptimizerResult with one candidate."""
     return OptimizerResult(
         pair=_PAIR,
         mode=mode,
         top_candidates=[{"k_act": k_act, "min_margin": None, "stop_pcts": {}, "robust_pnl_pct": robust}],
         suggested_env_lines=[f"{_PAIR}_K_ACT={k_act}"],
-        n_trials_run=10,
+        n_candidates=10,
     )
 
 
@@ -77,13 +76,11 @@ def _result(robust: float, *, mode: str = "OPTIMIZE", k_act: float = 0.0) -> Opt
 def test_run_optimize_smoke(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.db, "load_ohlc_data", lambda _p, _tf: _make_df())
 
-    result = run_optimize(
-        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=10, search_space=_space()), calibration=None
-    )
+    result = run_optimize(OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", search_space=_space()), calibration=None)
 
     assert result.pair == _PAIR
     assert result.mode == "OPTIMIZE"
-    assert result.n_trials_run == 10
+    assert result.n_candidates == 44
     assert isinstance(result.suggested_env_lines, list) and result.suggested_env_lines
     assert len(result.top_candidates) >= 1
     best = result.top_candidates[0]
@@ -91,12 +88,10 @@ def test_run_optimize_smoke(monkeypatch) -> None:
 
 
 def test_run_optimize_grid_honored(monkeypatch) -> None:
-    """Searched stop percentiles come only from the configured coarse grid."""
+    """Stop percentiles come only from the configured grid."""
     monkeypatch.setattr(optimizer.db, "load_ohlc_data", lambda _p, _tf: _make_df())
 
-    result = run_optimize(
-        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=12, search_space=_space()), calibration=None
-    )
+    result = run_optimize(OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", search_space=_space()), calibration=None)
 
     allowed = {0.15, 0.40, 0.65, 0.90}
     for cand in result.top_candidates:
@@ -109,11 +104,11 @@ def test_run_optimize_branch_off_kact(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.db, "load_ohlc_data", lambda _p, _tf: _make_df())
 
     result = run_optimize(
-        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=8, search_space=_space(k_act=False)),
+        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", search_space=_space(k_act=False)),
         calibration=None,
     )
 
-    assert result.n_trials_run == 8  # single branch gets the whole budget
+    assert result.n_candidates == 24  # 6 min_margin values x 4 stops
     assert all(c["k_act"] is None for c in result.top_candidates)
     assert all(c["min_margin"] is not None for c in result.top_candidates)
 
@@ -123,18 +118,18 @@ def test_run_optimize_branch_off_minmargin(monkeypatch) -> None:
     monkeypatch.setattr(optimizer.db, "load_ohlc_data", lambda _p, _tf: _make_df())
 
     result = run_optimize(
-        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=8, search_space=_space(min_margin=False)),
+        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", search_space=_space(min_margin=False)),
         calibration=None,
     )
 
-    assert result.n_trials_run == 8
+    assert result.n_candidates == 20  # 5 k_act values x 4 stops
     assert all(c["min_margin"] is None for c in result.top_candidates)
     assert all(c["k_act"] is not None for c in result.top_candidates)
 
 
 def test_run_optimize_requires_search_space() -> None:
     with pytest.raises(ValueError, match="search_space is required"):
-        run_optimize(OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=4), calibration=None)
+        run_optimize(OptimizerRequest(pair=_PAIR, mode="OPTIMIZE"), calibration=None)
 
 
 def test_run_optimize_no_global_mutation(monkeypatch) -> None:
@@ -149,7 +144,7 @@ def test_run_optimize_no_global_mutation(monkeypatch) -> None:
     before_tp = copy.deepcopy(config.TRADING_PARAMS[_PAIR])
     before_pairs = copy.deepcopy(config.PAIRS[_PAIR])
 
-    run_optimize(OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=5, search_space=_space()), calibration=None)
+    run_optimize(OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", search_space=_space()), calibration=None)
 
     assert config.TRADING_PARAMS[_PAIR] == before_tp
     assert config.PAIRS[_PAIR] == before_pairs
@@ -166,7 +161,7 @@ def test_run_optimize_current_mode(monkeypatch) -> None:
 
     result = run_optimize(OptimizerRequest(pair=_PAIR, mode="CURRENT"), calibration=None)
 
-    assert result.n_trials_run == 1
+    assert result.n_candidates == 1
     assert len(result.top_candidates) == 1
     assert result.top_candidates[0]["min_margin"] == 0.005
 
@@ -197,110 +192,11 @@ def test_run_optimize_uses_passed_calibration(monkeypatch) -> None:
     monkeypatch.setattr(optimizer, "analyze_structural_noise", _boom)
 
     result = run_optimize(
-        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", n_trials=5, search_space=_space()),
+        OptimizerRequest(pair=_PAIR, mode="OPTIMIZE", search_space=_space()),
         calibration=_calibration(),
     )
 
-    assert result.n_trials_run == 5
-
-
-# --- run_auto_optimize -----------------------------------------------------
-
-
-def _patch_seed_sample(monkeypatch, seeds: list[int]) -> None:
-    """Steer which seeds run_auto_optimize picks by patching ``random.Random`` instead of the real RNG."""
-    monkeypatch.setattr(
-        optimizer.random,
-        "Random",
-        lambda _seed: types.SimpleNamespace(sample=lambda _pop, k: seeds[:k]),
-    )
-
-
-def _patch_auto(monkeypatch, *, seed_fn) -> None:
-    """Mock the AUTO seams so convergence is steered deterministically; ``seed_fn(seed, n_trials)`` returns ``(k_act, robust)``."""
-    monkeypatch.setattr(optimizer, "_build_eval_context", lambda _req, _cal: None)
-    monkeypatch.setattr(optimizer, "_new_seed_studies", lambda seed, _space: types.SimpleNamespace(seed=seed))
-
-    def _seed_result(state, n, _ctx, _req, _ex=None):
-        k_act, robust = seed_fn(state.seed, n)
-        return _result(robust, k_act=k_act)
-
-    monkeypatch.setattr(optimizer, "_seed_result", _seed_result)
-
-
-def test_auto_converges_first_batch(monkeypatch) -> None:
-    _patch_seed_sample(monkeypatch, [11, 22, 33, 44])
-    # 3 of 4 seeds land on the same config (k_act=1.0) → convergence.
-    _patch_auto(
-        monkeypatch,
-        seed_fn=lambda seed, _n: {11: (1.0, 6.84), 22: (1.0, 6.84), 33: (1.0, 6.84), 44: (9.0, -1.0)}[seed],
-    )
-
-    req = OptimizerRequest(pair=_PAIR, mode="AUTO", n_trials=1000, auto_settings=AutoSettings(), search_space=_space())
-    out = run_auto_optimize(req, calibration=None)
-
-    assert out.mode == "AUTO"
-    assert out.converged is True
-    assert out.n_seeds_agreed == 3
-    assert out.n_trials_run == 1000
-    assert out.seeds_used == [11, 22, 33, 44]
-    # the winning config is the one the 3 agreeing seeds found
-    assert out.top_candidates[0]["k_act"] == 1.0
-
-
-def test_auto_escalates_until_convergence(monkeypatch) -> None:
-    _patch_seed_sample(monkeypatch, [1, 2, 3, 4])
-
-    # First level (1000 trials): all-different configs → no convergence.
-    # Second level (1500 trials): three seeds agree on the same config (k_act=7.0).
-    def _seed_fn(seed: int, n: int) -> tuple[float, float]:
-        if n == 1000:
-            return ({1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0}[seed], 1.0)
-        return ({1: 7.0, 2: 7.0, 3: 7.0, 4: 9.0}[seed], 7.0)
-
-    _patch_auto(monkeypatch, seed_fn=_seed_fn)
-
-    req = OptimizerRequest(pair=_PAIR, mode="AUTO", n_trials=1000, auto_settings=AutoSettings(), search_space=_space())
-    out = run_auto_optimize(req, calibration=None)
-
-    assert out.converged is True
-    assert out.n_trials_run == 1500
-
-
-def test_auto_no_convergence_returns_best_fallback(monkeypatch) -> None:
-    _patch_seed_sample(monkeypatch, [1, 2, 3, 4])
-    # Every level has all-different configs → never reaches min_agree within budget.
-    _patch_auto(
-        monkeypatch,
-        seed_fn=lambda seed, _n: ({1: 1.0, 2: 2.0, 3: 3.0, 4: 4.0}[seed], {1: 1.0, 2: 2.0, 3: 3.0, 4: 8.5}[seed]),
-    )
-
-    req = OptimizerRequest(
-        pair=_PAIR,
-        mode="AUTO",
-        n_trials=1000,
-        auto_settings=AutoSettings(max_trials=2000),
-        search_space=_space(),
-    )
-    out = run_auto_optimize(req, calibration=None)
-
-    assert out.converged is False
-    # Fallback returns the highest-robust candidate seen in the last batch.
-    assert out.top_candidates[0]["robust_pnl_pct"] == 8.5
-
-
-def test_auto_seed_selection_is_deterministic_for_same_req_seed(monkeypatch) -> None:
-    """run_auto_optimize must derive its seed sample from req.seed, so two runs of the same request agree."""
-    _patch_auto(monkeypatch, seed_fn=lambda seed, _n: (float(seed), 1.0))
-    req = OptimizerRequest(
-        pair=_PAIR, mode="AUTO", n_trials=1000, seed=7, auto_settings=AutoSettings(), search_space=_space()
-    )
-
-    out1 = run_auto_optimize(req, calibration=None)
-    out2 = run_auto_optimize(req, calibration=None)
-
-    assert out1.seeds_used == out2.seeds_used
-    assert out1.seeds_used
+    assert result.n_candidates == 44
 
 
 _FLAT = 100.0  # every leg opens here, so marking at this price adds nothing
@@ -408,3 +304,47 @@ def test_engine_config_applies_the_candidate_percentiles_to_every_scheduled_poin
     assert cfg.calibration_schedule[0][1].k_stop_sell["MV"] == 3.0
     assert cfg.calibration_schedule[1][1].k_stop_sell["MV"] == 9.0
     assert cfg.calibration_schedule[1][1].atr_ratio_p20 == 0.5
+
+
+# --- enumeration ------------------------------------------------------------
+
+
+def test_enumeration_covers_the_whole_product_of_both_branches() -> None:
+    """No sampler, no seed: every point of every grid is evaluated, exactly once."""
+    cands = enumerate_candidates(_space())
+
+    assert len(cands) == 44  # 5 k_act x 4 stops, plus 6 min_margin x 4 stops
+    assert len({(c.k_act, c.min_margin, tuple(sorted(c.stop_pcts.items()))) for c in cands}) == 44
+
+
+def test_enumeration_shares_one_stop_pct_across_the_five_levels() -> None:
+    """Five free values are unidentified at these operation counts; the search does not
+    converge on them (0/4 seeds after 12 000 trials), so one shared value is what ships."""
+    for cand in enumerate_candidates(_space()):
+        assert len(set(cand.stop_pcts.values())) == 1
+        assert set(cand.stop_pcts) == set(_LEVELS)
+
+
+def test_enumeration_drops_a_branch_whose_grid_is_none() -> None:
+    assert all(c.k_act is None for c in enumerate_candidates(_space(k_act=False)))
+    assert all(c.min_margin is None for c in enumerate_candidates(_space(min_margin=False)))
+
+
+def test_enumeration_is_deterministic() -> None:
+    """The ranking is reproducible because the enumeration is, not because a seed was fixed."""
+    first = enumerate_candidates(_space())
+    second = enumerate_candidates(_space())
+
+    assert [(c.k_act, c.min_margin, sorted(c.stop_pcts.items())) for c in first] == [
+        (c.k_act, c.min_margin, sorted(c.stop_pcts.items())) for c in second
+    ]
+
+
+def test_a_fixed_dimension_enumerates_to_a_single_value() -> None:
+    """start == end fixes a dimension rather than disabling it."""
+    space = SearchSpace(stop_pcts=GridSpec(0.9, 0.9, 0.1), k_act=None, min_margin=GridSpec(0.05, 0.05, 1.0))
+    cands = enumerate_candidates(space)
+
+    assert len(cands) == 1
+    assert cands[0].min_margin == 0.05
+    assert set(cands[0].stop_pcts.values()) == {0.9}

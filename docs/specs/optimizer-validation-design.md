@@ -721,7 +721,8 @@ The two halves are in opposite regimes, and on the test half the ranking metric 
 objective disagree in *sign*. See defect 6 for what that does and does not imply.
 
 **Decision:** the current optimizer is closed as a research tool, and the shared-stop decision
-stands. The cost of the run that reached this: the first attempt lost its result to a
+stands — and since a shared stop makes the space enumerable, the sampler went with it; see
+[`optimizer-simplification-design.md`](optimizer-simplification-design.md). The cost of the run that reached this: the first attempt lost its result to a
 formatting error after 80 minutes, which is why the runner now writes to disk first.
 
 ### Per-side activation is closed too (2026-09-08)

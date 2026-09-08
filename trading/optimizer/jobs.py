@@ -85,16 +85,7 @@ class JobStore:
         try:
             if kind == "ok":
                 db.complete_optimizer_job(active.job_id, payload)
-                if payload.get("mode") == "AUTO":
-                    self._notify_auto(active, payload)
-                else:
-                    best = (payload.get("top_candidates") or [{}])[0]
-                    robust = best.get("robust_pnl_pct")
-                    pnl_str = f"{robust:.2f}%" if robust is not None else "n/a"
-                    logging.info(
-                        f"✅ [Optimizer] Completed for {active.pair} (job={active.job_id})\nBest pnl: {pnl_str}",
-                        to_telegram=True,
-                    )
+                self._notify_done(active, payload)
             else:
                 db.fail_optimizer_job(active.job_id, str(payload))
                 logging.error(
@@ -105,29 +96,24 @@ class JobStore:
             with self._lock:
                 self._active.pop(active.job_id, None)
 
-    def _notify_auto(self, active: _ActiveJob, payload: dict) -> None:
+    def _notify_done(self, active: _ActiveJob, payload: dict) -> None:
+        """One message for every completed job: the search is a deterministic enumeration,
+        so there is no convergence outcome to report and no second message shape."""
         best = (payload.get("top_candidates") or [{}])[0]
         robust = best.get("robust_pnl_pct")
         robust_str = f"{robust:.2f}%" if robust is not None else "n/a"
-        n_trials = payload.get("n_trials_run")
-        n_agreed = payload.get("n_seeds_agreed", 0)
-        n_seeds = len(payload.get("seeds_used") or [])
+        # The objective is base-asset accumulation, and the euro figure inverts in sign
+        # whenever the window falls — so the message carries both or it misleads.
+        base = best.get("in_sample_base_pct")
+        base_str = f"{base:.2f}%" if base is not None else "n/a"
         env_lines = "\n".join(payload.get("suggested_env_lines") or [])
-
-        if payload.get("converged"):
-            msg = (
-                f"✅ [AutoOptimize] {active.pair} (job={active.job_id}) — converged\n"
-                f"{n_agreed}/{n_seeds} seeds, {n_trials} trials\n"
-                f"Best robust: {robust_str}\n"
-                f"{env_lines}"
-            )
-        else:
-            msg = (
-                f"⚠️ [AutoOptimize] {active.pair} (job={active.job_id}) — no convergence reached\n"
-                f"Best found: {robust_str}\n"
-                f"{env_lines}"
-            )
-        logging.info(msg, to_telegram=True)
+        logging.info(
+            f"✅ [Optimizer] Completed for {active.pair} (job={active.job_id})\n"
+            f"{payload.get('n_candidates', 0)} candidates evaluated\n"
+            f"Best robust: {robust_str} (base asset {base_str})\n"
+            f"{env_lines}",
+            to_telegram=True,
+        )
 
     def shutdown(self) -> None:
         """Called from FastAPI lifespan finally block. Cancel pending work and

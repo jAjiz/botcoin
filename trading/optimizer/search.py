@@ -1,16 +1,14 @@
-"""Parameter optimizer — run_optimize (OPTIMIZE/CURRENT) and run_auto_optimize (AUTO); see CLAUDE.md's "Trading tools" section and Design choices for the design and semantics."""
+"""Parameter optimizer — ``run_optimize`` over an enumerated search space (OPTIMIZE/CURRENT).
 
-import contextlib
+See CLAUDE.md's "Trading tools" section and Design choices for the design and semantics.
+"""
+
 import math
-import random
-from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass, field
-from multiprocessing import get_context
+from dataclasses import dataclass
+from itertools import product
 
 import numpy as np
-import optuna
 import pandas as pd
-from optuna.samplers import TPESampler
 
 import core.database as db
 from core.config import ATR_DESV_LIMIT, CANDLE_TIMEFRAME, RECALIBRATION_BARS, STOP_PERCENTILES, TRADING_PARAMS
@@ -24,9 +22,11 @@ from trading.market_analyzer import (
     k_values_by_level,
 )
 
-optuna.logging.set_verbosity(optuna.logging.WARNING)
-
-MODES = ("OPTIMIZE", "CURRENT", "AUTO")
+# AUTO is gone from the search: with one shared stop_pct the space is enumerable, so there is
+# no sampler for seeds to reach consensus about. It stays in HISTORICAL_MODES because stored
+# jobs carry it and must still read back.
+MODES = ("OPTIMIZE", "CURRENT")
+HISTORICAL_MODES = ("OPTIMIZE", "CURRENT", "AUTO")
 
 
 # --- search space ----------------------------------------------------------
@@ -48,16 +48,6 @@ class SearchSpace:
     stop_pcts: GridSpec
     k_act: GridSpec | None
     min_margin: GridSpec | None
-
-
-@dataclass(frozen=True)
-class AutoSettings:
-    """AUTO-mode convergence knobs (mirrors the Pydantic AutoSettings)."""
-
-    n_seeds: int = 4
-    min_agree: int = 3
-    trial_step: int = 500
-    max_trials: int = 9_000
 
 
 @dataclass(frozen=True)
@@ -101,6 +91,38 @@ def _quantile_ceiled(values: np.ndarray, pct: float) -> float | None:
 
 
 _k_values_by_level = k_values_by_level
+
+
+def _grid_values(g: GridSpec) -> list[float]:
+    """Every point on the grid, both ends inclusive. GridSpec validation guarantees
+    (end - start) is an integer multiple of step, so the count is exact."""
+    n = round((g.end - g.start) / g.step)
+    return [round(g.start + i * g.step, 10) for i in range(n + 1)]
+
+
+def enumerate_candidates(space: SearchSpace) -> list["Candidate"]:
+    """Every config in the space, both branches, in a deterministic order.
+
+    One shared ``stop_pct`` across the five levels rather than five searched independently:
+    at the operation counts these configs produce, a run exercises two or three levels, so
+    the rest are unidentified and a search fills them with noise. Freeing them was measured
+    and the deployed search does not converge (0/4 seeds after 12 000 trials). Shared, the
+    space is a small product that can simply be enumerated -- no sampler, no seed, no
+    convergence question, and an identical request always returns an identical ranking.
+    """
+    stops = _grid_values(space.stop_pcts)
+    out: list[Candidate] = []
+    if space.k_act is not None:
+        out += [
+            Candidate(k_act=k, min_margin=None, stop_pcts=dict.fromkeys(LEVELS, s))
+            for k, s in product(_grid_values(space.k_act), stops)
+        ]
+    if space.min_margin is not None:
+        out += [
+            Candidate(k_act=None, min_margin=mm, stop_pcts=dict.fromkeys(LEVELS, s))
+            for mm, s in product(_grid_values(space.min_margin), stops)
+        ]
+    return out
 
 
 @dataclass(frozen=True)
@@ -246,69 +268,30 @@ def _build_engine_config(
 # --- Optuna search ---------------------------------------------------------
 
 
-def _build_study(seed: int) -> optuna.Study:
-    return optuna.create_study(direction="maximize", sampler=TPESampler(seed=seed))
-
-
-def _suggest_stops(trial: optuna.Trial, grid: GridSpec) -> dict[str, float]:
-    return {lvl: trial.suggest_float(f"stop_pct_{lvl}", grid.start, grid.end, step=grid.step) for lvl in LEVELS}
-
-
-def _suggest_kact(trial: optuna.Trial, space: SearchSpace) -> Candidate:
-    g = space.k_act
-    return Candidate(
-        k_act=trial.suggest_float("k_act", g.start, g.end, step=g.step),
-        min_margin=None,
-        stop_pcts=_suggest_stops(trial, space.stop_pcts),
-    )
-
-
-def _suggest_minmargin(trial: optuna.Trial, space: SearchSpace) -> Candidate:
-    g = space.min_margin
-    return Candidate(
-        k_act=None,
-        min_margin=trial.suggest_float("min_margin", g.start, g.end, step=g.step),
-        stop_pcts=_suggest_stops(trial, space.stop_pcts),
-    )
-
-
-def _candidate_from_params(params: dict) -> Candidate:
-    stop_pcts = {lvl: params[f"stop_pct_{lvl}"] for lvl in LEVELS}
-    if "k_act" in params:
-        return Candidate(k_act=params["k_act"], min_margin=None, stop_pcts=stop_pcts)
-    return Candidate(k_act=None, min_margin=params.get("min_margin", 0.0), stop_pcts=stop_pcts)
-
-
 # --- request / result ------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class OptimizerRequest:
     pair: str
-    mode: str  # "OPTIMIZE" | "CURRENT" | "AUTO"
+    mode: str  # "OPTIMIZE" | "CURRENT"
     fee_pct: float = 0.0
     start: str | None = None
     end: str | None = None
     train_split: float = 1.0
     min_ops: int = 0
     min_test_ops: int = 0
-    n_trials: int = 1_000
-    seed: int = 42
     # Candles between simulated recalibrations; None follows the live cadence, 0 calibrates once.
     recalibration_bars: int | None = None
-    # AUTO-mode knobs (None => defaults).
-    auto_settings: AutoSettings | None = None
-    # Search grids: required for OPTIMIZE/AUTO, ignored by CURRENT.
+    # Search grids: required for OPTIMIZE, ignored by CURRENT.
     search_space: SearchSpace | None = None
-    # CURRENT-mode .env overrides; ignored by OPTIMIZE/AUTO.
+    # CURRENT-mode .env overrides; ignored by OPTIMIZE.
     current_params: CurrentParams | None = None
 
     def __post_init__(self) -> None:
         """Coerce the plain dicts produced by model_dump()/asdict round-trips."""
         if isinstance(self.search_space, dict):
             object.__setattr__(self, "search_space", _search_space_from_dict(self.search_space))
-        if isinstance(self.auto_settings, dict):
-            object.__setattr__(self, "auto_settings", AutoSettings(**self.auto_settings))
         if isinstance(self.current_params, dict):
             object.__setattr__(self, "current_params", _current_params_from_dict(self.current_params))
 
@@ -319,11 +302,7 @@ class OptimizerResult:
     mode: str
     top_candidates: list[dict]  # top 5 unique; each has candidate params + scores
     suggested_env_lines: list[str]  # formatted .env lines for top_candidates[0]
-    n_trials_run: int
-    # AUTO-only; left at their defaults by OPTIMIZE and CURRENT.
-    converged: bool = False
-    seeds_used: list = field(default_factory=list)
-    n_seeds_agreed: int = 0
+    n_candidates: int  # size of the enumerated space, after min_ops filtering
 
 
 @dataclass(frozen=True)
@@ -338,7 +317,7 @@ class _Eval:
 
 @dataclass(frozen=True)
 class EvalContext:
-    """Everything a trial needs to score a candidate; built once per run and shared by every seed/level/trial."""
+    """Everything a candidate needs to be scored; built once per run and shared by every candidate."""
 
     pair: str
     df: pd.DataFrame
@@ -423,151 +402,28 @@ def _scores_dict(ev: _Eval, ctx: "EvalContext") -> dict:
 # --- study execution -------------------------------------------------------
 
 
-def _build_objective(study_type: str, ctx: EvalContext):
-    """Build the Optuna objective for one branch (``kact`` or ``minmargin``)."""
-    suggest_fn = _suggest_kact if study_type == "kact" else _suggest_minmargin
-
-    def objective(trial: optuna.Trial) -> float:
-        cand = suggest_fn(trial, ctx.search_space)
-        ev = _evaluate(cand, ctx)
-        if ctx.test_df.empty:
-            if ev.train_samples < ctx.min_ops:
-                raise optuna.TrialPruned()
-        elif ev.train_samples < ctx.min_ops or ev.test_samples < ctx.min_test_ops:
-            raise optuna.TrialPruned()
-        trial.set_user_attr("in_sample_pnl", ev.in_sample.total_pnl)
-        trial.set_user_attr("train_pnl", ev.train.total_pnl)
-        trial.set_user_attr("test_pnl", ev.test.total_pnl)
-        trial.set_user_attr("train_ops", ev.train_samples)
-        trial.set_user_attr("test_ops", ev.test_samples)
-        return ev.robust_pnl
-
-    return objective
-
-
-def _collect_completed(study: optuna.Study) -> list[tuple]:
-    """Plain (params, value, user_attrs) tuples for the study's COMPLETE trials."""
-    return [(t.params, t.value, t.user_attrs) for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
-
-
-@dataclass
-class _SeedStudies:
-    """A seed's warm-startable studies, one per active branch; ``done`` tracks the cumulative trial target per branch."""
-
-    seed: int
-    studies: dict[str, optuna.Study]
-    done: dict[str, int]
-
-
-def _new_seed_studies(seed: int, space: SearchSpace) -> _SeedStudies:
-    # minmargin uses seed+1 so the two branches explore independently; a None grid omits that branch.
-    studies: dict[str, optuna.Study] = {}
-    if space.k_act is not None:
-        studies["kact"] = _build_study(seed)
-    if space.min_margin is not None:
-        studies["minmargin"] = _build_study(seed + 1)
-    return _SeedStudies(seed=seed, studies=studies, done=dict.fromkeys(studies, 0))
-
-
-def _split_budget(target_n_trials: int, branches: list[str]) -> dict[str, int]:
-    """Split the trial budget evenly across active branches; the remainder goes to the last one."""
-    n = len(branches)
-    base = target_n_trials // n
-    out = dict.fromkeys(branches, base)
-    out[branches[-1]] += target_n_trials - base * n
-    return out
-
-
 # Below this trial count, branch parallelism isn't worth the process-spawn overhead.
 _PARALLEL_MIN_TRIALS = 200
 
 
-def _branch_executor(target_trials: int):
-    """Yields a 2-worker process pool for branch parallelism when the workload justifies it, else None."""
-    if target_trials < _PARALLEL_MIN_TRIALS:
-        return contextlib.nullcontext(None)
-    return ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn"))
-
-
-def _advance_branch(study: optuna.Study, study_type: str, n_trials: int, ctx: EvalContext) -> optuna.Study:
-    """Run ``n_trials`` more on ``study`` and return it; module-level so it can run in a worker process."""
-    study.optimize(_build_objective(study_type, ctx), n_trials=n_trials)
-    return study
-
-
-def _advance_seed_to(
-    state: _SeedStudies,
-    target_n_trials: int,
-    ctx: EvalContext,
-    executor: ProcessPoolExecutor | None = None,
-) -> tuple[list[tuple], int]:
-    """Warm-start each active branch to its share of ``target_n_trials``, running only the delta; returns (completed, n_total)."""
-    branches = list(state.studies)
-    targets = _split_budget(target_n_trials, branches)
-    deltas = {b: targets[b] - state.done[b] for b in branches}
-    work = [b for b in branches if deltas[b] > 0]
-
-    if executor is not None and len(work) > 1:
-        futures = {b: executor.submit(_advance_branch, state.studies[b], b, deltas[b], ctx) for b in work}
-        for b, fut in futures.items():
-            state.studies[b] = fut.result()
-    else:
-        for b in work:
-            _advance_branch(state.studies[b], b, deltas[b], ctx)
-    for b in branches:
-        state.done[b] = targets[b]
-
-    completed = [t for s in state.studies.values() for t in _collect_completed(s)]
-    n_total = sum(len(s.trials) for s in state.studies.values())
-    return completed, n_total
-
-
-def _result_from_completed(
-    req: OptimizerRequest, all_completed: list[tuple], n_total: int, ctx: EvalContext
+def _result_from_evaluated(
+    req: OptimizerRequest, scored: list[tuple[Candidate, _Eval]], ctx: EvalContext
 ) -> OptimizerResult:
-    """Rank, deduplicate and format the completed trials into an OptimizerResult."""
-    # Rank by robust_pnl, breaking ties by in-sample, then test, then train PnL for determinism.
+    """Rank the evaluated candidates and format the top five."""
+    # By robust_pnl, ties broken by in-sample, then test, then train PnL. Enumeration is
+    # already deterministic, so an identical request returns an identical ranking.
     ranked = sorted(
-        all_completed,
-        key=lambda t: (
-            t[1],
-            t[2].get("in_sample_pnl", -1e18),
-            t[2].get("test_pnl", -1e18),
-            t[2].get("train_pnl", -1e18),
-        ),
+        scored,
+        key=lambda ce: (ce[1].robust_pnl, ce[1].in_sample.total_pnl, ce[1].test.total_pnl, ce[1].train.total_pnl),
         reverse=True,
     )
-
-    # Deduplicate across both branches; disjoint keys mean same stop_pcts across branches won't collide.
-    seen_params: set[tuple] = set()
-    unique_completed = []
-    for params, value, user_attrs in ranked:
-        key = tuple(sorted(params.items()))
-        if key not in seen_params:
-            seen_params.add(key)
-            unique_completed.append((params, value, user_attrs))
-    top = unique_completed[:5]
-
-    def _trial_dict(params: dict, value: float, user_attrs: dict) -> dict:
-        cand = _candidate_from_params(params)
-        return {
-            **_candidate_to_dict(cand),
-            "in_sample_pnl_pct": _round2(user_attrs.get("in_sample_pnl")),
-            "train_pnl_pct": _round2(user_attrs.get("train_pnl")),
-            "test_pnl_pct": _round2(user_attrs.get("test_pnl")),
-            "robust_pnl_pct": _round2(value),
-            "train_ops": user_attrs.get("train_ops"),
-            "test_ops": user_attrs.get("test_ops"),
-            **_hold_dict(user_attrs.get("in_sample_pnl"), user_attrs.get("train_pnl"), user_attrs.get("test_pnl"), ctx),
-        }
-
-    best_cand = _candidate_from_params(top[0][0])
+    top = ranked[:5]
     return OptimizerResult(
         pair=req.pair,
         mode=req.mode,
-        top_candidates=[_trial_dict(p, v, ua) for p, v, ua in top],
-        suggested_env_lines=_format_env_lines(req.pair, best_cand),
-        n_trials_run=n_total,
+        top_candidates=[{**_candidate_to_dict(cand), **_scores_dict(ev, ctx)} for cand, ev in top],
+        suggested_env_lines=_format_env_lines(req.pair, top[0][0]),
+        n_candidates=len(scored),
     )
 
 
@@ -650,7 +506,7 @@ def _current_result(req: OptimizerRequest, ctx: EvalContext) -> OptimizerResult:
         mode=req.mode,
         top_candidates=[{**_candidate_to_dict(cand), **_scores_dict(ev, ctx)}],
         suggested_env_lines=_format_env_lines(req.pair, cand),
-        n_trials_run=1,
+        n_candidates=1,
     )
 
 
@@ -659,109 +515,28 @@ def _current_result(req: OptimizerRequest, ctx: EvalContext) -> OptimizerResult:
 
 def run_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerResult:
     if req.mode != "CURRENT" and req.search_space is None:
-        raise ValueError("search_space is required for OPTIMIZE/AUTO")
+        raise ValueError("search_space is required for OPTIMIZE")
 
     ctx = _build_eval_context(req, calibration)
 
     if req.mode == "CURRENT":
         return _current_result(req, ctx)
 
-    state = _new_seed_studies(req.seed, req.search_space)
-    with _branch_executor(req.n_trials) as executor:
-        return _seed_result(state, req.n_trials, ctx, req, executor)
+    candidates = enumerate_candidates(req.search_space)
+    if not candidates:
+        raise ValueError("search_space enumerates to no candidates")
 
-
-# --- AUTO mode convergence loop --------------------------------------------
-
-
-def _candidate_signature(cand: dict) -> tuple:
-    """Hashable signature of a candidate's config (not score); groups seeds that found the same solution."""
-    return (
-        cand.get("k_act"),
-        cand.get("min_margin"),
-        tuple(sorted((cand.get("stop_pcts") or {}).items())),
-        cand.get("er_window"),
-        cand.get("chop_enter_pct"),
-    )
-
-
-def _check_convergence(results: list[OptimizerResult], min_agree: int) -> tuple[OptimizerResult, int] | None:
-    """Group results by config signature; return (best, n_agreed) for the highest-robust_pnl group reaching min_agree."""
-    groups: dict[tuple, list[OptimizerResult]] = {}
-    for r in results:
-        if not r.top_candidates:
+    scored = []
+    for cand in candidates:
+        ev = _evaluate(cand, ctx)
+        # The sampler used to prune these; enumeration filters them, with the same meaning.
+        if ctx.test_df.empty:
+            if ev.train_samples < ctx.min_ops:
+                continue
+        elif ev.train_samples < ctx.min_ops or ev.test_samples < ctx.min_test_ops:
             continue
-        groups.setdefault(_candidate_signature(r.top_candidates[0]), []).append(r)
+        scored.append((cand, ev))
 
-    qualifying = [g for g in groups.values() if len(g) >= min_agree]
-    if not qualifying:
-        return None
-    best_group = max(qualifying, key=lambda g: g[0].top_candidates[0].get("robust_pnl_pct") or -1e18)
-    return best_group[0], len(best_group)
-
-
-def _seed_result(
-    state: _SeedStudies,
-    target_n_trials: int,
-    ctx: EvalContext,
-    req: OptimizerRequest,
-    executor: ProcessPoolExecutor | None = None,
-) -> OptimizerResult:
-    """Advance one seed's studies to ``target_n_trials`` (warm-start) and build its OptimizerResult."""
-    completed, n_total = _advance_seed_to(state, target_n_trials, ctx, executor)
-    if not completed:
-        raise ValueError("No candidate met the min_ops / min_test_ops constraints")
-    return _result_from_completed(req, completed, n_total, ctx)
-
-
-def run_auto_optimize(req: OptimizerRequest, calibration: dict | None) -> OptimizerResult:
-    if req.search_space is None:
-        raise ValueError("search_space is required for OPTIMIZE/AUTO")
-    auto = req.auto_settings or AutoSettings()
-    # Seeded from req.seed (not the global RNG) so the stored request fully determines the run.
-    seeds = random.Random(req.seed).sample(range(1, 9999), auto.n_seeds)
-    # OHLC/calibration load once; each seed's studies stay alive across escalation levels (warm-start).
-    ctx = _build_eval_context(req, calibration)
-    states = {seed: _new_seed_studies(seed, req.search_space) for seed in seeds}
-
-    n_trials = req.n_trials
-    last_results: list[OptimizerResult] = []
-
-    # One pool for the whole search, reused across seeds and escalation levels.
-    with _branch_executor(auto.max_trials) as executor:
-        while n_trials <= auto.max_trials:
-            last_results = []
-            for seed in seeds:
-                # min_ops not met → this seed just doesn't converge this round; its studies persist for a higher budget.
-                with contextlib.suppress(ValueError):
-                    last_results.append(_seed_result(states[seed], n_trials, ctx, req, executor))
-
-            converged = _check_convergence(last_results, auto.min_agree)
-            if converged is not None:
-                best, n_agreed = converged
-                return OptimizerResult(
-                    pair=req.pair,
-                    mode="AUTO",
-                    top_candidates=best.top_candidates,
-                    suggested_env_lines=best.suggested_env_lines,
-                    n_trials_run=n_trials,
-                    converged=True,
-                    seeds_used=seeds,
-                    n_seeds_agreed=n_agreed,
-                )
-
-            n_trials += auto.trial_step
-
-    valid = [r for r in last_results if r.top_candidates]
-    if not valid:
-        raise ValueError("AUTO mode: no valid candidates found within the trial budget")
-    best_fallback = max(valid, key=lambda r: r.top_candidates[0].get("robust_pnl_pct") or -1e18)
-    return OptimizerResult(
-        pair=req.pair,
-        mode="AUTO",
-        top_candidates=best_fallback.top_candidates,
-        suggested_env_lines=best_fallback.suggested_env_lines,
-        n_trials_run=n_trials - auto.trial_step,
-        converged=False,
-        seeds_used=seeds,
-    )
+    if not scored:
+        raise ValueError("every candidate was filtered out by min_ops / min_test_ops")
+    return _result_from_evaluated(req, scored, ctx)

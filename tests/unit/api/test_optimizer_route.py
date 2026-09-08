@@ -77,13 +77,30 @@ def test_submit_invalid_mode_returns_422(monkeypatch) -> None:
     assert resp.status_code == 422
 
 
-@pytest.mark.parametrize("mode", ["OPTIMIZE", "AUTO"])
-def test_submit_without_search_space_returns_422(monkeypatch, mode: str) -> None:
-    """search_space is required for the search modes — enforced at the route."""
+def test_submit_without_search_space_fills_in_the_study_grid(monkeypatch) -> None:
+    """An omitted search_space is filled in at the route, not defaulted on the model, so the
+    stored request records the grid the job actually ran and stays self-documenting."""
+    seen = []
+    monkeypatch.setattr(optimizer_route.JOB_STORE, "try_start", lambda req: seen.append(req) or _JOB_ID)
     client = _make_client(monkeypatch)
-    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": mode})
+
+    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "OPTIMIZE"})
+
+    assert resp.status_code == 202
+    space = seen[0].search_space
+    assert space.k_act is None  # the branch that won none of the study's hold-out fits
+    assert (space.min_margin.start, space.min_margin.end, space.min_margin.step) == (0.0, 0.20, 0.01)
+    assert (space.stop_pcts.start, space.stop_pcts.end, space.stop_pcts.step) == (0.5, 0.9, 0.1)
+
+
+def test_submit_rejects_auto(monkeypatch) -> None:
+    """AUTO is retired: with one shared stop_pct the space is enumerated, so there is no
+    sampler for seeds to converge about. Rejected at the route, not on the model, so
+    stored AUTO jobs still read back."""
+    client = _make_client(monkeypatch)
+    resp = client.post("/optimizer/jobs", json={"pair": _PAIR, "mode": "AUTO", "search_space": _SPACE})
     assert resp.status_code == 422
-    assert "search_space is required" in resp.json()["detail"]
+    assert "AUTO is retired" in resp.json()["detail"]
 
 
 def test_submit_returns_202_with_job_id(monkeypatch) -> None:
@@ -192,8 +209,9 @@ def test_get_job_output_is_deduped_and_pruned(monkeypatch) -> None:
 
 
 def test_get_auto_job_nests_auto_fields(monkeypatch) -> None:
-    """AUTO result: the consensus fields are grouped under a nested `auto` object,
-    not repeated at the top level of the result."""
+    """A stored AUTO job still reads back after AUTO was retired: its consensus fields are
+    grouped under a nested `auto` object, and the fields the request model no longer
+    declares are simply dropped from the echo rather than failing it."""
     row = dict(
         _JOB_ROW,
         mode="AUTO",
@@ -219,8 +237,12 @@ def test_get_auto_job_nests_auto_fields(monkeypatch) -> None:
     assert "is_improvement" not in auto and "current_robust_pnl" not in auto
     # the AUTO fields are not duplicated at the result top level
     assert "converged" not in body["result"] and "seeds_used" not in body["result"]
-    # the request echo groups the AUTO knobs
-    assert body["request"]["auto_settings"]["n_seeds"] == 4
+    # the historical trial count survives beside the current n_candidates
+    assert body["result"]["n_trials_run"] == 2000
+    assert body["result"]["n_candidates"] == 0
+    # retired request knobs are dropped from the echo, and the mode still parses
+    assert "auto_settings" not in body["request"]
+    assert body["request"]["mode"] == "AUTO"
 
 
 def test_submit_rejects_non_iso_start(monkeypatch) -> None:

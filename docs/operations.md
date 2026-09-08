@@ -266,17 +266,22 @@ curl -s http://localhost:8000/optimizer/jobs/$JOB -H "X-Api-Token: $API_SECRET_T
 curl -s "http://localhost:8000/optimizer/jobs?limit=20" -H "X-Api-Token: $API_SECRET_TOKEN" | jq
 ```
 
-Each search runs two independent Optuna TPE studies — one over the `K_ACT`
-activation branch, one over the `MIN_MARGIN` branch — and ranks the merged
-candidates by robust PnL (the worse of the train/test halves). Calibration is on the
-full OHLC history, exactly as the live bot does; the train/test split is evaluated in
-a single continuous run (no mid-history reset).
+Each search **enumerates** its space — every point of every grid, both activation
+branches, evaluated exactly once — and ranks the candidates by robust PnL (the worse
+of the train/test halves, or the in-sample figure when `train_split` is 1.0). There is
+no sampler, no seed and no trial budget: an identical request returns an identical
+ranking. Calibration is on the full OHLC history, exactly as the live bot does; the
+train/test split is evaluated in a single continuous run (no mid-history reset).
+
+`search_space` is optional and defaults to the validation study's grid (105 candidates:
+`min_margin` 0.00–0.20 step 0.01 x one shared `stop_pct` 0.5–0.9 step 0.1, `k_act`
+branch off). The grid that actually ran is stored on the job.
 
 | Mode | Behavior |
 |---|---|
 | `OPTIMIZE` | Run the TPE search at a fixed `n_trials` / `seed`; returns the ranked top candidates. |
 | `CURRENT` | Evaluate the live `.env` config only (1 trial) — a baseline to compare against. |
-| `AUTO` | Multi-seed convergence loop: run `OPTIMIZE` across `n_seeds` random seeds, escalating `n_trials` by `trial_step` until `min_agree` of them agree on the same config (or `max_trials` is hit). Reports only the search outcome — comparing the winner to the live config is a separate step (run `CURRENT`). |
+| ~~`AUTO`~~ | **Retired.** It existed to check whether independently seeded samplers converged on the same config; with the space enumerated there is no sampler to disagree. Submitting it returns `422`. Stored AUTO jobs still read back. |
 
 | Field | Default | Applies to | Meaning |
 |---|---|---|---|
@@ -285,13 +290,8 @@ a single continuous run (no mid-history reset).
 | `fee_pct` | `0.0` | all | Per-side fee percentage |
 | `start` / `end` | `null` | all | Optional date slice |
 | `train_split` | `1.0` | all | Train fraction (0.5–1.0). `1.0` = no inner split: the in-sample window is all training and the honest test is forward. Lower it only for AUTO's robust (train/test) ranking |
-| `min_ops` / `min_test_ops` | `0` | OPTIMIZE, AUTO | Prune trials below these op counts |
-| `n_trials` | `1000` | OPTIMIZE, AUTO | Optuna TPE trials (the initial count in AUTO) |
-| `seed` | `42` | OPTIMIZE | Sampler seed |
-| `n_seeds` | `4` | AUTO | Random seeds run per round (2–8) |
-| `min_agree` | `3` | AUTO | Seeds that must converge to accept (2–8) |
-| `trial_step` | `500` | AUTO | Trial increment per escalation (100–2000) |
-| `max_trials` | `9000` | AUTO | Trial ceiling before giving up (500–20000) |
+| `min_ops` / `min_test_ops` | `0` | OPTIMIZE | Drop candidates below these op counts |
+| `search_space` | study grid | OPTIMIZE | Grids to enumerate; see above |
 
 A completed job's `result` holds the ranked `top_candidates` (each with its
 `k_act`/`min_margin`, per-level stop percentiles, and in-sample/train/test/robust
@@ -303,9 +303,9 @@ construction. **Read the base-asset figures if the goal is accumulating the asse
 rather than euros: the two disagree in sign whenever a window falls** — a run that
 returns -5.19 % in euros across a -17.41 % year accumulated +14.8 % of base asset.
 Ranking is on euros only; see the validation spec for why denominating the ranking
-would be worse, not better. AUTO results additionally report
-`converged`, `seeds_used`, `n_seeds_agreed`. To check
-whether the winner beats the live config, run `CURRENT` and compare the robust PnL.
+would be worse, not better. It also reports `n_candidates`, the size of the enumerated space after `min_ops`
+filtering. To check whether the winner beats the live config, run `CURRENT` and compare
+the robust PnL.
 Applying them is manual: copy the suggested lines into `.env` and redeploy (hot-reload
 of trading parameters is future work).
 

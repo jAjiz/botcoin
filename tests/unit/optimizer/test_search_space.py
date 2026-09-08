@@ -10,7 +10,14 @@ from api.schemas import CurrentParams as ApiCurrentParams
 from api.schemas import GridSpec as ApiGridSpec
 from api.schemas import OptimizerRequest as ApiOptimizerRequest
 from api.schemas import SearchSpace as ApiSearchSpace
-from trading.optimizer.search import AutoSettings, CurrentParams, GridSpec, OptimizerRequest, SearchSpace
+from trading.optimizer.search import (
+    CurrentParams,
+    GridSpec,
+    OptimizerRequest,
+    SearchSpace,
+    _search_space_from_dict,
+    enumerate_candidates,
+)
 
 
 def _api_space() -> dict:
@@ -62,19 +69,24 @@ def test_searchspace_rejects_stop_out_of_bounds() -> None:
         )
 
 
-def test_searchspace_branches_are_required_fields() -> None:
-    """k_act/min_margin have no defaults — they must be informed (even as null)."""
-    with pytest.raises(ValidationError):
-        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.15, end=0.9, step=0.25))
+def test_searchspace_defaults_to_the_validation_study_grid() -> None:
+    """105 candidates: min_margin 0.00-0.20 step 0.01 against one shared stop_pct 0.5-0.9
+    step 0.1, k_act off. The grid every published figure in the study was measured on."""
+    space = ApiSearchSpace()
+
+    assert space.k_act is None
+    assert (space.min_margin.start, space.min_margin.end, space.min_margin.step) == (0.0, 0.20, 0.01)
+    assert (space.stop_pcts.start, space.stop_pcts.end, space.stop_pcts.step) == (0.5, 0.9, 0.1)
+    assert len(enumerate_candidates(_search_space_from_dict(space.model_dump()))) == 105
 
 
 # --- OptimizerRequest mode/search_space interaction ------------------------
 
 
 def test_request_model_allows_missing_search_space() -> None:
-    """The model itself does NOT require search_space (the OPTIMIZE/AUTO rule is
-    enforced at the route). This lets the same model echo historical requests back.
-    See the route tests for the 422-on-submit behaviour."""
+    """The model itself does NOT require search_space (the OPTIMIZE rule is enforced at
+    the route). This lets the same model echo historical requests back — including the
+    AUTO jobs the route no longer accepts. See the route tests for the 422 behaviour."""
     for mode in ("OPTIMIZE", "AUTO", "CURRENT"):
         req = ApiOptimizerRequest(pair="XBTEUR", mode=mode)
         assert req.search_space is None
@@ -108,22 +120,6 @@ def test_dataclass_search_space_asdict_round_trips() -> None:
     req2 = OptimizerRequest(pair="XBTEUR", mode="OPTIMIZE", search_space=rt)
     assert req2.search_space.k_act is None
     assert req2.search_space.min_margin.step == 0.002
-
-
-def test_dataclass_coerces_dict_auto_settings() -> None:
-    """auto_settings, like search_space, accepts the plain dict round-trip."""
-    req = OptimizerRequest(
-        pair="XBTEUR",
-        mode="AUTO",
-        search_space=_api_space(),
-        auto_settings={"n_seeds": 5, "min_agree": 4, "trial_step": 250, "max_trials": 3000},
-    )
-    assert isinstance(req.auto_settings, AutoSettings)
-    assert req.auto_settings.n_seeds == 5
-    assert asdict(req)["auto_settings"]["max_trials"] == 3000
-
-
-# --- CurrentParams validation + round-trip ----------------------------------
 
 
 def test_current_params_rejects_incomplete_stop_pcts() -> None:

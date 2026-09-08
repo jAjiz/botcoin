@@ -7,6 +7,7 @@ from api.schemas import (
     OptimizerJobAcceptedResponse,
     OptimizerJobStatusResponse,
     OptimizerRequest,
+    SearchSpace,
     check_window_bounds,
 )
 from core.config import MAX_CONCURRENT_JOBS, PAIRS
@@ -34,10 +35,17 @@ async def submit(req: OptimizerRequest) -> OptimizerJobAcceptedResponse:
         raise HTTPException(status_code=503, detail="Optimizer is disabled on this host (MAX_CONCURRENT_JOBS=0)")
     if req.pair not in PAIRS:
         raise HTTPException(status_code=400, detail=f"Unknown pair: {req.pair}")
-    # Enforced here, not on the model, so the model can still echo historical requests
-    # back without re-failing.
-    if req.mode in ("OPTIMIZE", "AUTO") and req.search_space is None:
-        raise HTTPException(status_code=422, detail="search_space is required for OPTIMIZE and AUTO modes")
+    # Both enforced here, not on the model, so the model can still echo historical
+    # requests back without re-failing — including the AUTO jobs this no longer accepts.
+    if req.mode == "AUTO":
+        raise HTTPException(
+            status_code=422,
+            detail="AUTO is retired: the search space is enumerated, so there is no sampler to converge. Use OPTIMIZE.",
+        )
+    if req.mode == "OPTIMIZE" and req.search_space is None:
+        # Filled in here rather than defaulted on the model, so the stored request records
+        # the grid the job actually ran and stays self-documenting.
+        req = req.model_copy(update={"search_space": SearchSpace()})
     try:
         check_window_bounds(req.start, req.end)
     except ValueError as exc:
