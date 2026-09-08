@@ -973,6 +973,27 @@ production's chase rebought at €80k in March and is the least bad of the four 
 Where the bot sells is the first retrace after entry, and in a rising market that is near
 the bottom by construction.
 
+**From what fee would a bounded cash leg pay in a range?** The owner's follow-up, measured
+on the favourable window with `--fee`, capped arm, active configs (`mm ≤ 0.02`, 6–25
+operations) against the grid median and the passive configs:
+
+| fee per trade | production `mm=0.00` | capped `mm=0.00` | capped `mm=0.01` | capped `mm=0.02` | grid median | `mm=0.05` |
+|---|---|---|---|---|---|---|
+| 0.40 % | −55.6 % | +2.0 % | +6.5 % | +5.3 % | +18.8 % | +20.9 % |
+| 0.26 % (taker) | −43.8 % | +6.0 % | +7.7 % | +6.0 % | +19.5 % | +22.1 % |
+| 0.16 % (maker) | −33.9 % | +8.7 % | +8.8 % | +6.5 % | +20.0 % | +22.9 % |
+| 0.00 % | −17.8 % | +13.1 % | +10.9 % | +7.4 % | +20.8 % | +24.3 % |
+
+At **zero** fee, on the window with the largest realised swing in the data, the bounded
+cash leg operating three times a month earns +13 %; sitting in cash from April to November
+earns +24 %. No fee level makes operating beat not operating, because the fee is not what
+the operating configs lose to — it is the chase (production at 0 % is still −17.8 %) and,
+once the chase is removed, the size of the harvest: the typical gain of a cash leg is
+`½σ²τ`, about 0.33 % a month at σ = 40 % with half the time in cash, which at Kraken's
+maker rate (0.16 % a side) pays for roughly one cycle a month and at four or five a month
+would need ~0.04 % a side. The stop bounds the loss per cycle; it does not raise the
+harvest.
+
 Removing the re-anchor turns a bot that loses when it operates into a bot that sells once
 and waits. The switches stay in the engine as inert, tested fields, like the per-side
 margins; production keeps both sides re-anchoring.
@@ -1429,7 +1450,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
-| `scripts/analysis/reanchor_ablation.py` | **Is the bot viable without the activation re-anchor?** The 105 configs under production, no buy re-anchor, no re-anchor on either side, and the re-anchor capped at the leg's entry price; reports the base-asset distribution, the per-`min_margin` medians, time in cash and how many configs end the window in cash. Run it on both a window where the price came back and one where it did not. Takes the 15-minute CSV path. |
+| `scripts/analysis/reanchor_ablation.py` | **Is the bot viable without the activation re-anchor?** The 105 configs under production, no buy re-anchor, no re-anchor on either side, and the re-anchor capped at the leg's entry price; reports the base-asset distribution, the per-`min_margin` medians, time in cash and how many configs end the window in cash. Run it on both a window where the price came back and one where it did not; `--fee` sweeps the fee per trade. Takes the 15-minute CSV path. |
 | `scripts/analysis/regime_switch_oracle.py` | **What is switching the config by regime worth, with perfect labels?** Labels the window by shape (impulse-first: M % in ≤ K days; ≥ D-day gaps are lateral), ranks all 105 configs per class from sliced continuous runs, and runs the switched config as one continuous run against the best fixed, the recommended, and the median — with and without full allocation through rallies. `--move-pct`, `--max-days`, `--min-days`, `--active`, `--labels-only`. Takes the 15-minute CSV path. |
 | `scripts/analysis/rally_gate_oracle.py` | **What is a perfect rally detector worth?** Gates whole rally periods with hindsight and forces full allocation through them (`force_hold_bars`), re-simulated continuously — never as an overlay. Reports the arms and the per-period breakdown that separates what the gate recovers from what it costs downstream. Takes the 15-minute CSV path. |
 | `scripts/analysis/volatility_regime_screen.py` | **Are high-ATR stretches more directional than low-ATR ones?** Kaufman efficiency ratio by volatility level over non-overlapping windows at five horizons, against the `1/√N` random-walk null. No engine, no configs, no fees — a descriptive measure of the market, seconds to run. Takes the data directory, not `--csv`. |

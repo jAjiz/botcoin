@@ -129,7 +129,10 @@ def main() -> int:
     ap.add_argument("--start", default="2025-04-01")
     ap.add_argument("--end", default="2025-12-31")
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
+    ap.add_argument("--fee", type=float, default=gsh.FEE, help="Comision por operacion, en %.")
     args = ap.parse_args()
+    gsh.FEE = args.fee
+    print(f"[comision] {gsh.FEE:.2f} % por operacion")
 
     cal_t0 = int(pd.Timestamp(args.cal_start).timestamp())
     t1 = int(pd.Timestamp(args.end).timestamp()) + 86_399
