@@ -1091,6 +1091,57 @@ on flat or falling years — it gains a quarter to a third of the coins in the y
 and loses half in each year that rises — and no configuration, re-anchor variant, operation
 frequency or fee level changes that, because none of them changes the first term.
 
+### The rebalancing premium does not survive the drift either (2026-09-08)
+
+Closing the study, the owner asked what to do with the bot. One suggestion made it into
+that answer: if the point is to capture what the bot *actually* does that has value --
+spend time out of the asset and re-enter lower -- then the cheapest substitute is a
+constant-mix portfolio rebalanced by threshold, which harvests the same convexity with a
+handful of trades a year and no chase. The figure quoted, ~2 % a year in base asset, came
+from the closed form `0.5 * w(1-w) * sigma^2`. That form assumes a driftless random walk.
+This document has already recorded four occasions where a formula lost to a measurement, so
+`scripts/analysis/constant_mix_rebalance.py` measures it: no engine, no configs, no
+calibration -- the rule is a function of the close and nothing else, checked every 15-minute
+bar, which is the most favourable sampling available.
+
+The measurement needs two benchmarks kept apart, and conflating them is the trap:
+
+| | |
+|---|---|
+| vs holding (100 % asset) | the study's benchmark. A 50 % portfolio carries half the exposure, so it loses to holding in any rising window *by construction*. This says nothing about the rule. |
+| vs the same static mix | same initial weights, never rebalanced. Identical direction, identical exposure, the rebalancing the only difference. This is the premium, and it is denomination-free -- both sides divide by the same final price. |
+
+Against the second benchmark, at `w = 0.5`, XBTEUR:
+
+| window | hold | band 2 % | band 5 % | band 10 % | band 20 % | rebalances (2 %) |
+|---|---|---|---|---|---|---|
+| 2023 | +150 % | −7.65 % | −7.68 % | −5.83 % | −1.33 % | 26 |
+| 2024 | +134 % | −5.30 % | −5.48 % | −4.48 % | −0.02 % | 41 |
+| 2025 | −17 % | **+1.93 %** | +1.01 % | 0.00 % | 0.00 % | 30 |
+| 2023–2025 | +384 % | **−18.36 %** | −17.40 % | −18.26 % | −10.06 % | 99 |
+
+**The premium is negative in every rising window and worth +2 % in the one falling year.**
+It is not the fee: at zero fee the three-year figure is −17.62 % against −18.36 % at 0.4 %,
+so 0.8 points of the 18 are commission and the other 17 are drift. The band behaves the way
+the mechanism predicts once that is seen -- wider bands rebalance less and lose less, and at
+`w = 0.75 / band 20 %` (one rebalance in three years) the premium finally turns positive at
++6.0 %, which is to say the best version of the rule is the one that barely applies it.
+
+The reason is the same sentence the rest of the study keeps arriving at. Rebalancing sells
+the asset that rose and buys the one that fell; against a positive drift that is a
+systematically losing trade, and `0.5 * w(1-w) * sigma^2` only exceeds it when the drift is
+near zero. In base asset a constant-mix run returns roughly `−drift × time out of the asset
++ convexity − fees`, which is *the same expression* as the bot's, with the chase removed and
+the harvest bounded. Removing the chase removes the pathology and leaves the first term
+untouched -- and the first term is the one that decides the outcome.
+
+So the recommendation was wrong and is withdrawn: a threshold-rebalanced fixed allocation is
+not a cheaper way to capture what the bot captures. It is the same bet, cleanly expressed,
+and the bet loses whenever the asset rises. What it does establish is a floor for the whole
+family: **any signal-free allocation rule over these data is bounded above by about +2 % a
+year, and only in a falling market.** No amount of engineering on the rule's mechanics
+reaches the +384 % the window handed to anyone who did nothing.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1141,6 +1192,7 @@ contradicted by later work that had only this document to go on.
 - **The activation re-anchor stays, on both sides.** Removing it makes every cycle clean and turns the bot into one that sells once and waits for the price to come back; on 2024-10..2025-03 that is −22 % for all 105 configs with the whole window spent in cash. `reanchor_sell`/`reanchor_buy`/`reanchor_cap_at_entry` remain in the engine as inert switches.
 - **A high AUC against a pivot-derived label is not evidence of a signal.** Pivots alternate, so "which leg am I on" is knowable from the trailing return and carries the label with it; any labelling scheme built from future extrema must be checked against a fixed-horizon forward label and a money test before it is believed. This cost one run that looked like a discovery. See "Reverse-engineering the strategy from ideal trades is closed".
 - **There is no config recommendation, and the previous one was not skill.** `mm=0.05/0.9` loses 78 % of the base asset over 2023–2025 in four operations; it made one sell in the one year that fell. No config in the grid beats holding in 2023, 2024, or the three years continuous, under any re-anchor arm. See "Three years, and what the recommended config actually does".
+- **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
 
@@ -1470,7 +1522,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Thirteen avenues are now closed by measurement**, and none of them was a tuning question —
+**Fourteen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1489,6 +1541,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Removing the activation re-anchor, or capping it at the sell price | fixes the cycle loss (worst −79.5 % → −1.4 %) but the active configs still trail the median of the grid; on a window where the price does not come back, 105/105 sell once, never rebuy, and land at −22 % |
 | Reverse-engineering the rules from ideal trades | the pivot label is worth +406 % traded perfectly, but no causal feature predicts the honest target (sign of the forward return at a fixed horizon: AUC 0.43–0.52 for all 16, price and flow alike); a model scoring 0.767 against the pivot label captures +10.6 of those 406 points at zero fee and −33.1 % at maker |
 | Trading more often to dilute luck | confirmed, in the direction that hurts: over three years the configs making 100–784 operations converge *below* the passive ones (−93.0 % against −78.0 %), which is what a negative per-operation expectation looks like with more draws |
+| Replacing the bot with a threshold-rebalanced constant mix | the rebalancing premium is negative in every rising window (−5.3 to −7.7 points at `w=0.5`) and worth +1.9 points in the one falling year; over three years −18.4 %, of which only 0.8 is fees and 17 is drift. Bounds the whole signal-free family at about +2 % a year, and only when the market falls |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1551,6 +1604,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/constant_mix_rebalance.py` | **What is a signal-free allocation rule worth here?** A constant-mix portfolio rebalanced when the weight leaves a band, checked every bar, swept over weight, band and fee. No engine, no configs, no calibration -- seconds to run. Reports against two benchmarks: holding (which a half-weight portfolio loses to by construction) and the same mix never rebalanced (which isolates the premium). |
 | `scripts/analysis/signal_screen.py` | **Does anything visible at `t` predict the ideal action, and is it worth money?** Three parts that must all pass: what the perfect pivot label is worth when traded, per-feature AUC against both the pivot label and a fixed-horizon forward label, and the model's prediction run as an allocation in base asset at zero and maker fees. Causal features in two families (price/volatility as control, flow — volume and trade count — as the untested one), circular-shift null, temporal split fixed in advance. No engine, no configs; minutes to run. |
 | `scripts/analysis/reanchor_ablation.py` | **Is the bot viable without the activation re-anchor?** The 105 configs under production, no buy re-anchor, no re-anchor on either side, and the re-anchor capped at the leg's entry price; reports the base-asset distribution, the per-`min_margin` medians, time in cash and how many configs end the window in cash. Run it on both a window where the price came back and one where it did not; `--fee` sweeps the fee per trade. Takes the 15-minute CSV path. |
 | `scripts/analysis/regime_switch_oracle.py` | **What is switching the config by regime worth, with perfect labels?** Labels the window by shape (impulse-first: M % in ≤ K days; ≥ D-day gaps are lateral), ranks all 105 configs per class from sliced continuous runs, and runs the switched config as one continuous run against the best fixed, the recommended, and the median — with and without full allocation through rallies. `--move-pct`, `--max-days`, `--min-days`, `--active`, `--labels-only`. Takes the 15-minute CSV path. |
