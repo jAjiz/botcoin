@@ -40,6 +40,9 @@ class EngineConfig:
     # Per-side overrides of ``min_margin``; ``None`` keeps the shared value. Unset in production.
     min_margin_sell: float | None = None
     min_margin_buy: float | None = None
+    # Whether the activation follows a price that runs away from it, per side. Both true in production.
+    reanchor_sell: bool = True
+    reanchor_buy: bool = True
 
 
 @dataclass(frozen=True)
@@ -360,7 +363,7 @@ def simulate_operations(
             # Mirrors positions_manager.reanchor_activation_price: stored ATR, not the bar ATR.
             exp_dist = activation_distance(cfg, side, price, activation_atr, price, cal)
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
-            if gap > exp_dist:
+            if gap > exp_dist and (cfg.reanchor_sell if side == "sell" else cfg.reanchor_buy):
                 activation_px = activation_price(cfg, side, price, activation_atr, price, cal)
 
             # A sell activates on the high crossing up, then trails the highs; a buy mirrors it.

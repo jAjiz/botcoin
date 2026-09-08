@@ -906,6 +906,63 @@ not make 4–5 trades a month pay; it makes the cash time better placed. Whether
 even that needs `σ² − μ` measured per volatility level, which is a descriptive run of the
 regime screen, not a simulation.
 
+### Removing the re-anchor is closed (2026-09-08)
+
+The cycle decomposition put the whole loss of operating in one mechanism, so the owner
+asked the natural question: take the re-anchor out and see whether the bot is viable. The
+counter-mechanism was stated before running it — a bot in cash whose price does not come
+back never rebuys, which in base asset is an unbounded loss that never shows up as a
+cycle — so the ablation runs on two windows chosen in advance: the study's own
+(2025-04-01 .. 2025-12-31, the price *did* come back, the most favourable window the bet
+can have) and 2024-10-01 .. 2025-03-31 (60k to 100k and no return, the unfavourable one).
+`EngineConfig.reanchor_sell` / `reanchor_buy` (inert, both `True` in production) switch the
+activation's following of a price that runs away, per side;
+`scripts/analysis/reanchor_ablation.py` runs the 105 configs under three arms.
+
+| Window | Arm | median | p25 | p75 | best | worst | beats hold | ops | in cash | ends in cash |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 2025-04..12 (hold −2.2 %) | production | +18.8 % | +14.4 | +23.5 | +27.0 | **−79.5** | 88/105 | 14.6 | 75 % | 22 |
+| | no buy re-anchor | +18.8 % | +14.4 | +23.5 | +27.0 | −6.3 | 95/105 | 3.6 | 80 % | 34 |
+| | no re-anchor, both sides | +18.8 % | +14.4 | +23.5 | +27.0 | −1.4 | 104/105 | 4.1 | 78 % | 24 |
+| 2024-10..2025-03 (hold +34.5 %) | production | −15.3 % | −20.8 | −13.0 | −4.1 | −78.9 | 0/105 | 15.5 | 78 % | 79 |
+| | no buy re-anchor | −18.2 % | −21.2 | −13.0 | −9.2 | −25.7 | 0/105 | 1.5 | 88 % | **105** |
+| | no re-anchor, both sides | −18.2 % | −21.2 | −13.0 | −9.2 | −25.8 | 0/105 | 1.3 | 88 % | **105** |
+
+The medians do not move because the re-anchor never fired a rebuy above `mm = 0.03` in
+either window — those configs are identical under every arm, which is the cycle table
+again. Where it does act, at `mm ≤ 0.02`, it does exactly what the arithmetic says:
+
+| `mm` | production | no buy re-anchor | both off | | production | no buy re-anchor | both off |
+|---|---|---|---|---|---|---|---|
+| | *2025-04..12* | | | | *2024-10..2025-03* | | |
+| 0.00 | −55.6 % (187 ops) | −4.5 % (13) | +8.6 % (17) | | −54.9 % (189) | −24.8 % (8) | −24.8 % (5) |
+| 0.01 | −26.5 % (49) | −0.4 % (7) | +8.7 % (10) | | −32.0 % (61) | −23.6 % (3) | −23.6 % (3) |
+| 0.02 | −9.9 % (20) | +0.1 % (5) | +12.1 % (8) | | −27.5 % (24) | −22.3 % (2) | −22.3 % (2) |
+| 0.03 | +4.8 % (5) | +4.8 % (5) | +6.8 % (4) | | −17.5 % (17) | −22.0 % (1) | −22.0 % (1) |
+| 0.04 | +17.2 % (5) | +17.2 % (5) | +17.2 % (5) | | −14.9 % (13) | −22.0 % (1) | −22.0 % (1) |
+
+Three things, in order of weight.
+
+1. **The mechanism is confirmed, and it is not an edge.** Without the re-anchor the active
+   configs stop losing — worst case −79.5 % becomes −1.4 %, `mm = 0.00` goes from −55.6 %
+   to +8.6 % — because a clean cycle cannot lose. But +9 to +12 % on 8–17 operations is
+   still below the +18.8 % median of a grid whose typical member made two operations and
+   sat in cash from April to November. Operating cleanly beats operating badly; it does not
+   beat not operating.
+2. **On the unfavourable window it is the directional bet, measured.** 105 of 105 configs
+   end the window in cash, having sold once (1.0–1.5 operations) and never rebought, and
+   every one of them lands at −22 % to −25 %: the sell price divided by a price that went on
+   rising. The production re-anchor is a *bad* stop-loss on the cash leg — it chases — but
+   it is the only one: with it, `mm = 0.03–0.05` loses −15 to −19 % instead of −22 %.
+3. **The whole result is the sign of one quantity.** Whether the price comes back below
+   the last sell. Yes → the active configs make +9 to +12 %; no → −22 % and the bot is out
+   of the asset indefinitely. That is not a strategy property that can be tuned, it is the
+   direction of the market over the window, which is where every avenue in this file ends.
+
+Removing the re-anchor turns a bot that loses when it operates into a bot that sells once
+and waits. The switches stay in the engine as inert, tested fields, like the per-side
+margins; production keeps both sides re-anchoring.
+
 ### Still not established
 
 - **Whether anything predicts on a pair that trades enough.** Every predictiveness and
@@ -949,6 +1006,7 @@ contradicted by later work that had only this document to go on.
 - **The current optimizer is closed as a research tool, and free per-level stops with it.** The deployed AUTO search on the fixed engine returns four different answers from four seeds; see "Free per-level stops do not converge". Any remaining question goes through the exhaustive sweep and the forward-percentile test.
 - **Per-side activation is closed.** Measured on the fixed engine and worse in the hypothesis direction; the per-side `min_margin` overrides stay in the engine as inert, tested fields.
 - **Switching the config by regime is closed, operator-declared or otherwise.** With perfect regime labels the switched run is 18–19 points below the best fixed config; a regime's outcome is set by the side the bot holds when it begins, which no config can change. See "Switching the config by regime is closed".
+- **The activation re-anchor stays, on both sides.** Removing it makes every cycle clean and turns the bot into one that sells once and waits for the price to come back; on 2024-10..2025-03 that is −22 % for all 105 configs with the whole window spent in cash. `reanchor_sell`/`reanchor_buy` remain in the engine as inert switches.
 
 ## The objective is asset accumulation
 
@@ -1278,7 +1336,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Eleven avenues are now closed by measurement**, and none of them was a tuning question —
+**Twelve avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1294,6 +1352,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Five free per-level `stop_pcts` | the deployed AUTO search does not converge: 0/4 seeds agree after 12 000 trials |
 | Per-side `min_margin` (sell reluctant, buy eager) | −5.5 to −7.0 points median, worsening with the asymmetry; the opposite direction is zero |
 | Switching the config by regime (lateral / falling / rising), perfect labels | −18 to −19 points below the best fixed config and below the median of the 105, at two labelings; the class winners make 0–1 operations per regime, because the side held when a regime begins decides it and activation cannot change that side |
+| Removing the activation re-anchor | fixes the cycle loss (worst −79.5 % → −1.4 %) but the active configs still trail the median of the grid; on a window where the price does not come back, 105/105 sell once, never rebuy, and land at −22 % |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1356,6 +1415,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/reanchor_ablation.py` | **Is the bot viable without the activation re-anchor?** The 105 configs under production, no buy re-anchor, and no re-anchor on either side; reports the base-asset distribution, the per-`min_margin` medians, time in cash and how many configs end the window in cash. Run it on both a window where the price came back and one where it did not. Takes the 15-minute CSV path. |
 | `scripts/analysis/regime_switch_oracle.py` | **What is switching the config by regime worth, with perfect labels?** Labels the window by shape (impulse-first: M % in ≤ K days; ≥ D-day gaps are lateral), ranks all 105 configs per class from sliced continuous runs, and runs the switched config as one continuous run against the best fixed, the recommended, and the median — with and without full allocation through rallies. `--move-pct`, `--max-days`, `--min-days`, `--active`, `--labels-only`. Takes the 15-minute CSV path. |
 | `scripts/analysis/rally_gate_oracle.py` | **What is a perfect rally detector worth?** Gates whole rally periods with hindsight and forces full allocation through them (`force_hold_bars`), re-simulated continuously — never as an overlay. Reports the arms and the per-period breakdown that separates what the gate recovers from what it costs downstream. Takes the 15-minute CSV path. |
 | `scripts/analysis/volatility_regime_screen.py` | **Are high-ATR stretches more directional than low-ATR ones?** Kaufman efficiency ratio by volatility level over non-overlapping windows at five horizons, against the `1/√N` random-walk null. No engine, no configs, no fees — a descriptive measure of the market, seconds to run. Takes the data directory, not `--csv`. |

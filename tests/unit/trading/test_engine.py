@@ -447,6 +447,63 @@ def test_the_mask_does_not_re_enter_a_bot_that_already_holds_the_asset() -> None
     assert [(op.side, op.time) for op in masked] == [("buy", "t0")]
 
 
+# --- re-anchor switches ----------------------------------------------------
+
+# k_act=0 puts the activation at the entry price, so any move away from it re-anchors.
+_RALLY_AFTER_SELL = [
+    (100.0, 100.0, 100.0),  # buy @100
+    (110.0, 105.0, 108.0),  # trailing 110, stop 108; low 105 <= 108 -> sell @108
+    (130.0, 125.0, 128.0),  # in cash; price runs 20 above the 108 activation
+    (109.0, 100.0, 105.0),  # back below it
+]
+# k_act=1 (distance 2) so the sell does not activate on the entry bar itself.
+_FALL_AFTER_BUY = [
+    (100.0, 100.0, 100.0),  # buy @100; sell activation at 102
+    (99.0, 80.0, 85.0),  # holding; price runs 17 below the activation
+    (103.0, 95.0, 98.0),  # back above it
+]
+
+
+def test_both_sides_re_anchor_by_default() -> None:
+    # Production never sets them, so the live path keeps following a price that runs away.
+    assert _cfg().reanchor_sell is True and _cfg().reanchor_buy is True
+
+
+def test_with_the_buy_re_anchor_the_rebuy_chases_the_rally() -> None:
+    ops = engine.simulate_operations(_df(_RALLY_AFTER_SELL), _cfg())
+
+    # Bar 2 re-anchors the buy activation to 128, activates on its low and rebuys at 127.
+    assert [(op.side, op.price) for op in ops][:3] == [("buy", 100.0), ("sell", 108.0), ("buy", 127.0)]
+
+
+def test_without_the_buy_re_anchor_the_rebuy_waits_for_the_price_to_come_back() -> None:
+    cfg = dataclasses.replace(_cfg(), reanchor_buy=False)
+    ops = engine.simulate_operations(_df(_RALLY_AFTER_SELL), cfg)
+
+    # The activation stays at 108: bar 2 never crosses it, bar 3 does and rebuys at 102.
+    assert [(op.side, op.time, op.price) for op in ops] == [
+        ("buy", "t0", 100.0),
+        ("sell", "t1", 108.0),
+        ("buy", "t3", 102.0),
+    ]
+
+
+def test_without_the_sell_re_anchor_the_sell_waits_for_the_price_to_come_back() -> None:
+    plain = engine.simulate_operations(_df(_FALL_AFTER_BUY), _cfg(k_act=1.0))
+    kept = engine.simulate_operations(_df(_FALL_AFTER_BUY), dataclasses.replace(_cfg(k_act=1.0), reanchor_sell=False))
+
+    # Plain re-anchors to 87 on bar 1 and sells at 97; kept waits for the high to reach 102 and sells at 101.
+    assert [(op.side, op.time, op.price) for op in plain][:2] == [("buy", "t0", 100.0), ("sell", "t1", 97.0)]
+    assert [(op.side, op.time, op.price) for op in kept][:2] == [("buy", "t0", 100.0), ("sell", "t2", 101.0)]
+
+
+def test_the_buy_switch_leaves_the_sell_side_alone() -> None:
+    plain = engine.simulate_operations(_df(_FALL_AFTER_BUY), _cfg(k_act=1.0))
+    buy_off = engine.simulate_operations(_df(_FALL_AFTER_BUY), dataclasses.replace(_cfg(k_act=1.0), reanchor_buy=False))
+
+    assert [(op.side, op.price) for op in buy_off] == [(op.side, op.price) for op in plain]
+
+
 # --- per-side min_margin ---------------------------------------------------
 
 # k_act=None so activation goes through K_STOP * ATR + min_margin * price; with ATR 2.0 and
