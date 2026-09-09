@@ -1706,6 +1706,65 @@ its edge is the falling-market behaviour this document measured years ago.
 accumulates more of the base asset in every year measured; it does not protect the euro
 position, and nothing here changes that.
 
+### Two continuous windows, seven years, one rule that beats holding (2026-09-09)
+
+The owner pushed back on a reporting bias worth recording: `alcista m=0.10 k=10 d=0` was the
+best detector in the 2023-2025 continuous run and this document had never assessed it on its
+own. Two mistakes produced that. The whole `alcista` family had been diagnosed as
+"trading the crashes, not detecting ranges" from the 2021 result, and that family-level
+verdict was applied to every member without checking each. And `bajo max n=30 p=0.05 d=3` had
+been preferred on a "positive in 7 of 7 years" headline, which separates two candidates by a
+single year — a very thin basis, and it was not justified.
+
+The full per-year record, with `bajo max n=30 p=0.05 d=3` beside it:
+
+| year | `alcista m=0.10 k=10 d=0` | `bajo max n=30 p=0.05 d=3` | ceiling |
+|---|---|---|---|
+| 2019 | +9.8 % | +24.0 % | +12.5 % |
+| 2020 | +21.9 % | +13.4 % | −3.9 % |
+| 2021 | +32.5 % | +29.8 % | +9.2 % |
+| 2022 | +25.1 % | +15.5 % | +15.8 % |
+| 2023 | **−6.0 %** | +6.2 % | +21.8 % |
+| 2024 | +17.9 % | +9.2 % | +33.7 % |
+| 2025 | +19.2 % | +11.2 % | +40.3 % |
+
+`alcista` also wins the diagnostics — 94 % recall against 62 %, and 24 % rally contamination
+against 31 %. It detects better and admits fewer rally bars.
+
+**The second continuous window settles it.** 2019-01-01..2022-12-31, position never reset,
+holding **+376.38 %** in euros:
+
+| | base asset | EUR | ops |
+|---|---|---|---|
+| `alcista m=0.10 k=10 d=0` | **+95.2 %** | **+829.8 %** | 88 |
+| `alcista m=0.10 k=10 d=3` | +72.9 % | +723.5 % | 92 |
+| `bajo max n=20 p=0.05 d=3` | +60.3 % | +663.8 % | 100 |
+| `bajo max n=30 p=0.05 d=3` | +42.7 % | +579.9 % | 114 |
+| oracle ceiling | +28.9 % | | |
+
+**All four beat holding, in both windows, and the ordering is stable.** `alcista m=0.10 k=10
+d=0` leads in 2019-2022 (+95.2 %) and in 2023-2025 (+42.0 %). Two continuous windows covering
+2019-2025 with one config and one three-line causal rule, both positive against a benchmark
+that returned +376 % and +384 %.
+
+**Its one negative year did not matter.** `alcista` loses 6.0 % in 2023 scored alone, and wins
+the 2023-2025 continuous run outright. That is the segmented-scoring defect from the other
+side: a per-year table can condemn a rule as easily as it can flatter one, and only the
+continuous run is the result.
+
+**Adding confirmation hurts.** `d=3` costs 22 points against `d=0` in this window, so the
+hypothesis that 2023 failed by flip-flopping in and out of choppy rallies is not supported.
+The cause of the 2023 loss remains unmeasured.
+
+**The mechanism, stated honestly, is not the one this line set out to build.** Every detector
+here beats the oracle ceiling in 2019-2022, `alcista` by 66 points. A rule that beats the
+ceiling it approximates is not approximating it. The oracle gate closes during falls; these
+rules do not, and 2019-2022 contains the March 2020 crash, the May 2021 crash and the whole of
+2022. **What works is "stop trading while the price is more than 10 % above any close of the
+last ten days", and most of what it earns comes from trading the falls** — the conditional
+edge this document measured on eight calendar years, now harnessed by a causal rule rather
+than left to chance. Range detection remains unsolved and is not what is paying.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1766,6 +1825,7 @@ contradicted by later work that had only this document to go on.
 - **A regime gate is worth exactly what its precision on rallies is worth, and that is a forward question.** Recognising a range is easy causally (80–91 % recall from a trailing rule); knowing an impulse has *ended* is not, and that is the whole of the oracle's advantage. Do not propose another regime filter without first stating what causal quantity resolves the next seven days, because the signal screen measured that none in these data does.
 - **A detector that beats its own oracle ceiling is not approximating the oracle.** `bajo max` is positive in all seven years measured but exceeds the ceiling in 2019, 2020 and 2021 — the years with large falls — because it has no floor and trades them. Always report the ceiling beside the detector and treat any excess as a different strategy until decomposed.
 - **A causal gate that stops trading while the price makes new highs beats holding over 2023-2025 continuous.** `bajo max n=30 p=0.05 d=3` returns +27.6 % of base asset (+517.0 % EUR against holding's +383.56 %) where the production median is −76.0 % and 0 of 105 configs beat hold; `alcista m=0.10 k=10 d=0` returns +42.0 %. The rule predicts nothing and is three lines. This is the first positive multi-year continuous result in the document — the window is not held out, but the same rule earns +24.0 %, +13.4 % and +15.5 % in 2019, 2020 and 2022, which are. See "The first continuous multi-year run that beats holding".
+- **The best rule found is `alcista m=0.10 k=10 d=0`, and it wins both continuous windows.** Stop trading whenever today's close is 10 % or more above any close of the last ten days; trade otherwise, falls included. +95.2 % of base asset over 2019-2022 continuous and +42.0 % over 2023-2025, against holding's +376 % and +384 % in euros. It loses 6.0 % in 2023 scored alone and still wins the window containing it. Do not choose between candidates on a per-year win count. See "Two continuous windows, seven years, one rule that beats holding".
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
