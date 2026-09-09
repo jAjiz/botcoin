@@ -1491,19 +1491,82 @@ designed. The half that is about *us* — picking the config, and later building
 detector — has one failed test and one that no longer means much. The next measurement is the
 selection criterion, because it is cheap and the current one is demonstrably broken.
 
+### 2023 held out: the gate holds a third time, and the config region transfers (2026-09-09)
+
+Two questions were open after 2024: is there a config that works in ranges across regimes,
+and is 18-of-18 remarkable or ordinary? Both needed a year that took no part in choosing
+anything. 2023 — hold **+149.3 %** in euros, another strong rising year — was run with the
+candidates fixed in advance and never re-selected.
+
+**The gate, confirmed a third time.** Ungated: median −55.3 %, **0 of 105** beating hold.
+Gated with the reset: median **+0.7 %**, **54 of 105** beating hold, best +22.9 %. The
+decomposition repeats exactly: ungated the bot earns +16.9 % in the lateral stretches and
+gives back **−60.9 % in the rising ones**; gated, the rising contribution is −0.4 %. Three
+years, three regimes, one behaviour. In 2023 more than half the grid beats holding once the
+trends are masked out.
+
+**The base rate, which was the missing piece.** Segments won by an arbitrary config:
+
+| arm | median | p90 | max | perfect |
+|---|---|---|---|---|
+| no gate | 5/8 | 5/8 | 7/8 | 0/105 |
+| gate, reset on open | **1/8** | 5/8 | 6/8 | 0/105 |
+| gate, reset + local calibration | **1/8** | 5/8 | 6/8 | 0/105 |
+
+Under the gate the median config wins **one stretch in eight**. The grid is mostly bad at
+ranges, so the choice matters a great deal — and no config is perfect in a year it did not
+help select, which is the honest counterweight to the 18-of-18 headline.
+
+**The candidate holds on money, not on dominance.** `mm=0.020 stop=0.9`, fixed by 2024–2025:
+in 2023 it wins **5 of 8** stretches (grid median 1, grid max 6) and compounds **+23.5 %**
+against the best config in the whole grid at +23.8 % and the grid median at +0.7 %. So it
+landed at the top of the grid in a year it never saw — but the "beats hold in every stretch"
+property did **not** replicate. It wins most stretches and loses small in the rest.
+
+**And it is a region, not a lucky point.** All eight of the cross-year top configs from the
+local-calibration arm, evaluated in 2023 in that same arm:
+
+| config | wins | compound | | config | wins | compound |
+|---|---|---|---|---|---|---|
+| `mm=0.020 stop=0.9` | 5/8 | **+23.5 %** | | `mm=0.020 stop=0.8` | 5/8 | +17.4 % |
+| `mm=0.020 stop=0.5` | 5/8 | +13.1 % | | `mm=0.020 stop=0.6` | 4/8 | +12.8 % |
+| `mm=0.030 stop=0.9` | 5/8 | +14.6 % | | `mm=0.050 stop=0.5` | 4/8 | +21.5 % |
+| `mm=0.030 stop=0.8` | 4/8 | +14.5 % | | `mm=0.030 stop=0.7` | 4/8 | +12.6 % |
+
+Every one lands at 4–5 wins against a median of 1, and every compound sits between +12.6 %
+and +23.5 % against a median of +0.7 %. Eight neighbouring grid points are not eight
+independent tests — they are correlated by construction — but a lucky single point would not
+drag its neighbours with it. The `mm = 0.02–0.03` band with a wide stop is a region of the
+grid that works in ranges across three years and two regimes.
+
+**Selecting within one year still fails; selecting across two works.** The fit-on-half
+test lands at percentile 55 and 54 in 2023 and 63 in 2024, against 93 in 2025 — noise. But
+the configs chosen on the 18 stretches of 2024–2025 transferred to 2023. The difference is
+sample size: four stretches decide nothing, eighteen do.
+
+**What is now established, and what blocks it.** Established on three years: masking the
+trends removes the bot's trend exposure in both directions, more than half the grid beats
+holding once it is masked, and a region of the grid identifiable from past years lands near
+the top of a held-out one. Not established: everything downstream of a **causal detector**.
+Every number here comes from labels that look seven days into the future. The ceiling is
+real and it is worth roughly +20 % of base asset a year against holding; whether any of it
+survives a detector that must decide in real time is the only remaining question, and it is
+now the whole question.
+
 ### Still not established
 
-- **Holding by default and trading only confirmed ranges — open, and split in two.** The
-  mechanism is confirmed on two years in opposite regimes: gating to ranges takes 2024 from
-  −48.6 % of base asset and 0/105 beating hold to −0.4 % and 38/105, and takes 2025's ungated
-  +24.4 % median to a distribution whose best config makes +41.6 %. Holding through trends
-  costs the falling-year gains and removes the rising-year losses, exactly as proposed. What
-  is *not* established is choosing the config: the forward selection test lands at percentile
-  93 in 2025 and 63 in 2024, and in 2024 the criterion picked a config winning 4 of 9 lateral
-  stretches while a 7-of-9 config sat in the same grid. Compounded return is a sum where the
-  thing to select for is a rate. Next: refit selecting by segments-won, then other years, then
-  a causal detector. See "Holding by default and trading only the ranges" and "2024 confirms
-  the gate's mechanism and refutes the config choice".
+- **Holding by default and trading only confirmed ranges — open, and now blocked on one
+  thing only.** Confirmed on 2023, 2024 and 2025: masking the non-lateral bars takes the
+  ungated bot from 0/105 beating hold to 54/105 (2023) and 38/105 (2024), and the rising-
+  segment contribution from −60.9 % / −67.8 % to about zero. The config choice, which looked
+  refuted after 2024, transfers when made on enough segments: the `mm = 0.02–0.03` band with
+  a wide stop, chosen on the 18 lateral stretches of 2024–2025, lands at 4–5 wins of 8 in
+  held-out 2023 against a grid median of 1, and compounds +12.6 % to +23.5 % against a grid
+  median of +0.7 %. Selecting within a single year still fails (percentile 55, 54, 63 against
+  93). What is left is entirely the **causal detector**: every label here looks seven days
+  forward. Next: build the cheapest honest detector — a rule over past bars only — and rerun
+  these three years with it in place of the oracle. See "2023 held out: the gate holds a
+  third time, and the config region transfers".
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
   rates, cross-asset. The signal screen tested everything in the OHLCV archives, including the
   volume and trade-count columns nothing else had read, and found the null. That bounds these
@@ -1557,6 +1620,7 @@ contradicted by later work that had only this document to go on.
 - **A mask over the price series leaks unless the leg is reopened when it lifts.** A trailing stop that keeps tracking under a gate exits at a level anchored inside the mask, which is the oracle's label converted into money. Any future gated experiment must set `reset_on_unmask` and report the share of exits landing just after a lift; here that single switch was worth 159 points of apparent edge. See "Holding by default and trading only the ranges is closed".
 - **The median is the honest estimator only where selection carries no information, and that must be checked per regime, not assumed.** Avenue 1 measured selection landing at percentile 50 forward over whole years, and this document then used the median everywhere. Inside lateral stretches the same test lands at percentile 93, so the median understates what a chosen config achieves there. Report the median *and* the forward percentile of a fitted pick; where they disagree, the percentile is the one that describes production, which runs one config.
 - **Do not select a config by compounded return over a set of segments.** The compound is dominated by whichever segment was largest, so it selects for one lucky stretch; in 2024 it picked a config beating hold in 4 of 9 lateral stretches over one beating hold in 7 of 9. Select for a rate — segments won, or a per-segment median — and report both.
+- **Selection needs segments, not years.** Fitting on half of one year's lateral stretches lands at percentile 55–63 in two of three years; fitting on the 18 stretches of two full years transfers to a held-out third. Four segments decide nothing. Report the base rate of segments won alongside any consistency claim — under the gate the median config wins 1 stretch in 8, which is what makes a 5-of-8 meaningful and a 9-of-9 suspicious.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation

@@ -120,7 +120,7 @@ def evaluate(ctx, cand, points: tuple, overrides: dict, hold: float, final: floa
     }
 
 
-def selection_test(results: dict[str, list[dict]], n_lat: int) -> None:
+def selection_test(results: dict[str, list[dict]], n_lat: int, track: list[str] = ()) -> None:
     """¿Sirve de algo ELEGIR la mejor config, o la eleccion no sobrevive al siguiente rango?
 
     La mediana solo es el estimador honesto si elegir no lleva informacion. Esto lo mide en vez
@@ -149,6 +149,34 @@ def selection_test(results: dict[str, list[dict]], n_lat: int) -> None:
             f"{pct:>9.0f}% {max(test):>+13.1f}%"
         )
         named.append((arm, rows[pick], wins[pick], rows[steady], wins[steady]))
+
+    print("")
+    print("[tasa base] cuantos tramos gana una config CUALQUIERA: sin esto, un 9/9 no se puede interpretar")
+    print(f"  {'brazo':<32} {'mediana':>9} {'p90':>7} {'maximo':>8} {'configs 9/9':>13}")
+    for arm, rows in results.items():
+        wins = sorted(sum(1 for v in r["per_seg"] if v > 0) for r in rows)
+        n = len(wins)
+        print(
+            f"  {arm:<32} {wins[n // 2]:>6}/{n_lat:<2} {wins[int(0.9 * n)]:>4}/{n_lat:<2} "
+            f"{wins[-1]:>5}/{n_lat:<2} {sum(1 for w in wins if w == n_lat):>9}/{n}"
+        )
+
+    if track:
+        print("")
+        print("[seguimiento] configs fijadas fuera de esta ventana y evaluadas aqui SIN volver a elegir")
+        for arm, rows in results.items():
+            print(f"  {arm}")
+            print(f"    {'config':<20} {'gana':>7} {'compuesto':>11} {'mediana/tramo':>15} {'ops':>6}")
+            for sig in track:
+                hit = [r for r in rows if gsh._signature(r["cand"]) == sig]
+                if not hit:
+                    continue
+                r = hit[0]
+                per = sorted(r["per_seg"])
+                print(
+                    f"    {sig:<20} {sum(1 for v in per if v > 0):>4}/{n_lat:<2} "
+                    f"{rso._compound(r['per_seg']):>+10.1f}% {per[len(per) // 2]:>+14.2f}% {r['ops']:>6}"
+                )
 
     print("")
     print("[quien es]  la elegida por el ajuste y la mas consistente NO tienen por que coincidir")
@@ -224,28 +252,67 @@ def decompose(ctx, arms: dict, results: dict, segs, lifts: set[int]) -> None:
         )
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("csv")
-    ap.add_argument("--cal-start", default="2024-07-01")
-    ap.add_argument("--start", default="2025-01-01")
-    ap.add_argument("--end", default="2025-12-31")
-    ap.add_argument("--move", type=float, default=0.10)
-    ap.add_argument("--max-days", type=int, default=7)
-    ap.add_argument("--min-days", type=int, default=7)
-    ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
-    args = ap.parse_args()
+def cross_window(per_window: list[tuple[str, dict[str, list[dict]], int]], top: int) -> None:
+    """Que configuraciones ganan tramos laterales de forma consistente en TODAS las ventanas.
 
-    cal_t0 = int(pd.Timestamp(args.cal_start).timestamp())
-    t1 = int(pd.Timestamp(args.end).timestamp()) + 86_399
-    print(f"[datos] {args.csv}")
+    El criterio es tramos ganados, no compuesto: el compuesto es una suma que domina el tramo
+    mas grande, y en 2024 eso eligio una config de 4/9 habiendo una de 7/9 en la misma rejilla.
+    Se ordena por tramos ganados sobre el total de ventanas y se desempata por la mediana de la
+    acumulacion por tramo, que tambien es una tasa y no una suma.
+    """
+    arms = per_window[0][1].keys()
+    total_segs = sum(n for _, _, n in per_window)
+    for arm in arms:
+        rows = []
+        for i, cand in enumerate(gsh.candidates()):
+            per = [w[arm][i]["per_seg"] for _, w, _ in per_window]
+            flat = [v for chunk in per for v in chunk]
+            wins = [sum(1 for v in chunk if v > 0) for chunk in per]
+            ordered = sorted(flat)
+            rows.append(
+                {
+                    "sig": gsh._signature(cand),
+                    "wins": sum(wins),
+                    "per_win": wins,
+                    "median": ordered[len(ordered) // 2] if ordered else 0.0,
+                    "per_comp": [rso._compound(chunk) for chunk in per],
+                    "ops": [w[arm][i]["ops"] for _, w, _ in per_window],
+                }
+            )
+        rows.sort(key=lambda r: (r["wins"], r["median"]), reverse=True)
+        print("")
+        print(f"[consistencia entre ventanas]  {arm}")
+        head = f"  {'config':<20} {'gana':>7}"
+        for label, _, n in per_window:
+            head += f" {label + ' (/' + str(n) + ')':>12}"
+        head += f" {'mediana/tramo':>14}"
+        for label, _, _ in per_window:
+            head += f" {'comp ' + label:>12}"
+        head += f" {'ops':>10}"
+        print(head)
+        for r in rows[:top]:
+            line = f"  {r['sig']:<20} {r['wins']:>4}/{total_segs:<2}"
+            for w in r["per_win"]:
+                line += f" {w:>12}"
+            line += f" {r['median']:>+13.2f}%"
+            for c in r["per_comp"]:
+                line += f" {c:>+11.1f}%"
+            line += f" {'/'.join(str(o) for o in r['ops']):>10}"
+            print(line)
+
+
+def run_window(args, start: str, end: str) -> tuple[dict[str, list[dict]], int]:
+    """Un año completo: marco, calibracion, tramos, y las 105 configs en los cuatro brazos."""
+    cal_start = (pd.Timestamp(start) - pd.DateOffset(months=6)).strftime("%Y-%m-%d")
+    cal_t0 = int(pd.Timestamp(cal_start).timestamp())
+    t1 = int(pd.Timestamp(end).timestamp()) + 86_399
     frame = rgo.build_frame(args.csv, cal_t0, t1)
     gsh._install_ohlc(frame)
     print("")
     print(f"[calibracion] calendario global cada {args.recalib_bars} velas (tarda minutos)", flush=True)
     gsh._install_calibration_cache(frame, args.recalib_bars)
 
-    first_bar = int((frame["dtime"] >= pd.Timestamp(args.start)).idxmax())
+    first_bar = int((frame["dtime"] >= pd.Timestamp(start)).idxmax())
     ctx = gsh._context(frame, first_bar, len(frame) - 1, gsh._dtime(frame, len(frame) - 1))
     hold = (float(ctx.df.iloc[-1]["close"]) / float(ctx.df.iloc[0]["close"]) - 1.0) * 100.0
     final = float(ctx.df.iloc[-1]["close"])
@@ -285,12 +352,39 @@ def main() -> int:
         print(f"  {arm:<32} ({time.perf_counter() - t0:.0f}s)", flush=True)
     report(results)
     decompose(ctx, arms, results, segs, {s.first_bar for s in segs if s.label == "lateral"})
-    selection_test(results, len(lat_idx))
+    selection_test(results, len(lat_idx), args.track)
+    return results, len(lat_idx)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("csv")
+    ap.add_argument("--years", nargs="*", type=int, default=[2024, 2025])
+    ap.add_argument("--move", type=float, default=0.10)
+    ap.add_argument("--max-days", type=int, default=7)
+    ap.add_argument("--min-days", type=int, default=7)
+    ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
+    ap.add_argument("--top", type=int, default=8)
+    ap.add_argument(
+        "--track", nargs="*", default=[], help="Firmas a seguir en cada ventana, p. ej. 'mm=0.020 stop=0.9'."
+    )
+    args = ap.parse_args()
+
+    print(f"[datos] {args.csv}")
+    per_window = []
+    for year in args.years:
+        print("")
+        print(f"================ {year} ================", flush=True)
+        results, n_lat = run_window(args, f"{year}-01-01", f"{year}-12-31")
+        per_window.append((str(year), results, n_lat))
+
+    if len(per_window) > 1:
+        cross_window(per_window, args.top)
 
     print("")
     print("[lectura] La puerta solo puede ganar si el bot rentabiliza los laterales: fuera de ellos")
-    print("          mantiene, y mantener es 0 % por construccion. Un brazo con puerta por debajo de")
-    print("          cero significa que operar dentro de los laterales PIERDE, con etiquetas perfectas.")
+    print("          mantiene, y mantener es 0 % por construccion. En la tabla entre ventanas, una")
+    print("          config buena de verdad gana tramos en LAS DOS y no solo en la que mas aporta.")
     return 0
 
 
