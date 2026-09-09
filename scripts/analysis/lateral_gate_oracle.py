@@ -135,16 +135,28 @@ def selection_test(results: dict[str, list[dict]], n_lat: int) -> None:
         f"  {'brazo':<32} {'mejor consistencia':>19} {'elegida: ajuste':>16} {'prueba':>9} "
         f"{'percentil':>10} {'mejor posible':>14}"
     )
+    named = []
     for arm, rows in results.items():
         wins = [sum(1 for v in r["per_seg"] if v > 0) for r in rows]
         fit = [rso._compound(r["per_seg"][:cut]) for r in rows]
         test = [rso._compound(r["per_seg"][cut:]) for r in rows]
         pick = max(range(len(rows)), key=lambda i: fit[i])
+        steady = max(range(len(rows)), key=lambda i: (wins[i], test[i]))
         ranked = sorted(test)
         pct = 100.0 * sum(1 for v in ranked if v < test[pick]) / len(ranked)
         print(
             f"  {arm:<32} {max(wins):>13}/{n_lat:<5} {fit[pick]:>+15.1f}% {test[pick]:>+8.1f}% "
             f"{pct:>9.0f}% {max(test):>+13.1f}%"
+        )
+        named.append((arm, rows[pick], wins[pick], rows[steady], wins[steady]))
+
+    print("")
+    print("[quien es]  la elegida por el ajuste y la mas consistente NO tienen por que coincidir")
+    print(f"  {'brazo':<32} {'elegida por el ajuste':<28} {'gana':>6}   {'la mas consistente':<22} {'gana':>6}")
+    for arm, picked, pw, steady, sw in named:
+        print(
+            f"  {arm:<32} {gsh._signature(picked['cand']):<22} {picked['ops']:>3} ops {pw:>4}/{n_lat:<2} "
+            f"  {gsh._signature(steady['cand']):<16} {steady['ops']:>3} ops {sw:>4}/{n_lat}"
         )
 
 

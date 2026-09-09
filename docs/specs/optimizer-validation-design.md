@@ -1431,19 +1431,79 @@ worse than not gating", which rested on the median and is now the wrong lens for
 arm whose selection demonstrably carries information. This avenue is **not closed** — it is
 the only open one in this document with a measurement pointing in its favour.
 
+### 2024 confirms the gate's mechanism and refutes the config choice (2026-09-09)
+
+2025 was a falling year, which is the bot's favourable case, so the gate was re-run on 2024:
+hold **+133.5 %** in euros, and the ungated bot's worst measured year, −48.6 % of base asset
+with **0 of 105** configs beating hold. The owner's claim was that giving up the falling-year
+gains also gives up the rising-year losses. Labels: 9 lateral stretches, 183 days, 50 % of the
+year (against 74 % in 2025), 9 rising and 3 falling.
+
+| arm | median | best | beats hold | ops | in cash |
+|---|---|---|---|---|---|
+| no gate | **−48.6 %** | −29.9 % | **0/105** | 26.0 | 86 % |
+| gate, live anchor | +2.5 % | +82.9 % | 100/105 | 20.4 | 12 % |
+| gate, reset on open | **−0.4 %** | **+26.4 %** | **38/105** | 13.1 | 5 % |
+| gate, reset + local calibration | −0.4 % | +33.7 % | 37/105 | 14.9 | 6 % |
+
+**The mechanism is confirmed, and the size of it is the finding.** A −48.6 % median year
+becomes −0.4 %, and 0 of 105 beating hold becomes 38 of 105. The decomposition names the
+transfer exactly: ungated, the bot earns +54.0 % inside the lateral stretches and gives back
+**−67.8 % in the rising ones**; gated, the rising contribution is −0.7 %. The claim that
+holding through trends converts the rising-year losses to zero is measured and true, on the
+year that punishes the strategy hardest. The leak diagnostic replicates too — 8 of 20 sells
+at the gate's edge with the anchor live, 1 of 12 with the reset, against 0 of 13 ungated.
+
+**And the config choice does not transfer.** The selection test (fit on the first 4 lateral
+stretches, score the pick on the last 5) lands at **percentile 63** with +3.8 % of the +21.5 %
+available, against percentile 93 and +25.7 of +30.5 in 2025. Two windows, one hit and one
+miss, which is what selection looks like when it carries no information. The 2025 result must
+now be read as the draw it was: at p about 0.07 for a single test, one of two windows landing
+high is unremarkable.
+
+**But the failure has a named cause, and it is not the same as "selection is impossible".**
+Naming the configs shows the criterion picking against itself:
+
+| arm | picked by the fit | wins | most consistent | wins |
+|---|---|---|---|---|
+| no gate | `mm=0.040 stop=0.5`, 28 ops | 5/9 | `mm=0.020 stop=0.7`, 42 ops | 7/9 |
+| gate, reset on open | `mm=0.060 stop=0.6`, 8 ops | **4/9** | `mm=0.020 stop=0.6`, 24 ops | **7/9** |
+| gate, reset + local | `mm=0.050 stop=0.5`, 10 ops | 8/9 | `mm=0.020 stop=0.9`, 22 ops | 9/9 |
+
+Selecting by compounded return over the fit half picked a config that beats hold in **4 of 9**
+stretches while one beating hold in **7 of 9** sat in the same grid. Compounded return is
+dominated by whichever stretch happened to be largest; it is a sum, and the thing worth
+selecting for is a rate. That is a defect of the selection rule, measured, and it is testable
+on its own — refit selecting by segments-won rather than by compound and see whether the
+percentile moves. Until that is run, "choosing works inside ranges" is unsupported and
+"choosing cannot work inside ranges" is equally unsupported.
+
+**One caution for reading the percentile column at all.** The ungated arm reaches percentile
+98 in 2024 — inside a year where every one of its 105 configs loses to hold. A percentile is
+a rank within a distribution, not a return, and the selection table scores *lateral segments
+only*, which is the whole strategy for a gated arm and a fragment of it for an ungated one.
+Neither number should be read across arms.
+
+**Where this leaves the avenue.** The half that is about the *bot* is confirmed on two years
+in opposite regimes: gating to ranges removes the trend exposure in both directions, and in
+base asset that is worth +48 points in a rising year and costs the falling-year gains, as
+designed. The half that is about *us* — picking the config, and later building a causal
+detector — has one failed test and one that no longer means much. The next measurement is the
+selection criterion, because it is cheap and the current one is demonstrably broken.
+
 ### Still not established
 
-- **Holding by default and trading only confirmed ranges — the one open avenue with a
-  measurement in its favour.** With perfect labels on 2025 the gated arm's lateral harvest is
-  no better than the ungated one's (+41.9 % against +43.7 %) and the gate gives up the
-  +14.6 % the bot earns in falling segments, so on totals it loses. But selection *inside*
-  ranges works where selection across years does not: fitting on 4 lateral stretches and
-  testing on 5 lands at percentile 93 against 63 ungated, and a config beats hold in 9 of 9
-  stretches. One window, nine segments, one decision, p about 0.07 — a hint at the edge of
-  noise. What would settle it: the same forward split scored over the whole span (the current
-  table scores lateral slices, which flatters the gated arm by omitting where the ungated one
-  earns), then the same on other years, and only then a causal detector. See "Holding by
-  default and trading only the ranges".
+- **Holding by default and trading only confirmed ranges — open, and split in two.** The
+  mechanism is confirmed on two years in opposite regimes: gating to ranges takes 2024 from
+  −48.6 % of base asset and 0/105 beating hold to −0.4 % and 38/105, and takes 2025's ungated
+  +24.4 % median to a distribution whose best config makes +41.6 %. Holding through trends
+  costs the falling-year gains and removes the rising-year losses, exactly as proposed. What
+  is *not* established is choosing the config: the forward selection test lands at percentile
+  93 in 2025 and 63 in 2024, and in 2024 the criterion picked a config winning 4 of 9 lateral
+  stretches while a 7-of-9 config sat in the same grid. Compounded return is a sum where the
+  thing to select for is a rate. Next: refit selecting by segments-won, then other years, then
+  a causal detector. See "Holding by default and trading only the ranges" and "2024 confirms
+  the gate's mechanism and refutes the config choice".
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
   rates, cross-asset. The signal screen tested everything in the OHLCV archives, including the
   volume and trade-count columns nothing else had read, and found the null. That bounds these
@@ -1496,6 +1556,7 @@ contradicted by later work that had only this document to go on.
 - **The conditional edge is now separated cleanly, 8 years out of 8.** `mm=0` with the capped re-anchor beats holding in exactly the three calendar years 2018-2025 in which holding lost money, and loses in exactly the five in which it made money; time in cash is bimodal, 13-22 % in the winners against 77-99 % in the losers. It is a conditional instrument, not a strategy, and the condition is unpredictable by this document's own measurements. See "One config, eight years, only against hold".
 - **A mask over the price series leaks unless the leg is reopened when it lifts.** A trailing stop that keeps tracking under a gate exits at a level anchored inside the mask, which is the oracle's label converted into money. Any future gated experiment must set `reset_on_unmask` and report the share of exits landing just after a lift; here that single switch was worth 159 points of apparent edge. See "Holding by default and trading only the ranges is closed".
 - **The median is the honest estimator only where selection carries no information, and that must be checked per regime, not assumed.** Avenue 1 measured selection landing at percentile 50 forward over whole years, and this document then used the median everywhere. Inside lateral stretches the same test lands at percentile 93, so the median understates what a chosen config achieves there. Report the median *and* the forward percentile of a fitted pick; where they disagree, the percentile is the one that describes production, which runs one config.
+- **Do not select a config by compounded return over a set of segments.** The compound is dominated by whichever segment was largest, so it selects for one lucky stretch; in 2024 it picked a config beating hold in 4 of 9 lateral stretches over one beating hold in 7 of 9. Select for a rate — segments won, or a per-segment median — and report both.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
