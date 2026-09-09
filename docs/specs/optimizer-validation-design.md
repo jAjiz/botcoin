@@ -1666,6 +1666,46 @@ available in this rule space and still loses. Every remaining path either needs 
 information (measured absent) or reduces to trading falls (a strategy the owner set aside on
 purpose). The gate stays closed as an avenue.
 
+### The first continuous multi-year run that beats holding (2026-09-09)
+
+The owner corrected a misreading: the falling-market edge was never set aside, it was being
+held back until the detector was validated separately. With it back in, the gate is a causal
+rule with **no floor** — it closes only on the rally side, so falls are traded. Scored on one
+continuous run over 2023-01-01..2025-12-31, the study's closing window, where holding makes
+**+383.56 %** in euros and the production grid's median is **−76.0 %** with 0 of 105 beating
+hold:
+
+| | base asset | EUR | ops |
+|---|---|---|---|
+| oracle ceiling (perfect labels) | +87.9 % | | |
+| `alcista m=0.10 k=10 d=0` | **+42.0 %** | **+586.8 %** | 66 |
+| `bajo max n=30 p=0.05 d=3` | **+27.6 %** | **+517.0 %** | 34 |
+| `bajo max n=20 p=0.05 d=3` | +7.9 % | +421.7 % | 18 |
+| production median (105 configs) | −76.0 % | | 57 |
+
+**This is the first configuration in the study to beat holding over a continuous multi-year
+run**, and the margin is not small — a swing of more than a hundred points against the
+production median on the identical window, with a causal rule that predicts nothing.
+
+**The per-year table overstated it badly, exactly as the harness rule says it would.**
+`bajo max n=30 p=0.05 d=3` is positive in all seven years measured separately (+24.0, +13.4,
++29.8, +15.5, +6.2, +9.2, +11.2), and chaining those factors gives +172 %. The continuous run
+gives **+27.6 %** — a 144-point overstatement, because each yearly run restarts the position
+in January on whichever side is convenient. Segmented scoring is not a conservative
+approximation; here it inflated the answer by a factor of six.
+
+**What is and is not established.** Held out honestly: `bajo max n=30 p=0.05 d=3` earns
++24.0 % (2019), +13.4 % (2020) and +15.5 % (2022) in years that took no part in selecting it.
+Not held out: this continuous window, which the rule was chosen after seeing. The mechanism is
+also *not* what the gate set out to build — the detector beats its own oracle ceiling in 2019,
+2020 and 2021, and captures only 31 % of it here, so what works is not range detection. It is
+the much cruder **"do not trade while the price is making new highs"**, and a large part of
+its edge is the falling-market behaviour this document measured years ago.
+
+**And it remains long-biased.** In euros it loses 56 % in 2022 against holding's −62 %. It
+accumulates more of the base asset in every year measured; it does not protect the euro
+position, and nothing here changes that.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1708,6 +1748,7 @@ contradicted by later work that had only this document to go on.
   fits, and defect 5 explains structurally why. Dropping it hands the whole trial budget to
   `min_margin`. This is an experiment scope decision, not the strategy change in defect 5.
 - **Scoring is one continuous run, never restarted segments.** See the harness defect, now
+  Measured again, and the size is worth recording: chaining `bajo max`'s seven yearly factors gives +172 % of base asset where the continuous run gives +27.6 %. Restarting the position each January inflated the answer six-fold.
   fixed in the engine.
 - **The base asset, not euros, is the objective.** See the next section.
 - **The current optimizer is closed as a research tool, and free per-level stops with it.** The deployed AUTO search on the fixed engine returns four different answers from four seeds; see "Free per-level stops do not converge". Any remaining question goes through the exhaustive sweep and the forward-percentile test.
@@ -1724,6 +1765,7 @@ contradicted by later work that had only this document to go on.
 - **Selection needs segments, not years.** Fitting on half of one year's lateral stretches lands at percentile 55–63 in two of three years; fitting on the 18 stretches of two full years transfers to a held-out third. Four segments decide nothing. Report the base rate of segments won alongside any consistency claim — under the gate the median config wins 1 stretch in 8, which is what makes a 5-of-8 meaningful and a 9-of-9 suspicious.
 - **A regime gate is worth exactly what its precision on rallies is worth, and that is a forward question.** Recognising a range is easy causally (80–91 % recall from a trailing rule); knowing an impulse has *ended* is not, and that is the whole of the oracle's advantage. Do not propose another regime filter without first stating what causal quantity resolves the next seven days, because the signal screen measured that none in these data does.
 - **A detector that beats its own oracle ceiling is not approximating the oracle.** `bajo max` is positive in all seven years measured but exceeds the ceiling in 2019, 2020 and 2021 — the years with large falls — because it has no floor and trades them. Always report the ceiling beside the detector and treat any excess as a different strategy until decomposed.
+- **A causal gate that stops trading while the price makes new highs beats holding over 2023-2025 continuous.** `bajo max n=30 p=0.05 d=3` returns +27.6 % of base asset (+517.0 % EUR against holding's +383.56 %) where the production median is −76.0 % and 0 of 105 configs beat hold; `alcista m=0.10 k=10 d=0` returns +42.0 %. The rule predicts nothing and is three lines. This is the first positive multi-year continuous result in the document — the window is not held out, but the same rule earns +24.0 %, +13.4 % and +15.5 % in 2019, 2020 and 2022, which are. See "The first continuous multi-year run that beats holding".
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation

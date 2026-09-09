@@ -265,8 +265,8 @@ def daily_hl(df: pd.DataFrame) -> tuple[list[float], list[float]]:
     return g["high"].max().tolist(), g["low"].min().tolist()
 
 
-def build(args, year: int) -> dict:
-    start, end = f"{year}-01-01", f"{year}-12-31"
+def build(args, year, span: tuple[str, str] | None = None) -> dict:
+    start, end = span if span else (f"{year}-01-01", f"{year}-12-31")
     cal_start = (pd.Timestamp(start) - pd.DateOffset(months=6)).strftime("%Y-%m-%d")
     t0 = int(pd.Timestamp(cal_start).timestamp())
     t1 = int(pd.Timestamp(end).timestamp()) + 86_399
@@ -324,6 +324,8 @@ def main() -> int:
     ap.add_argument("--years", nargs="*", type=int, default=[2024, 2025, 2023])
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     ap.add_argument("--top", type=int, default=10)
+    ap.add_argument("--span", nargs=2, default=None, help="Una corrida continua START END en vez de por años.")
+    ap.add_argument("--only", nargs="*", default=[], help="Detectores a evaluar en modo --span.")
     ap.add_argument("--local-top", type=int, default=0, help="Reevalua los N mejores con calibracion local.")
     ap.add_argument(
         "--holdout", nargs="*", type=int, default=[2023], help="Años excluidos del ranking (por defecto 2023)."
@@ -332,6 +334,30 @@ def main() -> int:
 
     print(f"[datos] {args.csv}   config fija {gsh._signature(CONFIG)}")
     per_year = {}
+    if args.span:
+        # Una sola corrida continua: la posicion NO se reinicia cada enero, que es la unica
+        # forma valida de leer varios años juntos (ver el defecto de puntuacion por segmentos).
+        label = f"{args.span[0][:4]}-{args.span[1][:4]}"
+        print("")
+        print(f"================ {label} continuo ================", flush=True)
+        w = build(args, label, span=tuple(args.span))
+        print(f"  hold {w['hold']:+.2f} %  |  {len(w['closes'])} dias")
+        olat = [x for x in w["oracle"] if x.label == "lateral"]
+        omask = mask_of(olat, len(w["ctx"].df))
+        print(
+            f"  techo oracular: {run_config(w['ctx'], w['ctx'].calibration_points, omask, w['hold'], w['final'])['base']:+.1f} %"
+        )
+        for name, flags in detectors(w["closes"], w["highs"], w["lows"]).items():
+            if name not in args.only:
+                continue
+            segs = segments_from(w["days"], flags, w["ctx"].df)
+            res = run_config(
+                w["ctx"], w["ctx"].calibration_points, mask_of(segs, len(w["ctx"].df)), w["hold"], w["final"]
+            )
+            eur = (1.0 + res["base"] / 100.0) * (1.0 + w["hold"] / 100.0) - 1.0
+            print(f"  {name:<28} activo base {res['base']:+8.1f} %   EUR {eur * 100.0:+8.1f} %   {res['ops']} ops")
+        return 0
+
     for year in args.years:
         print("")
         print(f"================ {year} ================", flush=True)
