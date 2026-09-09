@@ -1330,6 +1330,68 @@ the bot cannot supply that view. Chaining the yearly factors is not a valid eigh
 result (each year restarts the position; see the harness defect on segmented scoring); the
 continuous three-year run is the one that stands, at −76 %.
 
+### Holding by default and trading only the ranges is closed (2026-09-09)
+
+The owner's proposal after the eight-year table, and it is not any of the three gates already
+measured: invert the default. Outside a lateral stretch the bot **holds the asset and does not
+trade** -- which is exactly 0 % in base asset by construction -- and trading is enabled only
+once a range is confirmed. Every earlier gate defaulted to trading (the regime oracle switched
+configs but always traded; the rally gate forced allocation during rallies only). The
+inversion also fixes what killed the regime oracle: the bot now enters every lateral stretch
+*holding the asset*, which is the correct side to harvest a range from.
+
+`scripts/analysis/lateral_gate_oracle.py` measures the ceiling with perfect labels -- no
+detector, since a detector can only lose against an oracle. The gate is `force_hold_bars` over
+every non-lateral bar, labels from `regime_switch_oracle` (M = 10 %, K = 7 d, D = 7 d), XBTEUR
+2025 (hold −17.41 %). The year labels out at 9 lateral stretches, 271 days, **74 % of the
+year**, median 24 days -- the owner's premise about how much time an asset spends ranging is
+correct. Four arms, the last two testing the two modifications he proposed alongside it:
+
+| arm | median | best | beats hold | ops | in cash |
+|---|---|---|---|---|---|
+| no gate (reference) | +24.4 % | +59.0 % | 75/105 | 23.7 | 38 % |
+| gate, live anchor | **+40.2 %** | **+200.6 %** | 87/105 | 23.5 | 20 % |
+| gate, reset on open | −0.4 % | +41.6 % | 38/105 | 18.4 | 8 % |
+| gate, reset + local calibration | −0.4 % | +55.1 % | 40/105 | 21.0 | 8 % |
+
+**The +200.6 % is the oracle leaking, and the arms are built to prove it.** Under the mask the
+trailing stop keeps tracking, so it follows an impulse to its high; when the oracle declares
+the impulse over and opens the gate, the bot exits at a stop anchored to a top nobody could
+know in advance. `reset_on_unmask` (a new inert `EngineConfig` switch, off in production)
+reopens the leg at the bar the gate lifts and changes **nothing else**. That single variable
+takes the best config from +200.6 % to +41.6 % and the share of sells landing within a day of
+a gate opening from **9 of 21 to 1 of 8** — against 0 of 5 for the ungated arm. A controlled
+comparison isolating the one path that carries information out of the mask.
+
+**The honest arm is worse than not gating at all**, and the decomposition says exactly why:
+
+| arm (best config) | lateral | rising | falling | sells < 1 d after opening |
+|---|---|---|---|---|
+| no gate | **+43.7 %** | −1.5 % | **+14.6 %** | 0/5 |
+| gate, live anchor | +202.9 % | −0.7 % | 0.0 % | 9/21 |
+| gate, reset on open | **+41.9 %** | +0.2 % | −0.4 % | 1/8 |
+| gate, reset + local calibration | +54.8 % | +0.2 % | 0.0 % | 0/8 |
+
+**Gating does not improve the range harvest — it is the same harvest.** Ungated, the bot earns
++43.7 % inside the lateral stretches; gated with a clean restart, +41.9 % inside those same
+stretches. The premise that the trends damage the harvest is measured and false: the harvest is
+unchanged. What the gate does is delete the falling-segment contribution, +14.6 %, because a
+falling impulse is not lateral and the gate is shut through it. The proposal trades away the
+only segment class the bot reliably wins in, and buys nothing with it.
+
+That is the eight-year table restated at segment resolution. The bot's gains come from falling
+markets; a lateral-only gate is fully in the asset through every fall.
+
+**The two modifications, measured on their own terms.** Calibrating a range only from data
+since the range began (the owner's hypothesis that the prior impulse pollutes the calibration)
+does not move the distribution — median identical, 38/105 to 40/105 — and moves the best
+config from +41.6 % to +55.1 %, an in-sample maximum over 105 draws, with 168 of 506 local
+points falling back to the global calibration for want of events. Not evidence. The stop
+question does move: the best config goes from `mm=0.08 stop=0.8` (10 ops) ungated to
+`mm=0.06 stop=0.5` (16 ops) gated — a narrower barrier and a much shorter stop, the direction
+range-harvesting predicts. It is one in-sample maximum, so it is a hint about where to look,
+not a result.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1382,6 +1444,7 @@ contradicted by later work that had only this document to go on.
 - **A high AUC against a pivot-derived label is not evidence of a signal.** Pivots alternate, so "which leg am I on" is knowable from the trailing return and carries the label with it; any labelling scheme built from future extrema must be checked against a fixed-horizon forward label and a money test before it is believed. This cost one run that looked like a discovery. See "Reverse-engineering the strategy from ideal trades is closed".
 - **There is no config recommendation, and the previous one was not skill.** `mm=0.05/0.9` loses 78 % of the base asset over 2023–2025 in four operations; it made one sell in the one year that fell. No config in the grid beats holding in 2023, 2024, or the three years continuous, under any re-anchor arm. See "Three years, and what the recommended config actually does".
 - **The conditional edge is now separated cleanly, 8 years out of 8.** `mm=0` with the capped re-anchor beats holding in exactly the three calendar years 2018-2025 in which holding lost money, and loses in exactly the five in which it made money; time in cash is bimodal, 13-22 % in the winners against 77-99 % in the losers. It is a conditional instrument, not a strategy, and the condition is unpredictable by this document's own measurements. See "One config, eight years, only against hold".
+- **A mask over the price series leaks unless the leg is reopened when it lifts.** A trailing stop that keeps tracking under a gate exits at a level anchored inside the mask, which is the oracle's label converted into money. Any future gated experiment must set `reset_on_unmask` and report the share of exits landing just after a lift; here that single switch was worth 159 points of apparent edge. See "Holding by default and trading only the ranges is closed".
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -1712,7 +1775,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Seventeen avenues are now closed by measurement**, and none of them was a tuning question —
+**Eighteen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1735,6 +1798,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Overlaying entry timing on a monthly DCA | buying the whole contribution on day one wins in all three windows; splitting weekly or daily costs 0.5–2.9 points and dip limits 0.7–5.8, because every arm delays exposure against a positive drift. The fee lever is the only positive one measured anywhere in the study: +0.24 % over eight years moving from taker to maker |
 | The bot's trailing entry as the DCA's buy rule | without a fall requirement it triggers in a median 0.8-6.8 hours and never once reaches a month's close untriggered, so it degenerates into buying on day one (±0.16 %); with one, 87 of 96 months enter below the day-one price and it still finishes 0.6-2.2 points behind, because the 7-9 months that never trigger buy after the rally. A high hit rate with a negative expectation |
 | Immediate activation (`k_act = 0`) | the worst configuration the strategy has: 807 operations in 2025 for a median −95.3 % of base asset, 0/5 beating hold, in the one year holding lost money. The branch is monotone in the multiplier and only `k_act = 16` (15 ops) beats hold, which is the standing "trade less" result rather than anything about the branch |
+| Holding by default and trading only confirmed ranges | with perfect labels and a clean restart the gate is *worse* than not gating (median −0.4 % against +24.4 %, 38/105 against 75/105). The decomposition says why: the lateral harvest is the same gated or not (+41.9 % against +43.7 %), so the gate buys nothing and deletes the +14.6 % the bot earns in the falling segments. The variant that looks spectacular (+200.6 %) is the oracle leaking through a stop that trailed under the mask |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -1797,6 +1861,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/lateral_gate_oracle.py` | **What is the ceiling on holding by default and trading only the ranges?** `force_hold_bars` over every non-lateral bar with impulse labels, four arms (no gate; gate with the anchor left live; gate with `reset_on_unmask`; plus a calibration that only sees its own range), 105 configs each, scored in base asset against holding. Decomposes each arm's best config by segment class and counts the exits landing within a day of a gate opening, which is what exposes a leaking mask. About 15 minutes for one year. |
 | `scripts/analysis/capped_mm0_across_years.py` | **How does one configuration behave on intervals nobody chose?** A single config (`mm=0`, `stop=0.9`, capped re-anchor) over calendar years, scored in base asset against holding and nothing else, at two fee levels, with operation count and time in cash beside it. Deliberately has no grid and no median: it answers "what does this do", not "which is best". About 9 minutes per year, calibration-bound. |
 | `scripts/analysis/kact_and_free_stops.py` | **The two gaps in the record: `k_act = 0` and the five free stops.** Runs the 105 shared-stop reference, the whole `k_act` branch broken out by multiplier, and a random sample of the free-stop space on one shared calibration schedule and window, scored in base asset. Reports the distribution and not only the best, because the best is where the selection effect hides. About 15 minutes for one year at 600 samples. |
 | `scripts/analysis/dca_trailing_entry.py` | **Does the bot's trailing entry place the monthly buy better?** The live activation mechanism applied to the DCA's entry on 15-minute bars: run the low from the month's open, buy on a `bounce` x ATR reversal, optionally after a `fall` x ATR drop, market at the month's close otherwise. Reports median hours waited and the share of months entered below the day-one price beside the money, because the rule can win on both and lose on the third. |

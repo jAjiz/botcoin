@@ -447,6 +447,58 @@ def test_the_mask_does_not_re_enter_a_bot_that_already_holds_the_asset() -> None
     assert [(op.side, op.time) for op in masked] == [("buy", "t0")]
 
 
+# --- reset when the mask lifts ---------------------------------------------
+
+# Holding the asset through the mask leaves the stop trailing at the masked highs. These rows
+# make that visible: bars 1-2 run the price up under the mask, bar 3 lifts it without reaching
+# a fresh activation, and bar 4 rises again.
+_GATE_LIFT = [
+    (100.0, 100.0, 100.0),  # entry; k_act=1 puts the sell activation at 102
+    (130.0, 128.0, 129.0),  # masked: activates, trails 130, stop 128, exit deferred
+    (131.0, 129.0, 130.0),  # masked: trails 131, stop 129, exit deferred
+    (121.0, 120.0, 121.0),  # mask lifts here
+    (140.0, 139.0, 140.0),
+]
+
+
+def _with_reset(cfg: engine.EngineConfig, bars) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, force_hold_bars=frozenset(bars), reset_on_unmask=True)
+
+
+def test_the_unmask_reset_is_off_by_default() -> None:
+    # Production never gates, so the switch must be inert unless an experiment turns it on.
+    assert _cfg().reset_on_unmask is False
+
+
+def test_without_the_reset_the_lifted_mask_sells_at_a_stop_anchored_under_it() -> None:
+    # The rally-gate result: the exit lands at 129, a level trailed while the gate was shut.
+    ops = engine.simulate_operations(_df(_GATE_LIFT), _with_hold(_cfg(k_act=1.0), [1, 2]))
+
+    assert [(op.side, op.price) for op in ops] == [("buy", 100.0), ("sell", 129.0)]
+
+
+def test_the_reset_reopens_the_leg_at_the_bar_the_mask_lifts() -> None:
+    # With the anchor moved to bar 3's price the activation sits at 123, which bar 3 never reaches.
+    ops = engine.simulate_operations(_df(_GATE_LIFT), _with_reset(_cfg(k_act=1.0), [1, 2]))
+
+    assert [(op.side, op.price) for op in ops] == [("buy", 100.0)]
+
+
+def test_the_reset_books_no_operation_of_its_own() -> None:
+    # Re-anchoring is bookkeeping, not a trade: the bot already holds the asset across the lift.
+    ops = engine.simulate_operations(_df(_GATE_LIFT), _with_reset(_cfg(k_act=1.0), [1, 2]), fee_rate=0.01)
+
+    assert [op.side for op in ops] == ["buy"]
+
+
+def test_the_reset_changes_nothing_without_a_mask() -> None:
+    # No masked bar means no lift, so a run with the switch on must match production exactly.
+    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
+    switched = engine.simulate_operations(_df(_ROUND_TRIP), dataclasses.replace(_cfg(), reset_on_unmask=True))
+
+    assert [(op.side, op.price) for op in switched] == [(op.side, op.price) for op in plain]
+
+
 # --- re-anchor switches ----------------------------------------------------
 
 # k_act=0 puts the activation at the entry price, so any move away from it re-anchors.

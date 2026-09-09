@@ -37,6 +37,8 @@ class EngineConfig:
     calibration_schedule: tuple[tuple[int, PairCalibration], ...] = ()
     # Bars the bot must hold the asset: the sell is deferred, a cash leg is forced in. Empty in production.
     force_hold_bars: frozenset[int] = frozenset()
+    # When the mask lifts, reopen the leg at that bar so no anchor predates the gate. Off in production.
+    reset_on_unmask: bool = False
     # Per-side overrides of ``min_margin``; ``None`` keeps the shared value. Unset in production.
     min_margin_sell: float | None = None
     min_margin_buy: float | None = None
@@ -315,6 +317,7 @@ def simulate_operations(
 
     cal = cfg.calibration
     next_change = 0
+    was_forced = False
 
     for idx, row in enumerate(df.itertuples(index=False)):
         # `<= idx` so an entry due on a bar the loop skips still applies at the next usable one.
@@ -335,6 +338,18 @@ def simulate_operations(
         )
 
         forced = idx in force_hold
+        lifted = was_forced and not forced
+        was_forced = forced
+        if cfg.reset_on_unmask and lifted:
+            # The gate shut over a stretch this leg never traded; keeping its trailing price
+            # would exit at a level anchored inside the mask. Reopen the leg here instead.
+            entry_price = float(price)
+            active = False
+            activation_px = None
+            activation_atr = None
+            trailing_price = None
+            stop_px = None
+            stop_atr = None
         if forced and side == "buy":
             # In cash while the mask demands the asset: buy at this bar's price, then hold.
             cum_pnl = _record_stop_exit(ops, cal, "buy", price, dtime, vol, fee_rate, cum_pnl)

@@ -1,0 +1,253 @@
+"""Mantener por defecto y operar SOLO en los tramos laterales: cual es el techo con etiquetas perfectas.
+
+Read-only y temporal. Lee el CSV OHLCVT de 15 min de Kraken, sin base de datos.
+
+Las tres puertas ya medidas tenian por defecto OPERAR: el oraculo de regimenes cambiaba de
+config pero operaba siempre, y la puerta de rallies forzaba asignacion solo en las subidas.
+Esta invierte el defecto: fuera de los tramos laterales el bot mantiene el activo, que en
+activo base vale exactamente 0 % por construccion, y solo opera dentro de ellos. Eso no se ha
+corrido nunca, y ademas hace que el bot entre en cada lateral SOSTENIENDO el activo, que es el
+lado correcto para cosechar un rango (el oraculo de regimenes fracaso justamente porque el
+lado que se sostiene al empezar un tramo lo decide).
+
+La puerta se implementa con `force_hold_bars` sobre todas las velas NO laterales. Se miden
+cuatro brazos, y los dos ultimos atacan cosas distintas:
+
+  sin puerta        el bot opera todo el año (la referencia de 105 configs)
+  ancla viva        la puerta de siempre: al levantarse, el stop sigue anclado a maximos
+                    trailados DENTRO de la mascara. Es lo que costo -21.4 en la puerta de
+                    rallies ("congelada cuatro meses, fuera de posicion").
+  reinicio          `reset_on_unmask`: al levantar la mascara la pata se reabre en esa vela,
+                    asi que ningun ancla precede a la puerta.
+  calib. local      ademas, la calibracion dentro de un lateral ve SOLO la historia desde el
+                    inicio de ese lateral, no todo el historico. La hipotesis del dueño: los
+                    datos del impulso previo pueden no aportar nada, o dañar, a la calibracion
+                    de un rango. Un nivel sin eventos suficientes cae al punto global.
+
+Etiquetado por impulsos de `regime_switch_oracle` (M=10 %, K=7 d, D=7 d), fijado antes de
+rankear nada. Puntuacion en ACTIVO BASE sobre la ventana completa, mantener = 0 %.
+
+Uso (PYTHONPATH=. obligatorio; sin variables de entorno de BD):
+
+    PYTHONPATH=. python scripts/analysis/lateral_gate_oracle.py "C:/Dev/Kraken OHLCVT/XBTEUR_15.csv"
+"""
+
+import argparse
+import dataclasses
+import os
+import sys
+import time
+
+import pandas as pd
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import cycle_decomposition as cd
+import grid_sweep_holdout as gsh
+import rally_gate_oracle as rgo
+import regime_switch_oracle as rso
+
+import trading.optimizer.search as optimizer
+from core.config import ATR_DESV_LIMIT, RECALIBRATION_BARS
+from core.config import VOLATILITY_LEVELS as LEVELS
+from trading.engine import mark_to_market, simulate_operations
+from trading.market_analyzer import (
+    CalibrationInputs,
+    analyze_structural_noise,
+    atr_ratio_percentiles,
+    k_values_by_level,
+)
+
+MIN_LOCAL_BARS = 192  # dos dias de velas de 15 min antes de fiarse de una calibracion local
+
+
+def _in_force(points: tuple[CalibrationInputs, ...], at: int) -> CalibrationInputs:
+    """El punto global vigente en la vela ``at``."""
+    prior = [p for p in points if p.at <= at]
+    return prior[-1] if prior else points[0]
+
+
+def _filled(local: dict, base: dict) -> tuple[dict, int]:
+    """Rellena con el punto global los niveles sin eventos suficientes en la ventana local."""
+    out, missing = {}, 0
+    for lvl in LEVELS:
+        k = local.get(lvl)
+        if k is None or len(k) == 0:
+            out[lvl] = base[lvl]
+            missing += 1
+        else:
+            out[lvl] = k
+    return out, missing
+
+
+def local_points(df, segs, recalib_bars: int, global_pts: tuple) -> tuple[tuple, int, int]:
+    """Calendario cuyos puntos dentro de un lateral ven solo la historia desde su inicio."""
+    out = list(global_pts)
+    built = fallbacks = 0
+    for seg in segs:
+        if seg.label != "lateral":
+            continue
+        for at in range(seg.first_bar, seg.last_bar + 1, recalib_bars):
+            if at - seg.first_bar < MIN_LOCAL_BARS:
+                continue
+            window = df.iloc[seg.first_bar : at + 1]
+            up, down = analyze_structural_noise(window)
+            base = _in_force(global_pts, at)
+            up_k, miss_up = _filled(k_values_by_level(up), base.up_k)
+            down_k, miss_down = _filled(k_values_by_level(down), base.down_k)
+            out = [p for p in out if p.at != at]
+            out.append(CalibrationInputs(at, atr_ratio_percentiles(window), up_k, down_k))
+            built += 1
+            fallbacks += miss_up + miss_down
+    return tuple(sorted(out, key=lambda p: p.at)), built, fallbacks
+
+
+def evaluate(ctx, cand, points: tuple, overrides: dict, hold: float, final: float) -> dict:
+    cfg = optimizer._build_engine_config(
+        gsh.PAIR, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT, points
+    )
+    cfg = dataclasses.replace(cfg, **overrides)
+    ops = simulate_operations(ctx.df, cfg, fee_rate=gsh.FEE / 100.0)
+    eur = mark_to_market(ops, final) if ops else 0.0
+    return {
+        "cand": cand,
+        "base": gsh._btc(eur, hold),
+        "ops": sum(1 for op in ops if op.idx != 1),
+        "cash": cd.time_in_cash(ops, ctx.df) if ops else 0.0,
+    }
+
+
+def report(results: dict[str, list[dict]]) -> None:
+    print("")
+    print("[resultado] activo base sobre el año, mantener = 0 %")
+    print(
+        f"  {'brazo':<32} {'mediana':>8} {'p25':>7} {'p75':>7} {'mejor':>7} {'peor':>8} "
+        f"{'bate':>9} {'ops':>6} {'caja':>6}"
+    )
+    for arm, rows in results.items():
+        vals = sorted(r["base"] for r in rows)
+        n = len(vals)
+        print(
+            f"  {arm:<32} {vals[n // 2]:>+7.1f}% {vals[n // 4]:>+6.1f}% {vals[3 * n // 4]:>+6.1f}% "
+            f"{vals[-1]:>+6.1f}% {vals[0]:>+7.1f}% {sum(1 for v in vals if v > 0):>4}/{n:<4} "
+            f"{sum(r['ops'] for r in rows) / n:>6.1f} {100 * sum(r['cash'] for r in rows) / n:>5.0f}%"
+        )
+    print("")
+    print("[mejor config de cada brazo]  responde tambien a la pregunta sobre los stops")
+    for arm, rows in results.items():
+        b = max(rows, key=lambda r: r["base"])
+        print(f"  {arm:<32} {b['base']:>+7.1f}%  {gsh._signature(b['cand']):<20} {b['ops']:>4} ops")
+
+
+def decompose(ctx, arms: dict, results: dict, segs, lifts: set[int]) -> None:
+    """De donde sale el dinero de la mejor config de cada brazo, y cuanto de el nace en el borde.
+
+    Un brazo con puerta solo puede ganar dentro de los laterales. Si su acumulacion aparece en
+    los tramos que la puerta tenia CERRADA, o sus ventas se agolpan en las primeras velas tras
+    abrirla, lo que se esta midiendo no es la cosecha del rango: es la etiqueta filtrandose --
+    el stop siguio trailando bajo la mascara y sale vendiendo en el techo de un impulso que el
+    oraculo acaba de declarar terminado.
+    """
+    bar_of = {str(t): i for i, t in enumerate(ctx.df["dtime"].tolist())}
+    ordered = sorted(lifts)
+    print("")
+    print("[descomposicion] acumulacion de base por clase de tramo, en la mejor config de cada brazo")
+    print(f"  {'brazo':<32} {'lateral':>9} {'alcista':>9} {'bajista':>9} {'ventas <1d tras abrir':>23}")
+    for arm, (overrides, points) in arms.items():
+        best = max(results[arm], key=lambda r: r["base"])
+        cfg = optimizer._build_engine_config(
+            gsh.PAIR, best["cand"], ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT, points
+        )
+        cfg = dataclasses.replace(cfg, **overrides)
+        ops = simulate_operations(ctx.df, cfg, fee_rate=gsh.FEE / 100.0)
+        per_eur = rgo._period_returns(ops, rso._bounds(ctx.df, segs))
+        by_class: dict[str, list[float]] = {}
+        for seg, eur in zip(segs, per_eur, strict=True):
+            by_class.setdefault(seg.label, []).append(gsh._btc(eur, seg.hold_pct))
+        sells = [op for op in ops if op.side == "sell" and op.idx != 1]
+        near = 0
+        for op in sells:
+            bar = bar_of.get(str(op.time))
+            if bar is None:
+                continue
+            prior = [i for i in ordered if i <= bar]
+            if prior and bar - prior[-1] <= 96:  # 96 velas de 15 min = un dia
+                near += 1
+        share = f"{near}/{len(sells)}" if sells else "-"
+        print(
+            f"  {arm:<32} {rso._compound(by_class.get('lateral', [])):>+8.1f}% "
+            f"{rso._compound(by_class.get('alcista', [])):>+8.1f}% "
+            f"{rso._compound(by_class.get('bajista', [])):>+8.1f}% {share:>23}"
+        )
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("csv")
+    ap.add_argument("--cal-start", default="2024-07-01")
+    ap.add_argument("--start", default="2025-01-01")
+    ap.add_argument("--end", default="2025-12-31")
+    ap.add_argument("--move", type=float, default=0.10)
+    ap.add_argument("--max-days", type=int, default=7)
+    ap.add_argument("--min-days", type=int, default=7)
+    ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
+    args = ap.parse_args()
+
+    cal_t0 = int(pd.Timestamp(args.cal_start).timestamp())
+    t1 = int(pd.Timestamp(args.end).timestamp()) + 86_399
+    print(f"[datos] {args.csv}")
+    frame = rgo.build_frame(args.csv, cal_t0, t1)
+    gsh._install_ohlc(frame)
+    print("")
+    print(f"[calibracion] calendario global cada {args.recalib_bars} velas (tarda minutos)", flush=True)
+    gsh._install_calibration_cache(frame, args.recalib_bars)
+
+    first_bar = int((frame["dtime"] >= pd.Timestamp(args.start)).idxmax())
+    ctx = gsh._context(frame, first_bar, len(frame) - 1, gsh._dtime(frame, len(frame) - 1))
+    hold = (float(ctx.df.iloc[-1]["close"]) / float(ctx.df.iloc[0]["close"]) - 1.0) * 100.0
+    final = float(ctx.df.iloc[-1]["close"])
+    print("")
+    print(f"[ventana] {gsh._dtime(ctx.df, 0)[:10]}..{gsh._dtime(ctx.df, len(ctx.df) - 1)[:10]}  hold {hold:+.2f} %")
+
+    segs = rso.segments(ctx.df, args.move, args.max_days, args.min_days)
+    rso.print_segments(ctx.df, segs)
+    lateral = set()
+    for seg in segs:
+        if seg.label == "lateral":
+            lateral.update(range(seg.first_bar, seg.last_bar + 1))
+    mask = frozenset(i for i in range(len(ctx.df)) if i not in lateral)
+    print("")
+    print(f"  puerta abierta en {len(lateral)} de {len(ctx.df)} velas ({100 * len(lateral) / len(ctx.df):.0f} %)")
+
+    print("")
+    print("[calibracion local] puntos que solo ven su propio lateral", flush=True)
+    t0 = time.perf_counter()
+    loc, built, fallbacks = local_points(ctx.df, segs, args.recalib_bars, ctx.calibration_points)
+    print(f"  {built} puntos locales, {fallbacks} niveles caidos al global ({time.perf_counter() - t0:.0f}s)")
+
+    arms = {
+        "sin puerta": ({}, ctx.calibration_points),
+        "puerta, ancla viva": ({"force_hold_bars": mask}, ctx.calibration_points),
+        "puerta, reinicio": ({"force_hold_bars": mask, "reset_on_unmask": True}, ctx.calibration_points),
+        "puerta, reinicio + calib. local": ({"force_hold_bars": mask, "reset_on_unmask": True}, loc),
+    }
+    cands = gsh.candidates()
+    print("")
+    print(f"[barrido] {len(cands)} configs x {len(arms)} brazos", flush=True)
+    results = {}
+    for arm, (overrides, points) in arms.items():
+        t0 = time.perf_counter()
+        results[arm] = [evaluate(ctx, c, points, overrides, hold, final) for c in cands]
+        print(f"  {arm:<32} ({time.perf_counter() - t0:.0f}s)", flush=True)
+    report(results)
+    decompose(ctx, arms, results, segs, {s.first_bar for s in segs if s.label == "lateral"})
+
+    print("")
+    print("[lectura] La puerta solo puede ganar si el bot rentabiliza los laterales: fuera de ellos")
+    print("          mantiene, y mantener es 0 % por construccion. Un brazo con puerta por debajo de")
+    print("          cero significa que operar dentro de los laterales PIERDE, con etiquetas perfectas.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
