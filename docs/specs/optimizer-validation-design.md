@@ -1330,7 +1330,7 @@ the bot cannot supply that view. Chaining the yearly factors is not a valid eigh
 result (each year restarts the position; see the harness defect on segmented scoring); the
 continuous three-year run is the one that stands, at −76 %.
 
-### Holding by default and trading only the ranges is closed (2026-09-09)
+### Holding by default and trading only the ranges (2026-09-09)
 
 The owner's proposal after the eight-year table, and it is not any of the three gates already
 measured: invert the default. Outside a lateral stretch the bot **holds the asset and does not
@@ -1392,8 +1392,58 @@ question does move: the best config goes from `mm=0.08 stop=0.8` (10 ops) ungate
 range-harvesting predicts. It is one in-sample maximum, so it is a hint about where to look,
 not a result.
 
+**Then the owner objected to the median, and the objection was right.** The argument: in
+production the bot runs *one* config, not the distribution, and choosing it is within our
+control — so a median is the wrong estimator. Everything above answered that with avenue 1
+(selection by in-sample PnL lands at percentile 50 forward, i.e. choosing carries no
+information), but avenue 1 was measured over whole years. The sharper version of the
+objection is that a lateral stretch is a more homogeneous thing than a year, so selection
+might work *inside* ranges even where it fails across them. That is measurable, and it had
+not been measured. `selection_test` fits on the first 4 lateral stretches and scores the
+pick on the last 5, reporting where it lands among all 105:
+
+| arm | best consistency | pick: fit | test | percentile | best available |
+|---|---|---|---|---|---|
+| no gate | 7/9 | +26.7 % | +17.5 % | **63 %** | +34.1 % |
+| gate, live anchor | 8/9 | +57.4 % | +92.4 % | 96 % | +97.5 % |
+| gate, reset on open | **9/9** | +12.9 % | **+25.7 %** | **93 %** | +30.5 % |
+| gate, reset + local calibration | **9/9** | +14.5 % | +23.2 % | 85 % | +38.6 % |
+
+**Inside ranges, choosing works.** The honest gated arm's pick lands at percentile 93 and
+captures +25.7 of the +30.5 available, against percentile 63 ungated. And a config exists
+that beats hold in **all nine** lateral stretches, where the ungated best manages 7 of 9 and
+the regime oracle's earlier lateral class had no config winning more than 4 of 6. Both
+signals point the same way: the gate makes the config decision easier, which is exactly what
+the owner argued and the opposite of what the median suggested.
+
+**What that does and does not settle.** It is one window, one year, nine segments, one
+selection decision — under a null of random selection, landing at percentile 93 or better has
+probability about 0.07, so this is a hint at the edge of noise, not a finding. The `live
+anchor` arm reaching percentile 96 is a caution rather than support: a leak can be
+selectable too. And the comparison is incomplete in a way that matters — the table scores
+*lateral segments only*, which for the gated arm is the entire strategy but for the ungated
+arm omits the falling segments where it earns most. The completing measurement is the same
+forward split scored over the whole span rather than the lateral slices.
+
+**So the verdict is downgraded, not reversed.** What stands: the leak, and that the lateral
+harvest is unchanged by gating (+41.9 % against +43.7 %). What does not stand: "the gate is
+worse than not gating", which rested on the median and is now the wrong lens for a gated
+arm whose selection demonstrably carries information. This avenue is **not closed** — it is
+the only open one in this document with a measurement pointing in its favour.
+
 ### Still not established
 
+- **Holding by default and trading only confirmed ranges — the one open avenue with a
+  measurement in its favour.** With perfect labels on 2025 the gated arm's lateral harvest is
+  no better than the ungated one's (+41.9 % against +43.7 %) and the gate gives up the
+  +14.6 % the bot earns in falling segments, so on totals it loses. But selection *inside*
+  ranges works where selection across years does not: fitting on 4 lateral stretches and
+  testing on 5 lands at percentile 93 against 63 ungated, and a config beats hold in 9 of 9
+  stretches. One window, nine segments, one decision, p about 0.07 — a hint at the edge of
+  noise. What would settle it: the same forward split scored over the whole span (the current
+  table scores lateral slices, which flatters the gated arm by omitting where the ungated one
+  earns), then the same on other years, and only then a causal detector. See "Holding by
+  default and trading only the ranges".
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
   rates, cross-asset. The signal screen tested everything in the OHLCV archives, including the
   volume and trade-count columns nothing else had read, and found the null. That bounds these
@@ -1445,6 +1495,7 @@ contradicted by later work that had only this document to go on.
 - **There is no config recommendation, and the previous one was not skill.** `mm=0.05/0.9` loses 78 % of the base asset over 2023–2025 in four operations; it made one sell in the one year that fell. No config in the grid beats holding in 2023, 2024, or the three years continuous, under any re-anchor arm. See "Three years, and what the recommended config actually does".
 - **The conditional edge is now separated cleanly, 8 years out of 8.** `mm=0` with the capped re-anchor beats holding in exactly the three calendar years 2018-2025 in which holding lost money, and loses in exactly the five in which it made money; time in cash is bimodal, 13-22 % in the winners against 77-99 % in the losers. It is a conditional instrument, not a strategy, and the condition is unpredictable by this document's own measurements. See "One config, eight years, only against hold".
 - **A mask over the price series leaks unless the leg is reopened when it lifts.** A trailing stop that keeps tracking under a gate exits at a level anchored inside the mask, which is the oracle's label converted into money. Any future gated experiment must set `reset_on_unmask` and report the share of exits landing just after a lift; here that single switch was worth 159 points of apparent edge. See "Holding by default and trading only the ranges is closed".
+- **The median is the honest estimator only where selection carries no information, and that must be checked per regime, not assumed.** Avenue 1 measured selection landing at percentile 50 forward over whole years, and this document then used the median everywhere. Inside lateral stretches the same test lands at percentile 93, so the median understates what a chosen config achieves there. Report the median *and* the forward percentile of a fitted pick; where they disagree, the percentile is the one that describes production, which runs one config.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -1775,7 +1826,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Eighteen avenues are now closed by measurement**, and none of them was a tuning question —
+**Seventeen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1798,7 +1849,6 @@ each was a hypothesis about where the edge lived, and none survived:
 | Overlaying entry timing on a monthly DCA | buying the whole contribution on day one wins in all three windows; splitting weekly or daily costs 0.5–2.9 points and dip limits 0.7–5.8, because every arm delays exposure against a positive drift. The fee lever is the only positive one measured anywhere in the study: +0.24 % over eight years moving from taker to maker |
 | The bot's trailing entry as the DCA's buy rule | without a fall requirement it triggers in a median 0.8-6.8 hours and never once reaches a month's close untriggered, so it degenerates into buying on day one (±0.16 %); with one, 87 of 96 months enter below the day-one price and it still finishes 0.6-2.2 points behind, because the 7-9 months that never trigger buy after the rally. A high hit rate with a negative expectation |
 | Immediate activation (`k_act = 0`) | the worst configuration the strategy has: 807 operations in 2025 for a median −95.3 % of base asset, 0/5 beating hold, in the one year holding lost money. The branch is monotone in the multiplier and only `k_act = 16` (15 ops) beats hold, which is the standing "trade less" result rather than anything about the branch |
-| Holding by default and trading only confirmed ranges | with perfect labels and a clean restart the gate is *worse* than not gating (median −0.4 % against +24.4 %, 38/105 against 75/105). The decomposition says why: the lateral harvest is the same gated or not (+41.9 % against +43.7 %), so the gate buys nothing and deletes the +14.6 % the bot earns in the falling segments. The variant that looks spectacular (+200.6 %) is the oracle leaking through a stop that trailed under the mask |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that

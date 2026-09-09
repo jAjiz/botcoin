@@ -102,19 +102,50 @@ def local_points(df, segs, recalib_bars: int, global_pts: tuple) -> tuple[tuple,
     return tuple(sorted(out, key=lambda p: p.at)), built, fallbacks
 
 
-def evaluate(ctx, cand, points: tuple, overrides: dict, hold: float, final: float) -> dict:
+def evaluate(ctx, cand, points: tuple, overrides: dict, hold: float, final: float, segs, lat: list[int]) -> dict:
     cfg = optimizer._build_engine_config(
         gsh.PAIR, cand, ctx.atr_ratio_thresholds, ctx.up_k, ctx.down_k, ATR_DESV_LIMIT, points
     )
     cfg = dataclasses.replace(cfg, **overrides)
     ops = simulate_operations(ctx.df, cfg, fee_rate=gsh.FEE / 100.0)
     eur = mark_to_market(ops, final) if ops else 0.0
+    per_eur = rgo._period_returns(ops, rso._bounds(ctx.df, segs)) if ops else [0.0] * len(segs)
+    per_seg = [gsh._btc(per_eur[i], segs[i].hold_pct) for i in lat]
     return {
         "cand": cand,
         "base": gsh._btc(eur, hold),
         "ops": sum(1 for op in ops if op.idx != 1),
         "cash": cd.time_in_cash(ops, ctx.df) if ops else 0.0,
+        "per_seg": per_seg,
     }
+
+
+def selection_test(results: dict[str, list[dict]], n_lat: int) -> None:
+    """¿Sirve de algo ELEGIR la mejor config, o la eleccion no sobrevive al siguiente rango?
+
+    La mediana solo es el estimador honesto si elegir no lleva informacion. Esto lo mide en vez
+    de asumirlo: primero cuantos de los tramos laterales gana la config mas consistente, y
+    despues el test que decide -- se elige la mejor sobre la primera mitad de los rangos y se
+    mira en que percentil de las 105 cae sobre la segunda. Percentil 50 es azar.
+    """
+    cut = n_lat // 2
+    print("")
+    print(f"[eleccion] {n_lat} tramos laterales, ajuste en los {cut} primeros y prueba en los {n_lat - cut} ultimos")
+    print(
+        f"  {'brazo':<32} {'mejor consistencia':>19} {'elegida: ajuste':>16} {'prueba':>9} "
+        f"{'percentil':>10} {'mejor posible':>14}"
+    )
+    for arm, rows in results.items():
+        wins = [sum(1 for v in r["per_seg"] if v > 0) for r in rows]
+        fit = [rso._compound(r["per_seg"][:cut]) for r in rows]
+        test = [rso._compound(r["per_seg"][cut:]) for r in rows]
+        pick = max(range(len(rows)), key=lambda i: fit[i])
+        ranked = sorted(test)
+        pct = 100.0 * sum(1 for v in ranked if v < test[pick]) / len(ranked)
+        print(
+            f"  {arm:<32} {max(wins):>13}/{n_lat:<5} {fit[pick]:>+15.1f}% {test[pick]:>+8.1f}% "
+            f"{pct:>9.0f}% {max(test):>+13.1f}%"
+        )
 
 
 def report(results: dict[str, list[dict]]) -> None:
@@ -231,16 +262,18 @@ def main() -> int:
         "puerta, reinicio": ({"force_hold_bars": mask, "reset_on_unmask": True}, ctx.calibration_points),
         "puerta, reinicio + calib. local": ({"force_hold_bars": mask, "reset_on_unmask": True}, loc),
     }
+    lat_idx = [i for i, seg in enumerate(segs) if seg.label == "lateral"]
     cands = gsh.candidates()
     print("")
     print(f"[barrido] {len(cands)} configs x {len(arms)} brazos", flush=True)
     results = {}
     for arm, (overrides, points) in arms.items():
         t0 = time.perf_counter()
-        results[arm] = [evaluate(ctx, c, points, overrides, hold, final) for c in cands]
+        results[arm] = [evaluate(ctx, c, points, overrides, hold, final, segs, lat_idx) for c in cands]
         print(f"  {arm:<32} ({time.perf_counter() - t0:.0f}s)", flush=True)
     report(results)
     decompose(ctx, arms, results, segs, {s.first_bar for s in segs if s.label == "lateral"})
+    selection_test(results, len(lat_idx))
 
     print("")
     print("[lectura] La puerta solo puede ganar si el bot rentabiliza los laterales: fuera de ellos")
