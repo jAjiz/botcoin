@@ -1553,20 +1553,63 @@ real and it is worth roughly +20 % of base asset a year against holding; whether
 survives a detector that must decide in real time is the only remaining question, and it is
 now the whole question.
 
+### The causal detector does not transfer, and that closes the gate (2026-09-09)
+
+Everything the gate achieved rests on labels that look seven days forward. With the config
+fixed outside the experiment (`mm=0.020 stop=0.9`), `scripts/analysis/lateral_detector.py`
+replaces the oracle with rules that see only the past — so the only thing being chosen is the
+detector. Three families, 63 variants, a grid fixed before running, all sharing one
+confirmation filter (close the moment the condition fails, open only after `delay` quiet
+days, since missing a range costs zero and opening in a trend does not): the **causal mirror**
+of the oracle (closed if `|close_t/close_{t-k} - 1| >= move` for some `k <= look`), **box
+containment**, and **Kaufman's efficiency ratio**. Volatility filtering was excluded on
+purpose — already measured null. Protocol: rank on 2024+2025, 2023 held out.
+
+| detector | 2024 | 2025 | **2023 (held out)** |
+|---|---|---|---|
+| `impulso m=0.10 k=5 d=7` | +44.6 % | +21.2 % | **−7.7 %** |
+| `impulso m=0.10 k=10 d=0` | +21.8 % | +27.5 % | **−1.8 %** |
+| `impulso m=0.10 k=10 d=7` | +13.3 % | +22.1 % | **−5.3 %** |
+| `er n=30 t=0.3 d=3` | +18.2 % | −2.8 % | **−27.3 %** |
+| `impulso m=0.10 k=5 d=3` | +26.1 % | +22.9 % | +0.1 % |
+| **oracle ceiling** | **+33.7 %** | **+40.3 %** | **+21.8 %** |
+
+All figures with local calibration, paired with the ceiling's. That pairing mattered enough to
+check: the sweep first ran on global calibration, where 2024's ceiling is +9.7 % against
++33.7 % local, so comparing a global-calibration detector to a local-calibration ceiling was
+unfair by 24 points. Matched, the verdict does not move — **on the held-out year every ranked
+detector lands between −27.3 % and +0.1 % where the oracle earns +21.8 %.**
+
+**The cause is in the precision column.** The detectors that look good on the fit years open
+the gate on 60–76 % of bars with a precision of 60–66 %, and **20–28 % of their open bars sit
+inside rising segments**. The oracle's precision is 100 %. This document already measured what
+a rising segment costs an ungated bot: −60.9 %, −67.8 %, −1.5 %. Opening through a quarter of
+the rallies is more than enough to consume a +21.8 % edge, and no amount of confirmation delay
+fixes it — the delay that helps most on the fit years (`d=7`) is not the one that survives.
+
+**And the deeper reason is one this document already reached by another route.** A causal
+detector must decide "this is a range" at a moment when a range is indistinguishable from the
+first days of a trend. The oracle's advantage was never *recognising* ranges — the trailing
+mirror recognises them at 80–91 % recall. Its advantage is knowing that the impulse **ended**,
+which is a fact about the next seven days. That is precisely the quantity the signal screen
+measured and found unpredictable from every causal feature in these data (AUC 0.43–0.52 at
+fixed horizons, price and flow alike). **The gate's value is forward information, and the
+detector problem is the prediction problem wearing different clothes.**
+
+**What the arc did establish, and it is not nothing.** Three of the four components verify:
+holding by default removes the trend exposure in both directions (2023, 2024, 2025); a region
+of the grid (`mm` 0.02–0.03, wide stop) transfers to a held-out year, landing at +23.5 %
+against a grid best of +23.8 % and a grid median of +0.7 %; and that same config earns in
+falling segments too (+11.4 %, +11.5 %, +6.3 %), so it is not range-specific. The fourth
+component is the one that fails, and it is the one that turns a ceiling into a strategy.
+
+**Honest bound on the negative.** 63 rules from three families is not proof that no rule
+exists, and the grid was coarse. But it is the same wall the study hit from the label side,
+reached independently from the detector side, and a rule that must resolve the next seven days
+is asking for the thing already measured absent.
+
 ### Still not established
 
-- **Holding by default and trading only confirmed ranges — open, and now blocked on one
-  thing only.** Confirmed on 2023, 2024 and 2025: masking the non-lateral bars takes the
-  ungated bot from 0/105 beating hold to 54/105 (2023) and 38/105 (2024), and the rising-
-  segment contribution from −60.9 % / −67.8 % to about zero. The config choice, which looked
-  refuted after 2024, transfers when made on enough segments: the `mm = 0.02–0.03` band with
-  a wide stop, chosen on the 18 lateral stretches of 2024–2025, lands at 4–5 wins of 8 in
-  held-out 2023 against a grid median of 1, and compounds +12.6 % to +23.5 % against a grid
-  median of +0.7 %. Selecting within a single year still fails (percentile 55, 54, 63 against
-  93). What is left is entirely the **causal detector**: every label here looks seven days
-  forward. Next: build the cheapest honest detector — a rule over past bars only — and rerun
-  these three years with it in place of the oracle. See "2023 held out: the gate holds a
-  third time, and the config region transfers".
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
   rates, cross-asset. The signal screen tested everything in the OHLCV archives, including the
   volume and trade-count columns nothing else had read, and found the null. That bounds these
@@ -1621,6 +1664,7 @@ contradicted by later work that had only this document to go on.
 - **The median is the honest estimator only where selection carries no information, and that must be checked per regime, not assumed.** Avenue 1 measured selection landing at percentile 50 forward over whole years, and this document then used the median everywhere. Inside lateral stretches the same test lands at percentile 93, so the median understates what a chosen config achieves there. Report the median *and* the forward percentile of a fitted pick; where they disagree, the percentile is the one that describes production, which runs one config.
 - **Do not select a config by compounded return over a set of segments.** The compound is dominated by whichever segment was largest, so it selects for one lucky stretch; in 2024 it picked a config beating hold in 4 of 9 lateral stretches over one beating hold in 7 of 9. Select for a rate — segments won, or a per-segment median — and report both.
 - **Selection needs segments, not years.** Fitting on half of one year's lateral stretches lands at percentile 55–63 in two of three years; fitting on the 18 stretches of two full years transfers to a held-out third. Four segments decide nothing. Report the base rate of segments won alongside any consistency claim — under the gate the median config wins 1 stretch in 8, which is what makes a 5-of-8 meaningful and a 9-of-9 suspicious.
+- **A regime gate is worth exactly what its precision on rallies is worth, and that is a forward question.** Recognising a range is easy causally (80–91 % recall from a trailing rule); knowing an impulse has *ended* is not, and that is the whole of the oracle's advantage. Do not propose another regime filter without first stating what causal quantity resolves the next seven days, because the signal screen measured that none in these data does.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -1951,7 +1995,7 @@ redefines what counts as noise rather than sampling more of it); the `stop_pcts`
 
 ## How to continue
 
-**Seventeen avenues are now closed by measurement**, and none of them was a tuning question —
+**Eighteen avenues are now closed by measurement**, and none of them was a tuning question —
 each was a hypothesis about where the edge lived, and none survived:
 
 | Avenue | Result |
@@ -1974,6 +2018,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | Overlaying entry timing on a monthly DCA | buying the whole contribution on day one wins in all three windows; splitting weekly or daily costs 0.5–2.9 points and dip limits 0.7–5.8, because every arm delays exposure against a positive drift. The fee lever is the only positive one measured anywhere in the study: +0.24 % over eight years moving from taker to maker |
 | The bot's trailing entry as the DCA's buy rule | without a fall requirement it triggers in a median 0.8-6.8 hours and never once reaches a month's close untriggered, so it degenerates into buying on day one (±0.16 %); with one, 87 of 96 months enter below the day-one price and it still finishes 0.6-2.2 points behind, because the 7-9 months that never trigger buy after the rally. A high hit rate with a negative expectation |
 | Immediate activation (`k_act = 0`) | the worst configuration the strategy has: 807 operations in 2025 for a median −95.3 % of base asset, 0/5 beating hold, in the one year holding lost money. The branch is monotone in the multiplier and only `k_act = 16` (15 ops) beats hold, which is the standing "trade less" result rather than anything about the branch |
+| Holding by default and trading only confirmed ranges | the mechanism verifies on three years — masking the non-lateral bars takes the bot from 0/105 beating hold to 54/105 (2023) and 38/105 (2024) — and a config region (`mm` 0.02–0.03, wide stop) transfers to a held-out year at +23.5 % against a grid median of +0.7 %. But all of it rests on labels that see seven days forward. Replacing the oracle with 63 causal rules across three families, ranked on 2024+2025: on held-out 2023 every one lands between −27.3 % and +0.1 % against a +21.8 % ceiling, because their precision is 60–66 % and 20–28 % of their open bars fall inside rising segments. The detector problem is the prediction problem restated |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that
@@ -2036,6 +2081,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/lateral_detector.py` | **How much of the oracle gate survives a rule that only sees the past?** 63 causal detectors in three families (trailing impulse, box containment, Kaufman ER) with a shared confirmation filter, driving the gate for one fixed config, ranked on 2024+2025 with 2023 held out. Reports agreement with the oracle labels and splits the false positives by direction, since a false positive on a fall is not an error. `--local-top` re-runs the best few with calibration paired to the ceiling's. About 30 minutes for three years. |
 | `scripts/analysis/lateral_gate_oracle.py` | **What is the ceiling on holding by default and trading only the ranges?** `force_hold_bars` over every non-lateral bar with impulse labels, four arms (no gate; gate with the anchor left live; gate with `reset_on_unmask`; plus a calibration that only sees its own range), 105 configs each, scored in base asset against holding. Decomposes each arm's best config by segment class and counts the exits landing within a day of a gate opening, which is what exposes a leaking mask. About 15 minutes for one year. |
 | `scripts/analysis/capped_mm0_across_years.py` | **How does one configuration behave on intervals nobody chose?** A single config (`mm=0`, `stop=0.9`, capped re-anchor) over calendar years, scored in base asset against holding and nothing else, at two fee levels, with operation count and time in cash beside it. Deliberately has no grid and no median: it answers "what does this do", not "which is best". About 9 minutes per year, calibration-bound. |
 | `scripts/analysis/kact_and_free_stops.py` | **The two gaps in the record: `k_act = 0` and the five free stops.** Runs the 105 shared-stop reference, the whole `k_act` branch broken out by multiplier, and a random sample of the free-stop space on one shared calibration schedule and window, scored in base asset. Reports the distribution and not only the best, because the best is where the selection effect hides. About 15 minutes for one year at 600 samples. |
