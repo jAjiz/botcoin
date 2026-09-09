@@ -1608,6 +1608,64 @@ exists, and the grid was coarse. But it is the same wall the study hit from the 
 reached independently from the detector side, and a rule that must resolve the next seven days
 is asking for the thing already measured absent.
 
+### Better rally precision does not buy a profitable detector (2026-09-09)
+
+The first detector pass ranked 63 symmetric rules and found none transfers. Two objections
+were right and both were tested. First, every rule was **symmetric in direction** — closing
+on a 10 % fall exactly as on a 10 % rise — which throws away the falling-segment earnings for
+no measured reason. Second, and this is the one that matters, all of them decide from a
+**lagging statistic**: closing requires a 10 % move to complete over seven days, so the bot
+trades through the entire opening of every rally. The owner's alternative is stateful — when
+the market goes flat, record the range's ceiling, and close the gate the instant price crosses
+it. No waiting for a move to complete.
+
+Four directional families were added (up-only impulse, no-new-high, off-the-high, below-EMA)
+and one stateful family (`rotura`: box or no-new-high entry, ceiling from the entry window,
+optional floor so falls contribute nothing). Protocol tightened at the same time — the
+hold-out year was **hardcoded to 2023** in the ranking, which silently admitted 2021 and 2022
+into the fit once they were used; it is now an explicit `--holdout`.
+
+**The stateful rule works, on the metric it was designed for.** It reaches the best agreement
+in the whole bench: **78 % precision with 17 % of open bars inside rising segments**, against
+55–66 % and 21–31 % for every lagging rule. And it does it while staying open 41 % of the time
+at 64 % recall — the earlier families only reached 7–10 % rally contamination by collapsing to
+6–18 % open time, where nothing is left to harvest. The compromise that looked inevitable is
+broken; the mechanism does what the owner said it would.
+
+**And it still does not make money out of sample.** Fitting on 2024+2025, holding out 2022 and
+2019, with the floor on so the figure is range harvest alone:
+
+| detector | 2024 | 2025 | **2022** | **2019** |
+|---|---|---|---|---|
+| `rotura caja n=20 s=0.15 +suelo` | +12.8 % | +16.6 % | **−1.1 %** | **−11.7 %** |
+| `rotura caja n=30 s=0.15 +suelo` | +4.2 % | +13.3 % | **+0.1 %** | **−5.6 %** |
+| oracle ceiling | +33.7 % | +40.3 % | +15.8 % | +12.5 % |
+
+**So the finding is quantitative, not conceptual: 17 % residual rally exposure still costs
+more than 83 % of a range harvest earns.** This document measured what a year's rising
+segments cost an ungated bot — −60.9 %, −67.8 % — against a lateral harvest worth +12 % to
++40 % at the ceiling. The two are an order of magnitude apart, so a detector needs rally
+precision far beyond 83 % before the arithmetic turns, and the best rule found reaches 83 %
+only by construction on the exit side, not on the entry side.
+
+**What is positive across every year, and why it does not count as this.** `bajo max n=30
+p=0.05 d=3` — open only while price sits 5 % below its 30-day high, no floor — is positive in
+all seven years measured: +24.0 (2019), +13.4 (2020), +29.8 (2021), +15.5 (2022), +6.2 (2023),
++9.2 (2024), +11.2 (2025). But it **beats its own oracle ceiling** in 2019 (+24.0 against
++12.5), 2020 (+13.4 against −3.9) and 2021 (+29.8 against +9.2), which is the signature
+established earlier: a detector that exceeds the ceiling it approximates is doing something
+else. It has no floor, so it trades the falls, and the years it beats the ceiling are the
+years with large ones. In 2023 and 2024 — the years without a big fall to harvest — it
+captures under a third of the ceiling. It is the falling-market edge in a new wrapper, not a
+range detector.
+
+**Where this leaves the gate, finally.** Three generations of detector — lagging symmetric,
+directional, and stateful breakout — improve steadily on the metric that matters and none
+clears the bar on held-out years. The last one improves rally precision by the largest margin
+available in this rule space and still loses. Every remaining path either needs forward
+information (measured absent) or reduces to trading falls (a strategy the owner set aside on
+purpose). The gate stays closed as an avenue.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1665,6 +1723,7 @@ contradicted by later work that had only this document to go on.
 - **Do not select a config by compounded return over a set of segments.** The compound is dominated by whichever segment was largest, so it selects for one lucky stretch; in 2024 it picked a config beating hold in 4 of 9 lateral stretches over one beating hold in 7 of 9. Select for a rate — segments won, or a per-segment median — and report both.
 - **Selection needs segments, not years.** Fitting on half of one year's lateral stretches lands at percentile 55–63 in two of three years; fitting on the 18 stretches of two full years transfers to a held-out third. Four segments decide nothing. Report the base rate of segments won alongside any consistency claim — under the gate the median config wins 1 stretch in 8, which is what makes a 5-of-8 meaningful and a 9-of-9 suspicious.
 - **A regime gate is worth exactly what its precision on rallies is worth, and that is a forward question.** Recognising a range is easy causally (80–91 % recall from a trailing rule); knowing an impulse has *ended* is not, and that is the whole of the oracle's advantage. Do not propose another regime filter without first stating what causal quantity resolves the next seven days, because the signal screen measured that none in these data does.
+- **A detector that beats its own oracle ceiling is not approximating the oracle.** `bajo max` is positive in all seven years measured but exceeds the ceiling in 2019, 2020 and 2021 — the years with large falls — because it has no floor and trades them. Always report the ceiling beside the detector and treat any excess as a different strategy until decomposed.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -2019,6 +2078,7 @@ each was a hypothesis about where the edge lived, and none survived:
 | The bot's trailing entry as the DCA's buy rule | without a fall requirement it triggers in a median 0.8-6.8 hours and never once reaches a month's close untriggered, so it degenerates into buying on day one (±0.16 %); with one, 87 of 96 months enter below the day-one price and it still finishes 0.6-2.2 points behind, because the 7-9 months that never trigger buy after the rally. A high hit rate with a negative expectation |
 | Immediate activation (`k_act = 0`) | the worst configuration the strategy has: 807 operations in 2025 for a median −95.3 % of base asset, 0/5 beating hold, in the one year holding lost money. The branch is monotone in the multiplier and only `k_act = 16` (15 ops) beats hold, which is the standing "trade less" result rather than anything about the branch |
 | Holding by default and trading only confirmed ranges | the mechanism verifies on three years — masking the non-lateral bars takes the bot from 0/105 beating hold to 54/105 (2023) and 38/105 (2024) — and a config region (`mm` 0.02–0.03, wide stop) transfers to a held-out year at +23.5 % against a grid median of +0.7 %. But all of it rests on labels that see seven days forward. Replacing the oracle with 63 causal rules across three families, ranked on 2024+2025: on held-out 2023 every one lands between −27.3 % and +0.1 % against a +21.8 % ceiling, because their precision is 60–66 % and 20–28 % of their open bars fall inside rising segments. The detector problem is the prediction problem restated |
+| Buying rally precision with recall, and with a stateful ceiling-break rule | measured on both. Tightening a lagging rule reaches 7–10 % rally contamination only by collapsing to 6–18 % open time, where nothing is left to harvest. A stateful rule that fixes the range ceiling on entry and exits the instant price crosses it reaches the bench's best agreement — 78 % precision, 17 % rally contamination, at 41 % open time — and with the floor on (range harvest alone) still returns −1.1 % and −11.7 % on held-out 2022 and 2019 against ceilings of +15.8 % and +12.5 %. Residual rally exposure of 17 % costs more than 83 % of the harvest earns |
 
 …but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
 USDCEUR below before treating them as settled properties of the strategy rather than of that

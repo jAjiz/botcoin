@@ -64,6 +64,34 @@ IMPULSE = [(m, k, d) for m in (0.07, 0.10, 0.15) for k in (5, 7, 10) for d in (0
 BOX = [(n, s, d) for n in (10, 20, 30) for s in (0.06, 0.10, 0.15) for d in (0, 3)]
 ER = [(n, t, d) for n in (10, 20, 30) for t in (0.2, 0.3, 0.4) for d in (0, 3)]
 
+# Familias DIRECCIONALES: solo una subida cierra la puerta. Una caida la deja abierta, porque
+# sin puerta el bot gana en los tramos bajistas (+11.4 / +11.5 / +6.3 en 2024/2025/2023). Las
+# tres de arriba son simetricas y eso las hace renunciar a esa ganancia sin motivo medido.
+UP = [(m, k, d) for m in (0.07, 0.10, 0.15) for k in (5, 7, 10) for d in (0, 3)]
+NOHIGH = [(n, d) for n in (10, 20, 30) for d in (0, 3, 7)]
+OFFHIGH = [(n, p, d) for n in (20, 30, 60) for p in (0.03, 0.05, 0.10) for d in (0, 3)]
+EMA = [(n, d) for n in (20, 50, 100) for d in (0, 3)]
+
+# Familia CON ESTADO, y la unica que no decide con un estadistico rezagado. Al abrir se fija un
+# techo (el maximo de la ventana de entrada) y la puerta se cierra en el INSTANTE en que el
+# precio lo cruza. Las otras familias necesitan que un movimiento del 10 % se complete en siete
+# dias antes de cerrar, asi que el bot opera durante todo el arranque del rally; una ruptura de
+# techo cierra a un 1-2 % por encima del rango. `floor=True` cierra tambien por abajo, para que
+# los tramos bajistas no aporten nada y la cifra mida solo la cosecha de rangos.
+BREAK = [
+    (entry, n, sp, mg, fl)
+    for entry, n, sp in (
+        ("caja", 20, 0.10),
+        ("caja", 20, 0.15),
+        ("caja", 30, 0.10),
+        ("caja", 30, 0.15),
+        ("sinmax", 20, 0.0),
+        ("sinmax", 30, 0.0),
+    )
+    for mg in (0.0, 0.02)
+    for fl in (False, True)
+]
+
 
 def _confirm(raw: list[bool], delay: int) -> list[bool]:
     """Cierra en cuanto ``raw`` falla; abre solo tras ``delay`` dias consecutivos cumpliendo."""
@@ -99,6 +127,79 @@ def det_er(closes: list[float], n: int, thresh: float, delay: int) -> list[bool]
         er = abs(win[-1] - win[0]) / path if path > 0 else 1.0
         raw.append(len(win) > n and er <= thresh)
     return _confirm(raw, delay)
+
+
+def det_up_impulse(closes: list[float], move: float, look: int, delay: int) -> list[bool]:
+    """Cierra solo en impulsos ALCISTAS: el signo importa, una caida no cierra la puerta."""
+    raw = []
+    for i in range(len(closes)):
+        back = closes[max(0, i - look) : i]
+        raw.append(not any(closes[i] / c - 1.0 >= move for c in back))
+    return _confirm(raw, delay)
+
+
+def det_no_new_high(closes: list[float], n: int, delay: int) -> list[bool]:
+    """Abierta mientras el precio NO marque maximo de n dias: 'los maximos dejan de romperse'."""
+    raw = []
+    for i in range(len(closes)):
+        back = closes[max(0, i - n) : i]
+        raw.append(bool(back) and closes[i] < max(back))
+    return _confirm(raw, delay)
+
+
+def det_off_high(closes: list[float], n: int, pct: float, delay: int) -> list[bool]:
+    """Abierta solo si el precio esta al menos pct por debajo de su maximo de n dias."""
+    raw = []
+    for i in range(len(closes)):
+        win = closes[max(0, i - n) : i + 1]
+        raw.append(closes[i] <= max(win) * (1.0 - pct))
+    return _confirm(raw, delay)
+
+
+def det_below_ema(closes: list[float], n: int, delay: int) -> list[bool]:
+    """Abierta solo por debajo de la media exponencial: se queda fuera de las tendencias largas."""
+    k = 2.0 / (n + 1.0)
+    ema, raw = closes[0], []
+    for c in closes:
+        ema = c * k + ema * (1 - k)
+        raw.append(c < ema)
+    return _confirm(raw, delay)
+
+
+def det_breakout(
+    closes: list[float],
+    highs: list[float],
+    lows: list[float],
+    entry: str,
+    n: int,
+    span: float,
+    margin: float,
+    floor: bool,
+    delay: int = 3,
+) -> list[bool]:
+    """Abre cuando el mercado se lateraliza, fija el techo del rango, y cierra al romperlo."""
+    out = [False] * len(closes)
+    open_, ceil, flo, run = False, 0.0, 0.0, 0
+    for i in range(len(closes)):
+        if open_:
+            if closes[i] > ceil or (floor and closes[i] < flo):
+                open_, run = False, 0
+            else:
+                out[i] = True
+                continue
+        win_c = closes[max(0, i - n + 1) : i + 1]
+        if entry == "caja":
+            lo, hi = min(win_c), max(win_c)
+            ok = len(win_c) >= n and (hi - lo) / ((hi + lo) / 2.0) <= span
+        else:
+            back = closes[max(0, i - n) : i]
+            ok = bool(back) and closes[i] < max(back)
+        run = run + 1 if ok else 0
+        if ok and run > delay:
+            open_ = True
+            ceil = max(highs[max(0, i - n + 1) : i + 1]) * (1.0 + margin)
+            flo = min(lows[max(0, i - n + 1) : i + 1]) * (1.0 - margin)
+    return out
 
 
 def segments_from(days: pd.DataFrame, open_flags: list[bool], df: pd.DataFrame) -> list[rso.Segment]:
@@ -157,6 +258,13 @@ def agreement(det_open: set[int], oracle: list[rso.Segment], n_bars: int) -> tup
     return recall, prec, fp_rise, fp_fall
 
 
+def daily_hl(df: pd.DataFrame) -> tuple[list[float], list[float]]:
+    """Maximo y minimo de cada dia natural, para fijar el techo del rango al abrir."""
+    day = df["dtime"].dt.floor("D")
+    g = df.groupby(day)
+    return g["high"].max().tolist(), g["low"].min().tolist()
+
+
 def build(args, year: int) -> dict:
     start, end = f"{year}-01-01", f"{year}-12-31"
     cal_start = (pd.Timestamp(start) - pd.DateOffset(months=6)).strftime("%Y-%m-%d")
@@ -178,11 +286,13 @@ def build(args, year: int) -> dict:
         "final": float(ctx.df.iloc[-1]["close"]),
         "days": days,
         "closes": days["close"].astype(float).tolist(),
+        "highs": daily_hl(ctx.df)[0],
+        "lows": daily_hl(ctx.df)[1],
         "oracle": oracle,
     }
 
 
-def detectors(closes: list[float]) -> dict[str, list[bool]]:
+def detectors(closes: list[float], highs: list[float], lows: list[float]) -> dict[str, list[bool]]:
     out = {"oraculo": []}
     for m, k, d in IMPULSE:
         out[f"impulso m={m:.2f} k={k} d={d}"] = det_impulse(closes, m, k, d)
@@ -190,6 +300,20 @@ def detectors(closes: list[float]) -> dict[str, list[bool]]:
         out[f"caja n={n} s={sp:.2f} d={d}"] = det_box(closes, n, sp, d)
     for n, t, d in ER:
         out[f"er n={n} t={t:.1f} d={d}"] = det_er(closes, n, t, d)
+    for m, k, d in UP:
+        out[f"alcista m={m:.2f} k={k} d={d}"] = det_up_impulse(closes, m, k, d)
+    for n, d in NOHIGH:
+        out[f"sin max n={n} d={d}"] = det_no_new_high(closes, n, d)
+    for n, pp, d in OFFHIGH:
+        out[f"bajo max n={n} p={pp:.2f} d={d}"] = det_off_high(closes, n, pp, d)
+    for n, d in EMA:
+        out[f"bajo ema n={n} d={d}"] = det_below_ema(closes, n, d)
+    for entry, n, sp, mg, fl in BREAK:
+        tag = f"rotura {entry} n={n}"
+        if entry == "caja":
+            tag += f" s={sp:.2f}"
+        tag += f" m={mg:.2f}" + (" +suelo" if fl else "")
+        out[tag] = det_breakout(closes, highs, lows, entry, n, sp, mg, fl)
     del out["oraculo"]
     return out
 
@@ -201,6 +325,9 @@ def main() -> int:
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     ap.add_argument("--top", type=int, default=10)
     ap.add_argument("--local-top", type=int, default=0, help="Reevalua los N mejores con calibracion local.")
+    ap.add_argument(
+        "--holdout", nargs="*", type=int, default=[2023], help="Años excluidos del ranking (por defecto 2023)."
+    )
     args = ap.parse_args()
 
     print(f"[datos] {args.csv}   config fija {gsh._signature(CONFIG)}")
@@ -246,7 +373,7 @@ def main() -> int:
 
         rows = []
         t0 = time.perf_counter()
-        for name, flags in detectors(w["closes"]).items():
+        for name, flags in detectors(w["closes"], w["highs"], w["lows"]).items():
             segs = segments_from(w["days"], flags, w["ctx"].df)
             if not segs:
                 rows.append({"name": name, "base": 0.0, "ops": 0, "open": 0.0, "rec": 0.0, "pre": 0.0, "fpr": 0.0})
@@ -275,12 +402,14 @@ def main() -> int:
             "w": w,
         }
 
-    fit = [y for y in args.years if y != 2023]
+    fit = [y for y in args.years if y not in args.holdout]
+    if not fit:
+        raise SystemExit("todos los años estan en --holdout; no queda nada sobre lo que ajustar")
     names = list(per_year[args.years[0]]["rows"])
     ranked = sorted(names, key=lambda n: sum(per_year[y]["rows"][n]["base"] for y in fit), reverse=True)
 
     print("")
-    print(f"[ranking] suma de activo base en {fit} (2023 NO participa)")
+    print(f"[ranking] suma de activo base en {fit}; retenidos: {args.holdout}")
     head = f"  {'detector':<24}"
     for y in args.years:
         head += f" {y!s:>9}"
@@ -296,6 +425,28 @@ def main() -> int:
             f"{'/'.join(str(per_year[y]['rows'][name]['ops']) for y in args.years):>10}"
         )
         print(line)
+
+    # Segundo ranking, por el criterio estructural en vez de por dinero dentro de muestra: los
+    # que menos abren dentro de tramos alcistas. Renunciar a laterales cuesta cero; abrir en una
+    # subida cuesta entre -60 y -68 puntos. Un detector "robusto" es uno con esta columna baja,
+    # aunque su recall sea malo.
+    def _fpr(name: str) -> float:
+        return sum(per_year[y]["rows"][name]["fpr"] for y in fit) / len(fit)
+
+    alive = [n for n in names if per_year[fit[0]]["rows"][n]["open"] > 5.0]
+    print("")
+    print("[ranking por precision en subidas] los que menos abren dentro de tramos alcistas")
+    head = f"  {'detector':<24}"
+    for y in args.years:
+        head += f" {y!s:>9}"
+    head += f" {'fp alc':>7} {'abierta':>8} {'recall':>7}"
+    print(head)
+    for name in sorted(alive, key=_fpr)[: args.top]:
+        line = f"  {name:<24}"
+        for y in args.years:
+            line += f" {per_year[y]['rows'][name]['base']:>+8.1f}%"
+        r = per_year[fit[0]]["rows"][name]
+        print(line + f" {_fpr(name):>6.0f}% {r['open']:>7.0f}% {r['rec']:>6.0f}%")
 
     print("")
     print("  " + "techo oracular:  " + "  ".join(f"{y}: {per_year[y]['ceiling']:+.1f}%" for y in args.years))
@@ -315,7 +466,7 @@ def main() -> int:
             line = f"  {name:<24}"
             for y in args.years:
                 w = per_year[y]["w"]
-                flags = detectors(w["closes"])[name]
+                flags = detectors(w["closes"], w["highs"], w["lows"])[name]
                 segs = segments_from(w["days"], flags, w["ctx"].df)
                 if not segs:
                     line += f" {'-':>19}"
