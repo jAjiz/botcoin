@@ -2027,6 +2027,14 @@ mechanism does not address**: the trailing stop reacts to intraday extremes, and
 day-to-day effect. Whether a reversion of that size survives 0.80 % round trip is unmeasured and
 is the one open question this section produces.
 
+> **RETRACTED (2026-09-10).** This paragraph is wrong twice over and the next section replaces
+> it. The VR here was computed on the *concatenation* of open stretches, so a one-day
+> aggregation window crossed stretch boundaries constantly; done properly the number is 0.73 /
+> 0.57 / 0.63, much lower. And the effect is not the market's: a shuffled path with no memory
+> at all, put through the same gate, reproduces the whole curve. The gate admits price only
+> while it stays inside a band, and conditioning on staying in a band truncates long
+> excursions, which is exactly what VR < 1 detects.
+
 **Honest bounds.** A variance ratio measures *linear* serial dependence; its absence does not
 prove there is nothing exploitable, only that the simplest thing a mean-reverting mechanism
 would need is not there at minute scale. And a large perfect-foresight ceiling says nothing
@@ -2081,6 +2089,125 @@ minus fees, and which particular cycles carry the loss is bookkeeping. The first
 decomposition ("waiting would have bought 12-29 % cheaper") was computed from the broken
 classification and is withdrawn; the controlled comparison replaces it, and it is the only one
 of the two that was ever going to settle the question.
+
+### The long horizon: the gate manufactures its own mean reversion (2026-09-10)
+
+The owner asked the right question of the previous section's one lead — if the market reverts
+at one day, what happens further out, and is the mechanism failing only because it insists on
+closing intraday? Both halves are now measured, and the lead is dead.
+
+**Extended and cleaned, the reversion looks spectacular.** Counting only aggregation windows
+that fit *entirely* inside one open stretch, on `impulso m=0.07 k=7`, eight years:
+
+| horizon | 1 h | 4 h | 12 h | 1 d | 2 d | 3 d | 5 d | 7 d |
+|---|---|---|---|---|---|---|---|---|
+| median VR | 0.938 | 0.809 | 0.677 | **0.612** | **0.455** | **0.382** | **0.321** | **0.282** |
+| years VR<1 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 7/7 | 6/6 | 2/2 |
+
+Eight years out of eight at every horizon, z between −3 and −4.5, and monotone. By the standard
+this document has been applying, that is the most consistent effect it has ever measured.
+
+**And it is an artefact of the gate.** The control is the same price path with its returns
+*shuffled* — same marginal distribution, same total return, zero serial dependence by
+construction — run through the same gate:
+
+| horizon | 1 h | 4 h | 12 h | 1 d | 2 d | 3 d | 5 d | 7 d |
+|---|---|---|---|---|---|---|---|---|
+| real, gated | 0.938 | 0.809 | 0.677 | 0.612 | 0.455 | 0.382 | 0.321 | 0.282 |
+| **shuffled, gated** | 0.983 | 0.936 | 0.768 | **0.646** | **0.458** | **0.404** | **0.327** | **0.311** |
+| real, ungated | 0.990 | 0.942 | 0.931 | 0.935 | 0.886 | 0.904 | 0.920 | 0.920 |
+
+A path with no memory whatsoever reproduces essentially the whole curve. `impulso` admits price
+only while it stays inside a band around the recent daily closes, and conditioning on staying
+inside a band truncates long excursions — the longer the horizon, the harder the truncation, and
+VR < 1 is precisely a measure of truncated aggregate variance. The ungated row is the market's
+own answer and it is flat: 0.89–0.94 from 12 h to 30 d.
+
+Coverage is not matched between the two arms (shuffling destroys volatility clustering, so the
+control opens 13–68 % against the real 30–74 %). Restricting to 2023–2025, where coverage is
+close (74/68, 56/54, 72/65), leaves a genuine excess of about 0.04–0.14 VR units at 1 h–1 d and
+nothing at all beyond 3 days. So there *is* a little real reversion under the artefact. It is
+worth nothing, which the next measurement shows directly.
+
+**The money test kills it outright.** Gross expectation per operation of the naive contrarian at
+horizon h — bet against the last h-move — on non-overlapping returns inside stretches, eight
+years pooled, against the 0.80 % round trip:
+
+| horizon | 1 h | 4 h | 12 h | 1 d | 2 d | 3 d | 5 d | 7 d |
+|---|---|---|---|---|---|---|---|---|
+| pairs | 37208 | 8649 | 2527 | 1068 | 412 | 215 | 84 | 41 |
+| gross | +0.011 % | +0.031 % | +0.015 % | +0.183 % | +0.349 % | +0.244 % | +0.742 % | +0.176 % |
+| t | 4.8 | 3.6 | 0.6 | 3.6 | 3.5 | 1.7 | 2.9 | 0.4 |
+| **net** | −0.789 % | −0.769 % | −0.785 % | −0.617 % | −0.451 % | −0.556 % | **−0.058 %** | −0.624 % |
+
+Nothing is net positive. The best cell is 5 days at −0.058 % — the fee, to a rounding error — on
+84 pairs. And the shuffled control *pays more* than the real market at every horizon up to 3
+days (+0.374 % against +0.183 % at one day), so there is no excess to harvest even before fees.
+
+**The bot was never trading intraday.** The second half of the question is answered by
+measuring the legs directly under the symmetric gate:
+
+| config | ops/yr | median leg, in asset | p90 | result |
+|---|---|---|---|---|
+| `mm=0.000 s=0.5` | 260–350 | 0.8–0.9 d | 2.9–4.2 d | −71 to −76 % |
+| `mm=0.010 s=0.9` | 35–59 | 6.9–13.1 d | 20.6–39.5 d | −1 to −21 % |
+| `mm=0.020 s=0.9` | 18–23 | 11.3–27.9 d | 40.6–88.6 d | +0.8 to −14.8 % |
+| `mm=0.050 s=0.9` | 1–7 | 65–85 d | 127–143 d | −0.4 to −7.0 % |
+| `mm≥0.100 s=0.9` | 1 | — | — | −0.4 % |
+
+Even the fastest config in the grid holds for the best part of a day; the ones the study kept
+returning to hold for weeks, and `mm=0.05` for two to three months. The grid already spans
+everything from a day to "one operation, never close", and the surface is monotone toward the
+latter. Nothing here was ever constrained to intraday.
+
+**What this closes.** The one open lead of the previous section, and with it the idea that a
+different holding horizon is what the mechanism is missing. It also adds a defect of a shape
+this document had not seen before: not look-ahead, but **conditioning**. Every statistic
+computed *inside* a gate's open stretches is computed on a sample the gate selected, and a
+selection rule stated in terms of price contaminates every price statistic downstream of it.
+The three earlier defects were about information from the future; this one is about a
+conditioned sample, and only a synthetic control catches it.
+
+### The flicker does not trade, and the confirmation delay only pays the fee (2026-09-10)
+
+The owner asked whether the gate's flicker — 452–902 stretches a year, most under an hour —
+starts trades that end up losing, and whether a confirmation delay would prevent them. The
+earlier dismissal of the flicker was on *time* (those stretches hold 0.8–2.2 % of open time),
+which says nothing about operations, and operations are what cost money.
+
+**The flicker produces no operations at all.** Splitting every cycle by the length of the open
+stretch its sell landed in, across three years and four configs — twelve rows:
+
+| stretch of the sell | cycles, all 12 rows | compounded |
+|---|---|---|
+| < 1 h | **1** | −0.4 % |
+| 1 h – 1 d | 2–28 per row | −9.7 % worst |
+| > 1 d | 8–152 per row | **−73.9 % worst** |
+
+One cycle in twelve config-years sells inside a sub-hour stretch. A trailing stop needs an
+activation cross and then a breach; twenty minutes does not fit one. **The entire loss lives in
+the stretches longer than a day**, which is where the bot actually operates.
+
+**The confirmation delay is nonetheless a small, consistent improvement.** Requiring the gate's
+condition to hold for a stretch of clock before it *opens* (never before it closes — delaying
+protection is the one thing a gate must not do), one hour of confirmation cuts stretches from
+452/902/807 to 77/155/124 while coverage barely moves (77.7→76.2, 58.3→55.2, 75.8→73.3), and
+the result improves in **12 of 12** cells, median +3.8 points.
+
+**About half of that is the fee bill and the rest is not established.** The controlled
+decomposition — gain minus 0.40 % per operation removed — leaves a median residual of +3.7
+points, positive in 8 of 12. Twelve-of-twelve on the gain is real; eight-of-twelve on the
+residual is a coin flip at this document's own measured resolution noise of up to 25 points per
+config. And nothing crosses holding: the two positive cells (2023, +3.2 % and +4.8 %) are the
+year in which the delay pushes admitted drift from −9 % to **+37 %**, which is trend leaking
+back in, not better filtering. Longer delays (4 h to 7 d) are worse than no delay in most cells
+and wreck the drift objective outright (2024 reaches +95 % admitted drift at 7 days).
+
+**So: adopt it as hygiene, not as a result.** A gate with no hysteresis producing 900 stretches
+a year is a defect of the component regardless of what it earns, and one hour fixes it for
+0.5–3 points of coverage. But it does not move the verdict, and it must be re-checked against
+admitted drift — the gate's own objective — before it is treated as an improvement rather than
+as a different gate.
 
 ### Still not established
 
@@ -2160,6 +2287,10 @@ contradicted by later work that had only this document to go on.
 - **Gating is a real filter and not a strategy, and the test that settles it is repetition across windows, not the median.** At production fidelity the same 154 causal detectors were run on 2023, 2024 and 2025 and crossed **per variant**: **0 of 154 beat holding in all three**, against a base rate of 0.4 if the years were independent draws. The win rate is set by the year, not by the detector — 3 % of variants win in 2023, 23 % in 2024, 42 % in 2025 — and the winners are not the same winners: 2024's champion `er n=30 t=0.4 d=0` (+33.7 %) returns −42.3 % in 2023, and the surface spike `alcista m=0.20 k=10` (+29.6 %) returns −35.3 %. The best variant by worst year is `impulso m=0.10 k=10` at −3.5 %.
 - **The mask's forced rebuy is where the loss lands, not what causes it.** Cycles closed by the mask compound negative while cycles closed by the trailing stop are frequently positive, on every gate, year and config. But the controlled comparison with `force_hold_rebuy` splits 16-19 across 36 pairs and nothing crosses holding in either arm: remove the forcing and the loss reappears elsewhere, exactly as a zero-expectation cycle predicts.
 - **`Operation.idx` is the operation's ordinal (`len(ops) + 1`), not a bar index.** Resolving an operation to its bar goes through its timestamp. Getting this wrong produced a whole table of confident, meaningless numbers, because comparing an ordinal to a set of bar indices classifies by coincidence and the coincidence tracks gate coverage.
+- **A statistic computed inside a gate's open stretches is computed on a sample the gate selected.** `impulso` admits price only inside a band, and conditioning on staying in a band truncates long excursions, which is exactly what a variance ratio below 1 measures. A shuffled path with no serial dependence at all, run through the same gate, reproduces VR 0.65 / 0.46 / 0.40 / 0.33 at 1, 2, 3 and 5 days against the real 0.61 / 0.46 / 0.38 / 0.32. Any property measured inside a gate needs a synthetic control before it is believed. This is the fourth measurement defect in the study and the first that is not look-ahead.
+- **There is no exploitable mean reversion at any horizon from 15 minutes to 30 days.** The naive contrarian's gross expectation peaks at +0.74 % per operation at 5 days against a 0.80 % round trip, and the shuffled control pays *more* than the real market at every horizon up to 3 days. Ungated, the market's own VR is 0.89-0.94 from 12 h out to 30 d. The day-scale lead from "What the admitted market actually is" is retracted.
+- **The bot was never trading intraday, and the grid already spans everything up to not trading.** Median in-asset leg under the symmetric gate is 0.8 d at `mm=0`, 7-13 d at `mm=0.01`, 11-28 d at `mm=0.02` and 65-85 d at `mm=0.05`; p90 reaches 143 days. "Let positions run for weeks" is not an untried setting, it is the region the surface is already monotone toward.
+- **The gate's flicker costs nothing, and a one-hour confirmation delay is hygiene rather than an edge.** One cycle in twelve config-years sells inside a sub-hour stretch: a trailing stop cannot activate and breach in twenty minutes. The delay does improve 12 of 12 cells by a median +3.8 points, but about half is the fee of the operations it removes, the residual is 8 of 12 inside the resolution noise, and its only cells above holding are the year where it lets admitted drift rise from -9 % to +37 %. Judge any hysteresis against admitted drift, not against return.
 - **Measure the market before searching it again.** After 154 detectors and 105 configs came back negative, the informative move was a variance ratio and a trade-capped perfect-foresight ceiling, not another sweep. They cost minutes and produced the mechanism-level reason: the admitted market is a random walk at minute scale, so a trailing stop has nothing to grip. Prefer a bound or a property over one more search.
 - **The opportunity is not the constraint; predictability is.** Fifty perfectly timed trades on the admitted bars are worth +393 % to +430 % of base asset in each of 2023, 2024 and 2025 at the real fee. The bot trades 27-33 times there and captures about 2.5 % of it.
 - **Select each component by its own objective, then fix it before choosing the next.** The gate is ranked by admitted drift against coverage (no engine, so eight years are affordable) and then held constant while `min_margin`/`stop_pct` are swept on the bars it admits. Choosing both with one return metric over 154 x 105 combinations is how this study produced three false discoveries.
@@ -2630,6 +2761,8 @@ what still answers a question no result has closed.
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
 | `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
 | `scripts/analysis/forced_rebuy_cost.py` | **What does the mask's forced rebuy cost?** Splits every cycle by whether its closing buy landed on a masked bar (the only operation that can, since the sell is deferred) and prices the alternative of waiting for the gate to reopen. First-order decomposition, not a counterfactual — it does not re-simulate the displaced legs. |
+| `scripts/analysis/lateral_horizon.py` | **Is the day-scale mean reversion real, and does it pay?** Lo-MacKinlay VR counting only aggregation windows contained entirely in one open stretch, out to 30 days; the gross expectation of the naive contrarian on non-overlapping returns against the round-trip cost; and, decisively, a control arm that shuffles the returns and re-runs the same gate on the memoryless path. Three arms: gated, ungated, shuffled-gated. |
+| `scripts/analysis/gate_hysteresis.py` | **Does the gate's flicker start losing trades, and does a confirmation delay fix it?** Splits cycles by the duration of the open stretch their sell landed in, then sweeps an open-only confirmation delay reporting coverage, stretch count, admitted drift and result together — so a delay that buys return by letting trend back in is visible as such. |
 | `scripts/analysis/lateral_market_structure.py` | **Does the market a gate admits have exploitable structure at all?** Trade-capped perfect-foresight ceiling (exact two-state DP with an operations dimension, so the bound answers "what could an N-trade mechanism get" rather than the useless uncapped infinity), Lo-MacKinlay variance ratios computed only inside contiguous open stretches, and the stretch-length distribution against the round-trip cost. No search, no configs. |
 | `scripts/analysis/gate_filter_quality.py` | **Which gate filters best, judged by the gate's own objective?** Admitted drift (annualised by coverage) against coverage, per year, for every variant, with no engine at all — so it runs over eight years in minutes. Groups variants by coverage band and ranks within the band by worst-year drift, because a Pareto-frontier count would rank the always-open gate top (nothing has more coverage, so it is never dominated). |
 | `scripts/analysis/gate_config_sweep.py` | **With the gate fixed, what does the trailing stop want?** The 105-config grid on the bars one named gate admits, 1-min path, ranked by worst year, with the full worst-year surface printed. The gate is a `--gate` choice made beforehand and is never re-picked from the output. |
