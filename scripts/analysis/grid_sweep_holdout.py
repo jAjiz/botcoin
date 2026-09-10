@@ -31,6 +31,9 @@ Usage (PYTHONPATH=. required; no DB env vars needed):
 
 import argparse
 import dataclasses
+import hashlib
+import os
+import pickle
 import statistics
 import time
 
@@ -127,9 +130,37 @@ _POINTS: list[CalibrationInputs] = []
 _POINT_TIMES: list[str] = []
 
 
+def _cache_path(frame: pd.DataFrame, recalib_bars: int) -> str | None:
+    """Ruta del cache en disco, o None si `BOTC_POINT_CACHE` no esta puesta.
+
+    La clave identifica el marco por completo -- longitud, extremos y cadencia -- porque los
+    puntos son *anclados al marco*: el punto ``at=idx`` resume la historia hasta esa vela, asi
+    que dos marcos distintos no pueden compartirlos aunque se solapen.
+    """
+    root = os.environ.get("BOTC_POINT_CACHE")
+    if not root:
+        return None
+    key = f"{len(frame)}|{frame.iloc[0]['dtime']}|{frame.iloc[-1]['dtime']}|{recalib_bars}"
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, f"points_{hashlib.sha256(key.encode()).hexdigest()[:16]}.pkl")
+
+
 def _install_calibration_cache(frame: pd.DataFrame, recalib_bars: int) -> None:
-    """Frame-anchored points computed once and sliced per window; see the other harnesses."""
+    """Frame-anchored points computed once and sliced per window; see the other harnesses.
+
+    Construir el calendario cuesta O(n^2) -- cada punto reanaliza la historia hasta su vela --
+    y son horas para un marco de varios años. Con `BOTC_POINT_CACHE` apuntando a un directorio
+    ese coste se paga UNA vez por marco y las corridas siguientes arrancan en segundos, que es
+    lo que permite iterar sobre variantes de una misma ventana.
+    """
     global _POINTS, _POINT_TIMES
+    path = _cache_path(frame, recalib_bars)
+    if path and os.path.exists(path):
+        with open(path, "rb") as fh:
+            _POINTS, _POINT_TIMES = pickle.load(fh)
+        print(f"  {len(_POINTS)} puntos cada {recalib_bars} velas (cache: {os.path.basename(path)})")
+        optimizer.build_calibration_inputs = _cached_calibration_inputs
+        return
     t0 = time.perf_counter()
     points = []
     for idx in range(0, len(frame), recalib_bars):
@@ -145,6 +176,10 @@ def _install_calibration_cache(frame: pd.DataFrame, recalib_bars: int) -> None:
     _POINTS = points
     _POINT_TIMES = [str(frame.iloc[p.at]["dtime"]) for p in points]
     print(f"  {len(points)} puntos cada {recalib_bars} velas ({time.perf_counter() - t0:.0f}s)")
+    if path:
+        with open(path, "wb") as fh:
+            pickle.dump((_POINTS, _POINT_TIMES), fh)
+        print(f"  [cache] escrito {os.path.basename(path)}")
     optimizer.build_calibration_inputs = _cached_calibration_inputs
 
 
