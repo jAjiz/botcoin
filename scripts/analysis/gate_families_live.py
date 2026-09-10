@@ -47,6 +47,7 @@ Uso (PYTHONPATH=. obligatorio; sin variables de entorno de BD):
 """
 
 import argparse
+import json
 import os
 import time
 
@@ -240,6 +241,7 @@ def main() -> int:
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     ap.add_argument("--fee", type=float, default=ef.FEE)
     ap.add_argument("--top", type=int, default=15)
+    ap.add_argument("--out", default=None, help="Vuelca el resultado por variante a JSON, para cruzar ventanas.")
     args = ap.parse_args()
 
     ef.FEE = args.fee
@@ -287,6 +289,12 @@ def main() -> int:
         if i % 25 == 0:
             print(f"    ... {i}/{len(dets)} ({time.perf_counter() - t0:.0f}s)", flush=True)
 
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump({"window": f"{args.start}..{args.end}", "ungated": ref["base"], "rows": rows}, fh)
+        print("")
+        print(f"[json] {args.out}")
+
     rows.sort(key=lambda r: r["base"], reverse=True)
     print(f"\n[ranking] {len(rows)} detectores continuos, activo base sobre {args.start[:4]}")
     print(f"  {'detector':<26} {'base':>9} {'EUR':>10} {'ops':>5} {'abierta':>9}")
@@ -298,6 +306,11 @@ def main() -> int:
 
     pos = [r for r in rows if r["base"] > 0.0]
     print(f"\n  por encima de mantener: {len(pos)}/{len(rows)}   sin puerta: {ref['base']:+.1f} %")
+    print(
+        "  Una sola ventana elige por RUIDO: esta cifra no descarta ni valida a nadie, y la"
+        " mediana por familia menos aun, porque produccion ejecuta UNA variante."
+    )
+    print("  La prueba que decide es cruzar POR VARIANTE entre ventanas: --out y gate_families_cross.py.")
 
     print("\n[superficie de `alcista`] activo base (%), la familia del hallazgo previo")
     print("    m / k " + "".join(f"{k:>9}" for k in LOOKS))

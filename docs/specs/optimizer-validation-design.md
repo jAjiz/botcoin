@@ -1833,6 +1833,46 @@ predict nothing. The gate is a genuine filter. It is not a strategy: the median 
 holding, and no member of it can be selected in advance, because the surface that would let you
 choose one is noise.
 
+### The same detectors on three windows: nothing repeats (2026-09-10)
+
+The previous section dismissed families by their medians, which is the wrong test and the owner
+said so: production runs one variant, so what matters is whether the *specific* variants that
+win here also win elsewhere. The 154 continuous detectors were therefore run at 1-min fidelity
+on 2023, 2024 and 2025 and crossed per variant (`gate_families_live.py --out`,
+`gate_families_cross.py`).
+
+| | 2023 | 2024 | 2025 |
+|---|---|---|---|
+| ungated bot | −56.3 % | −23.3 % | +4.7 % |
+| variants beating hold | **3 %** | **23 %** | **42 %** |
+
+**0 of 154 beat holding in all three windows.** The base rate, if the years were independent
+draws at those per-year rates, is 0.2 % — 0.4 variants of 154. Observing zero is exactly what
+chance predicts, so there is nothing here to select.
+
+**The year decides, not the detector.** A 14× spread in the win rate across three windows, with
+the ungated bot's own result moving from −56.3 % to +4.7 %, says the outcome is a property of
+the market that year. And the winners do not repeat:
+
+| detector | 2023 | 2024 | 2025 | worst |
+|---|---|---|---|---|
+| `impulso m=0.10 k=10` | −3.5 % | +0.1 % | +5.5 % | **−3.5 %** |
+| `er n=30 t=0.4 d=0` *(2024's best)* | −42.3 % | +33.7 % | +15.4 % | −42.3 % |
+| `alcista m=0.20 k=10` *(the surface spike)* | −35.3 % | +29.6 % | +4.7 % | −35.3 % |
+| `alcista m=0.10 k=10` *(the retracted rule)* | — | +3.4 % | — | — |
+
+Ranked by worst year — the only thing a variant can promise without choosing the year — the
+best of all 154 is `impulso m=0.10 k=10` at −3.5 %. Every family's median worst year is between
+−9.1 % and −28.1 %.
+
+**And the 15-minute artefact is not systematic.** The 105-config grid ungated, at both
+resolutions, on 2024 and 2025: median delta 1m−15m is **+0.00 %** in both, maximum absolute
+delta 25-26 points, sign changes 0/105 and 1/105, rank correlation +0.798 and +0.938 with 7/10
+top-10 overlap. The 19 points `mm=0.020/0.9` gained on 2024 was a draw from a wide
+config-specific distribution, not a bias. **No closed avenue needs reopening for resolution
+reasons** — and the size of that per-config term is one more reason no single-config result in
+this document should be believed on its own.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1907,8 +1947,9 @@ contradicted by later work that had only this document to go on.
   it. Deferred, not dropped: revisit it once the gate's production semantics are settled.
 - **Any rule that reads a bar-derived series must state which bar it is applied to, and be tested one bar later.** A daily flag applied to its own day is 24 h of look-ahead and it was worth more than the entire measured edge. This is the third defect of this shape in the study, after the pivot-label leak and the mask leak; the common signature is that the number is large, clean, and arrives before anyone has audited the information boundary.
 - **A gate must be evaluated continuously, not on the grid of the series it reads.** The rule was written on daily closes and the harness therefore evaluated it once a day; that staleness alone was worth 23 points on 2024. The daily grid was never part of the hypothesis.
-- **Simulating at 15 minutes runs against the bot, by an amount that is neither uniform nor known.** The intrabar artefact manufactures exits: 19 points on 2024 with `mm=0.020`, against a median of +0.00 across 105 configs on a 2025 window. Any strategy conclusion drawn at 15-min resolution is provisional until re-run at 1 min.
-- **Gating is a real filter and not a strategy.** At production fidelity on 2024, 154 causal detectors median −5.3 % against the ungated bot's −23.3 % — an 18-point repair from rules that predict nothing — but still below holding, and the surface that would let you select one member is noise (σ = 11.0, best neighbours negative).
+- **Resolution adds config-specific noise of up to 25 points, with no systematic direction — it does NOT favour or penalise the bot.** Corrected: the 19 points that `mm=0.020/0.9` gained on 2024 going from 15 min to 1 min looked like a systematic artefact and is not one. The full 105-config grid on both 2024 and 2025 puts the median delta 1m-15m at exactly **+0.00 %**, with a maximum absolute delta of 25-26 points, 0/105 and 1/105 sign changes, and rank correlations of +0.798 and +0.938 (top-10 overlap 7/10 in both). So the ordering largely survives and no closed avenue needs reopening on these grounds; what the resolution does add is a per-config term big enough to move a single config by a quarter of its result, which is one more reason a single-config number means nothing.
+- **Gating is a real filter and not a strategy, and the test that settles it is repetition across windows, not the median.** At production fidelity the same 154 causal detectors were run on 2023, 2024 and 2025 and crossed **per variant**: **0 of 154 beat holding in all three**, against a base rate of 0.4 if the years were independent draws. The win rate is set by the year, not by the detector — 3 % of variants win in 2023, 23 % in 2024, 42 % in 2025 — and the winners are not the same winners: 2024's champion `er n=30 t=0.4 d=0` (+33.7 %) returns −42.3 % in 2023, and the surface spike `alcista m=0.20 k=10` (+29.6 %) returns −35.3 %. The best variant by worst year is `impulso m=0.10 k=10` at −3.5 %.
+- **Judge a family by whether its specific winners repeat on other data, never by its median.** Production runs one variant, chosen deliberately; a family whose median is −14 % can still contain the one that works, and dismissing the family by its median hides exactly what the search is for. Report the median as description, decide on the cross-window table, and always print the base rate beside an "n of n" count. The owner has had to raise this twice.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -2370,6 +2411,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
 | `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
+| `scripts/analysis/gate_families_cross.py` | **Do the variants that win here win there?** Crosses the per-variant JSON of several `gate_families_live.py` runs, ranks by windows won with the *worst* window as tiebreak, and prints the base rate that an "n of n" count would reach by chance. This is the test that replaces judging a family by its median. Seconds to run. |
 | `scripts/analysis/gate_families_live.py` | **Does any detector family survive at production fidelity, and is any of them a plateau?** Every family that ever ranked well, converted to its continuous form and run as a single causal arm on the 1-min path: 154 variants, the whole `alcista` surface among them. Reports the per-family distribution and the surface, because the head of a 154-row ranking on one year is an order statistic. Reuses the cached calibration schedule (`BOTC_POINT_CACHE`). |
 | `scripts/analysis/gate_sensitivity.py` | **Is `alcista m=0.10 k=10` a mechanism or a fitted parameter?** 10 moves x 7 looks over each continuous window, with a `--lags` arm that shifts the daily flag; the L0 - L1 difference is the look-ahead bias, printed point by point. This is the harness that found the defect. |
 | `scripts/analysis/lateral_detector.py` | **How much of the oracle gate survives a rule that only sees the past?** 63 causal detectors in three families (trailing impulse, box containment, Kaufman ER) with a shared confirmation filter, driving the gate for one fixed config, ranked on 2024+2025 with 2023 held out. Reports agreement with the oracle labels and splits the false positives by direction, since a false positive on a fall is not an error. `--local-top` re-runs the best few with calibration paired to the ceiling's. About 30 minutes for three years. |
