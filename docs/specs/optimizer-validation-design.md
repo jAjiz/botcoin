@@ -2366,10 +2366,26 @@ deliverable: the drift is negative *within* the admitted stretches because the s
 when the price recovers, and the recovery is handed back at the boundary — which is exactly what
 the forced-rebuy measurement found landing on the loss side.
 
-**What this leaves.** The one test this map does not perform is the study's own standard: which
-specific (gate, config) pairs are positive in **all eight years**, rather than 29 % of points
-being positive somewhere. The script prints aggregates only; dumping per-cell results and
-crossing them is the next step and is cheap now that every calibration schedule is cached.
+**And the per-cell cross test closes it.** Ranking the 452 (gate, config) pairs that have all
+eight years by their **worst** year, the study's standard:
+
+| pair | worst year | years > 0 | 2018 → 2025 |
+|---|---|---|---|
+| `impulso m=0.07 k=14`, `mm=0.02/0.9` | **−8.5 %** | 4/8 | −8 −2 +3 −2 +10 −4 +2 +6 |
+| `alcista m=0.05 k=10`, `mm=0.03/0.9` | −8.8 % | 4/8 | +22 +0 +20 −5 +11 −8 −0 −9 |
+| `alcista m=0.06 k=10`, `mm=0.03/0.9` | −10.0 % | 4/8 | +52 +11 +20 −10 +7 −10 −0 −10 |
+
+**0 of 452 are positive in all eight years**, and the best worst-year is −8.5 % — which is
+itself the best of 452, so a pre-committed choice would do worse. The 29 % positive share in the
+best drift bucket is spread across years, not concentrated in variants.
+
+**The year dominates the variant, again, and by more than usual.** Share of the 3988 points
+beating holding, by year: 2018 34 %, 2019 24 %, 2020 26 %, 2021 11 %, 2022 27 %, **2023 1 %**,
+2024 15 %, 2025 27 %. Multiplying those rates gives an expectation of 0.00 pairs at 8/8 by
+chance, so this particular test had almost no power to detect a weak effect — 2023 alone would
+fail nearly anything. The informative output is therefore the worst-year ranking, not the count,
+and it puts the ceiling of the whole gate-plus-trailing-stop construction at about −8.5 % of
+base asset in a bad year.
 
 ### Still not established
 
@@ -2453,6 +2469,7 @@ contradicted by later work that had only this document to go on.
 - **A signed bet's expectation is not reachable by a long-only bot, and must be converted before it is quoted.** `E[-sign(r_t) · r_{t+1}]` pays equally for calling a rise and calling a fall; the bot can only be long or flat, so the second half becomes sitting in cash, which in base asset is the dominant loss during a rise. The +0.742 % per operation at 5 days that looked like a near-miss becomes a −62 % worst year once converted. Convert first, then compare to the fee.
 - **Sharpening a gate to lower the measured VR optimises the artefact.** A tighter band truncates harder and lowers VR by construction, on real and shuffled paths alike. Only the excess over a matched control can be signal, and the catalogue's maximum excess does not pay.
 - **The bot needs the admitted market to fall, and more variance makes it worse.** Over 3988 (gate, year, config) points the share of cells beating holding falls monotonically from 29 % at admitted drift below −60 % to 0 % above +150 %; inside the flat-drift band it falls from 21 % at 30-45 % annualised volatility to 9 % above 80 %. Any proposal to widen a gate "so there is something to trade" is arguing against this table.
+- **The gate-plus-trailing-stop construction tops out around −8.5 % of base asset in its worst year.** 0 of 452 (gate, config) pairs beat holding in all eight years, and the best worst-year is −8.5 %, itself the best of 452. Report the worst-year ranking rather than the 8/8 count here: the per-year positive rate ranges from 1 % (2023) to 34 % (2018), which makes an 8/8 count expect 0.00 by chance and therefore say nothing.
 - **Negative admitted drift is deliverable causally and is not sufficient.** Fifteen catalogue variants hold admitted drift between −99 % and −10 % in all eight years — "the price while below its recent high" drifts down by construction, so no forecast is involved. Two of those gates nonetheless returned 0/105 on the full sweep. The requirement the map identifies is necessary, not sufficient, and the conditioning that makes it deliverable is the same one that hands the recovery back at the stretch boundary.
 - **Selecting the gate for structure instead of flatness is closed.** Across 154 variants and eight years, gates exist that admit two to six times more genuine mean reversion than the incumbent (`er n=10 t=0.2` at −0.25 VR units of excess over a shuffled control, against ≈0). None pays: 0 of 108 variants has a positive worst year on the naive-bet screen, the best falling 55 bp short of the 0.80 % round trip, and the two most structured gates return 0/105 on the full config sweep with the same monotone "do not trade" surface. Variance is not the resource; predictability is, and the largest structure in the catalogue is worth about 25 bp against a cost of 80.
 - **`hodl_pct` is not worth modelling, and proposing it was wrong.** Scored in base asset, holding is 0 % by construction, so a permanently held fraction is a linear blend between the bot's result and zero: it can only move the result *toward* zero, never above it. It is a dilution control, not a lever, and its return is the asset's by definition. Owner's call, and the algebra agrees.

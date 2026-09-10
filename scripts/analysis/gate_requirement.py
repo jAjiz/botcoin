@@ -33,6 +33,7 @@ Uso (PYTHONPATH=. obligatorio; sin variables de entorno de BD):
 
 import argparse
 import dataclasses
+import json
 import os
 import statistics
 import sys
@@ -105,6 +106,7 @@ def main() -> int:
     ap.add_argument("--fee", type=float, default=0.4)
     ap.add_argument("--recalib-bars", type=int, default=RECALIBRATION_BARS)
     ap.add_argument("--min-open", type=float, default=10.0)
+    ap.add_argument("--out", default=None, help="Vuelca los puntos por celda a JSON.")
     args = ap.parse_args()
 
     ef.FEE = args.fee
@@ -199,6 +201,42 @@ def main() -> int:
         for inside, name, drifts in rows[:15]:
             per = " ".join(f"{d:+.0f}" for d in drifts)
             print(f"  {name:<26}{inside:>10}/{len(drifts):<5}{per:>40}")
+
+    # --- PASO 3: la prueba estandar del estudio, por celda y no por agregado -----------
+    print("\n[CRUCE] pares (puerta, config) positivos en TODOS los anos, no en el 29 % de los puntos")
+    cells: dict[tuple, dict[int, float]] = {}
+    for p in points:
+        cells.setdefault((p["gate"], p["spec"]), {})[p["year"]] = p["bot"]
+    full = {k: v for k, v in cells.items() if len(v) == len(args.years)}
+    # Tasa base honesta: el producto de las tasas de acierto de cada ano, no una tasa global
+    # elevada a ocho. El mapa ya muestra que el ano manda sobre la variante.
+    rate = 1.0
+    per_year_rate = []
+    for y in args.years:
+        vals = [p["bot"] for p in points if p["year"] == y]
+        r = sum(v > 0 for v in vals) / len(vals) if vals else 0.0
+        per_year_rate.append(r)
+        rate *= r
+    print(f"  {len(full)} pares con los {len(args.years)} anos completos")
+    print(
+        "  positivas por ano: "
+        + "  ".join(f"{y}:{100 * r:.0f}%" for y, r in zip(args.years, per_year_rate, strict=True))
+    )
+    print(f"  esperado por azar si los anos fueran independientes: {rate * len(full):.2f} pares")
+    ranked = sorted(full.items(), key=lambda kv: -min(kv[1].values()))
+    best = [(k, v) for k, v in ranked if all(x > 0 for x in v.values())]
+    print(f"  POSITIVOS EN LOS {len(args.years)}: {len(best)}")
+    print("\n  los 12 mejores por PEOR ano:")
+    print(f"  {'puerta':<26}{'config':>14}{'peor ano':>10}{'anos>0':>8}   por ano")
+    for (gate, spec), v in ranked[:12]:
+        per = " ".join(f"{v[y]:+.0f}" for y in args.years)
+        wins = sum(x > 0 for x in v.values())
+        print(f"  {gate:<26}{f'mm={spec[0]:.2f}/{spec[1]}':>14}{min(v.values()):>9.1f}%{wins:>5}/{len(v)}   {per}")
+
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump([{**p, "spec": list(p["spec"])} for p in points], fh)
+        print(f"\n  {len(points)} puntos volcados en {args.out}")
 
     print("\n[lectura] el paso 1 dice que necesita el bot; el paso 2 dice si alguna puerta lo entrega")
     print("          los ocho anos. Entregarlo dos o tres es el mismo instrumento condicional de")
