@@ -1873,6 +1873,60 @@ config-specific distribution, not a bias. **No closed avenue needs reopening for
 reasons** — and the size of that per-config term is one more reason no single-config result in
 this document should be believed on its own.
 
+### Blocking the falls beats trading them, and the gate is not what fails (2026-09-10)
+
+Two questions from the owner, both measured on the three 1-min windows.
+
+**Where does the rise actually happen?** Splitting each year's return between the bars the gate
+leaves open and the bars it closes, for `impulso m=0.10 k=10`:
+
+| year | gate open | rise **inside** | rise **outside** | hold |
+|---|---|---|---|---|
+| 2023 | 79.0 % | **+5.6 %** | +135.8 % | +149.0 % |
+| 2024 | 71.6 % | +9.1 % | +115.0 % | +134.6 % |
+| 2025 | 84.0 % | +9.8 % | −24.8 % | −17.4 % |
+
+**The gate is an excellent filter and it is not what fails.** In 2023 it admits +5.6 % of a
++149 % year while staying open 79 % of the time; `alcista m=0.10 k=10` on 2024 does better
+still, with the price *falling* 33.2 % inside the gate while it rises 251.3 % outside.
+
+| year | ungated | `impulso m=0.10 k=10` | repair |
+|---|---|---|---|
+| 2023 | −56.3 % | **−3.5 %** | **+52.8** |
+| 2024 | −23.3 % | +0.1 % | +23.4 |
+| 2025 | +4.7 % | +5.5 % | +0.8 |
+
+**The gate converts the bot into "approximately holding", every year.** It removes the loss and
+adds no gain, leaving −3.5 / +0.1 / +5.5. So "why does it fail in the bad years" points at the
+wrong component: in 2023 the gate already removed 52.8 of the 56.3 lost points, and the residual
+−3.5 % is what the bot loses on the bars it is *allowed* to trade. That is the study's original
+question, now isolated for the first time — before this, the −56.3 % mixed trend exposure and
+the bot's own per-operation expectation with no way to separate them.
+
+**Is there a version that does not block the falls?** Yes — `alcista` is exactly that, and it is
+worse. Paired over the same 12 grid points and the same three years:
+
+| | median worst year | best worst year | candidates |
+|---|---|---|---|
+| symmetric `impulso` (blocks falls) | −15.0 % | **−3.5 %** | 12 |
+| up-only `alcista` (trades falls) | −20.4 % | −8.8 % | **70** |
+
+The symmetric arm wins **23 of 36** paired comparisons, median difference +4.3 points. With six
+times as many candidates to choose from, leaving the falls open cannot produce a better worst
+year. **And the sharpest single point: 2025 is the year the market fell, and there the detector
+that blocks falls returns +5.5 % while the one that trades them returns −5.4 %.**
+
+**This reverses a long-standing belief of this document.** "The edge is in trading the falls"
+rested on two results: the eight-year `mm=0` run (a different config, 50-800 operations, 15-min,
+ungated) and `alcista` beating its oracle ceiling (measured with the 24 h look-ahead, retracted).
+With the information boundary clean and at production fidelity, trading down-impulses loses
+money — which is consistent with the denomination: holding through a fall is 0 % of base asset
+and costs nothing, while trading it is a bet, and the bot has no edge with which to bet.
+
+Calibration on the strength: 23/36 is suggestive, not conclusive (p ≈ 0.09 two-sided). What
+makes it worth recording is the pairing — same rule, same year, same config — which cancels the
+year effect that dominates every unpaired comparison in this document.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1949,6 +2003,8 @@ contradicted by later work that had only this document to go on.
 - **A gate must be evaluated continuously, not on the grid of the series it reads.** The rule was written on daily closes and the harness therefore evaluated it once a day; that staleness alone was worth 23 points on 2024. The daily grid was never part of the hypothesis.
 - **Resolution adds config-specific noise of up to 25 points, with no systematic direction — it does NOT favour or penalise the bot.** Corrected: the 19 points that `mm=0.020/0.9` gained on 2024 going from 15 min to 1 min looked like a systematic artefact and is not one. The full 105-config grid on both 2024 and 2025 puts the median delta 1m-15m at exactly **+0.00 %**, with a maximum absolute delta of 25-26 points, 0/105 and 1/105 sign changes, and rank correlations of +0.798 and +0.938 (top-10 overlap 7/10 in both). So the ordering largely survives and no closed avenue needs reopening on these grounds; what the resolution does add is a per-config term big enough to move a single config by a quarter of its result, which is one more reason a single-config number means nothing.
 - **Gating is a real filter and not a strategy, and the test that settles it is repetition across windows, not the median.** At production fidelity the same 154 causal detectors were run on 2023, 2024 and 2025 and crossed **per variant**: **0 of 154 beat holding in all three**, against a base rate of 0.4 if the years were independent draws. The win rate is set by the year, not by the detector — 3 % of variants win in 2023, 23 % in 2024, 42 % in 2025 — and the winners are not the same winners: 2024's champion `er n=30 t=0.4 d=0` (+33.7 %) returns −42.3 % in 2023, and the surface spike `alcista m=0.20 k=10` (+29.6 %) returns −35.3 %. The best variant by worst year is `impulso m=0.10 k=10` at −3.5 %.
+- **The gate is not the failing component; the bot on lateral bars is.** Splitting each year between open and closed bars shows the gate admits +5.6 % of a +149 % year (2023) while open 79 % of the time, and converts the bot's result to −3.5 / +0.1 / +5.5 across 2023-2025 from −56.3 / −23.3 / +4.7. It removes the trend exposure and adds nothing. Any further work on detection is optimising a component that already works; the open question is the bot's expectation on the bars it is allowed to trade.
+- **Blocking the falls beats trading them.** The symmetric detector wins 23 of 36 paired comparisons against the up-only one (median +4.3 points), and its best worst-year is −3.5 % from 12 candidates against −8.8 % from 70. In 2025, the year the market fell, blocking falls returns +5.5 % and trading them −5.4 %. This reverses the "edge is in the falls" reading, whose two supports were a different config at 15-min resolution and a result since retracted for look-ahead. Holding through a fall costs 0 % of base asset; trading it is a bet the bot has no edge to make.
 - **Judge a family by whether its specific winners repeat on other data, never by its median.** Production runs one variant, chosen deliberately; a family whose median is −14 % can still contain the one that works, and dismissing the family by its median hides exactly what the search is for. Report the median as description, decide on the cross-window table, and always print the base rate beside an "n of n" count. The owner has had to raise this twice.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
