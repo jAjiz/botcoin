@@ -1927,6 +1927,56 @@ Calibration on the strength: 23/36 is suggestive, not conclusive (p ≈ 0.09 two
 makes it worth recording is the pairing — same rule, same year, same config — which cancels the
 year effect that dominates every unpaired comparison in this document.
 
+### The gate chosen properly, then the config swept: every surface says "do not trade" (2026-09-10)
+
+The owner separated the two responsibilities that this study had been choosing with one metric.
+The gate's objective is to filter trend, not to make money, so it is selected in
+`gate_filter_quality.py` by admitted drift against coverage — no engine, no fees, no config,
+which is what makes eight years affordable — and then **fixed**. Only the trailing stop's
+`min_margin` and `stop_pct` are chosen afterwards, on the bars the gate already admitted.
+
+**Selected by filter quality alone, over 2018-2025:**
+
+| gate | worst admitted drift | coverage | what it admits |
+|---|---|---|---|
+| `impulso m=0.07 k=7` (symmetric) | +34.8 % | 55 % | the flattest market measured: admitted drift stays inside [−35 %, +35 %] all eight years, against a market ranging −62 % to +274 % |
+| `bajo max n=20 p=0.10 d=0` (up-only, strict) | **−95.9 %** | 29 % | a purely falling market, ≤ −96 % annualised every year |
+| `sin max n=10 d=0` (up-only, wide) | −82.7 % | 85 % | the same, with three times the coverage |
+
+The up-only families do not filter to *lateral*, they filter to *falling*: closing only on rises
+leaves a market that only falls (−70 % to −100 % admitted drift, every year, `alcista`,
+`sin max`, `bajo ema` and `bajo max` alike). That is the structural reason blocking the falls
+won the paired test, and it makes the strict gate the ideal test bed for the fall-harvesting
+hypothesis: it hands the bot nothing else.
+
+**Then the 105-config grid on the admitted bars, 1-min path, 2023-2025, ranked by worst year:**
+
+| gate | positive in all 3 | best worst-year | per-year positives |
+|---|---|---|---|
+| symmetric | **0/105** | −0.4 % (does not trade) | 4 / 1 / 5 |
+| up-only wide | **0/105** | −0.4 % | 0 / 0 / 9 |
+| up-only strict | **0/105** | −0.4 % | 0 / 0 / 0 |
+
+**Every worst-year surface is monotone in `min_margin`, and its optimum is "do not trade".**
+Symmetric gate, worst year by `min_margin` at `stop=0.9`: −46.0, −21.3, −14.8, −9.3, −7.9, −7.0,
+−10.2, −7.3, −3.7, then −0.4 from `mm=0.09` upward — and −0.4 % is one operation, the opening
+buy and its fee. The more the bot trades, the more it loses, without exception, on the market a
+purpose-built filter selected for it.
+
+**The fall-harvesting hypothesis is refuted under the conditions most favourable to it.** The
+strict gate admits a market falling at ≤ −96 % annualised, which is exactly what the eight-year
+`mm=0` result suggested should be harvested. Run there, `mm=0.000 stop=0.5` — the fastest config
+in the grid — returns −15.0 % (27 ops), −48.4 % (119 ops) and −52.1 % (119 ops). Slowing it down
+only moves it toward zero by trading less: `mm=0.05 stop=0.9` reaches −0.4 % with one operation.
+There is no configuration that harvests the fall; there is only a configuration that abstains.
+
+**What this closes and what it does not.** The gate is *not* the failing component and is now
+independently validated: it takes a market spanning −62 % to +274 % and admits one inside
+[−35 %, +35 %], and it repairs 52.8 of the ungated bot's 56.3 lost points on 2023. What fails is
+the trailing stop's expectation on whatever market it is given — flat, falling, or filtered. The
+remaining lever is therefore not another parameterisation of this mechanism, and not another
+detector; both have now been searched with the other one held fixed and honestly selected.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -2003,6 +2053,9 @@ contradicted by later work that had only this document to go on.
 - **A gate must be evaluated continuously, not on the grid of the series it reads.** The rule was written on daily closes and the harness therefore evaluated it once a day; that staleness alone was worth 23 points on 2024. The daily grid was never part of the hypothesis.
 - **Resolution adds config-specific noise of up to 25 points, with no systematic direction — it does NOT favour or penalise the bot.** Corrected: the 19 points that `mm=0.020/0.9` gained on 2024 going from 15 min to 1 min looked like a systematic artefact and is not one. The full 105-config grid on both 2024 and 2025 puts the median delta 1m-15m at exactly **+0.00 %**, with a maximum absolute delta of 25-26 points, 0/105 and 1/105 sign changes, and rank correlations of +0.798 and +0.938 (top-10 overlap 7/10 in both). So the ordering largely survives and no closed avenue needs reopening on these grounds; what the resolution does add is a per-config term big enough to move a single config by a quarter of its result, which is one more reason a single-config number means nothing.
 - **Gating is a real filter and not a strategy, and the test that settles it is repetition across windows, not the median.** At production fidelity the same 154 causal detectors were run on 2023, 2024 and 2025 and crossed **per variant**: **0 of 154 beat holding in all three**, against a base rate of 0.4 if the years were independent draws. The win rate is set by the year, not by the detector — 3 % of variants win in 2023, 23 % in 2024, 42 % in 2025 — and the winners are not the same winners: 2024's champion `er n=30 t=0.4 d=0` (+33.7 %) returns −42.3 % in 2023, and the surface spike `alcista m=0.20 k=10` (+29.6 %) returns −35.3 %. The best variant by worst year is `impulso m=0.10 k=10` at −3.5 %.
+- **Select each component by its own objective, then fix it before choosing the next.** The gate is ranked by admitted drift against coverage (no engine, so eight years are affordable) and then held constant while `min_margin`/`stop_pct` are swept on the bars it admits. Choosing both with one return metric over 154 x 105 combinations is how this study produced three false discoveries.
+- **With the gate fixed by filter quality, no configuration of the trailing stop beats holding.** 0 of 105 in all three of 2023-2025, on each of three independently selected gates, at 1-min fidelity. Every worst-year surface is monotone in `min_margin` and its optimum is the config that does not trade (−0.4 %, one operation). The per-operation expectation is negative on every market the bot has been handed.
+- **Fall-harvesting is refuted at its best case.** A gate that admits a market falling at ≤ −96 % annualised, run with the fastest config in the grid, returns −15.0 / −48.4 / −52.1 %. The eight-year `mm=0` result that suggested otherwise was measured ungated, at 15-min resolution, and does not reproduce.
 - **The gate is not the failing component; the bot on lateral bars is.** Splitting each year between open and closed bars shows the gate admits +5.6 % of a +149 % year (2023) while open 79 % of the time, and converts the bot's result to −3.5 / +0.1 / +5.5 across 2023-2025 from −56.3 / −23.3 / +4.7. It removes the trend exposure and adds nothing. Any further work on detection is optimising a component that already works; the open question is the bot's expectation on the bars it is allowed to trade.
 - **Blocking the falls beats trading them.** The symmetric detector wins 23 of 36 paired comparisons against the up-only one (median +4.3 points), and its best worst-year is −3.5 % from 12 candidates against −8.8 % from 70. In 2025, the year the market fell, blocking falls returns +5.5 % and trading them −5.4 %. This reverses the "edge is in the falls" reading, whose two supports were a different config at 15-min resolution and a result since retracted for look-ahead. Holding through a fall costs 0 % of base asset; trading it is a bet the bot has no edge to make.
 - **Judge a family by whether its specific winners repeat on other data, never by its median.** Production runs one variant, chosen deliberately; a family whose median is −14 % can still contain the one that works, and dismissing the family by its median hides exactly what the search is for. Report the median as description, decide on the cross-window table, and always print the base rate beside an "n of n" count. The owner has had to raise this twice.
@@ -2467,6 +2520,8 @@ what still answers a question no result has closed.
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
 | `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
+| `scripts/analysis/gate_filter_quality.py` | **Which gate filters best, judged by the gate's own objective?** Admitted drift (annualised by coverage) against coverage, per year, for every variant, with no engine at all — so it runs over eight years in minutes. Groups variants by coverage band and ranks within the band by worst-year drift, because a Pareto-frontier count would rank the always-open gate top (nothing has more coverage, so it is never dominated). |
+| `scripts/analysis/gate_config_sweep.py` | **With the gate fixed, what does the trailing stop want?** The 105-config grid on the bars one named gate admits, 1-min path, ranked by worst year, with the full worst-year surface printed. The gate is a `--gate` choice made beforehand and is never re-picked from the output. |
 | `scripts/analysis/gate_families_cross.py` | **Do the variants that win here win there?** Crosses the per-variant JSON of several `gate_families_live.py` runs, ranks by windows won with the *worst* window as tiebreak, and prints the base rate that an "n of n" count would reach by chance. This is the test that replaces judging a family by its median. Seconds to run. |
 | `scripts/analysis/gate_families_live.py` | **Does any detector family survive at production fidelity, and is any of them a plateau?** Every family that ever ranked well, converted to its continuous form and run as a single causal arm on the 1-min path: 154 variants, the whole `alcista` surface among them. Reports the per-family distribution and the surface, because the head of a 154-row ranking on one year is an order statistic. Reuses the cached calibration schedule (`BOTC_POINT_CACHE`). |
 | `scripts/analysis/gate_sensitivity.py` | **Is `alcista m=0.10 k=10` a mechanism or a fitted parameter?** 10 moves x 7 looks over each continuous window, with a `--lags` arm that shifts the daily flag; the L0 - L1 difference is the look-ahead bias, printed point by point. This is the harness that found the defect. |

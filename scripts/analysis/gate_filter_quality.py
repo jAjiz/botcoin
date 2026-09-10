@@ -44,6 +44,7 @@ Uso (PYTHONPATH=. obligatorio; sin variables de entorno de BD):
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -91,6 +92,7 @@ def main() -> int:
     ap.add_argument("--years", nargs="*", type=int, default=[2018, 2019, 2020, 2021, 2022, 2023, 2024, 2025])
     ap.add_argument("--min-open", type=float, default=25.0, help="Cobertura minima para entrar en el ranking.")
     ap.add_argument("--top", type=int, default=25)
+    ap.add_argument("--out", default=None, help="Vuelca las metricas por variante y ano a JSON.")
     args = ap.parse_args()
 
     print(f"[datos] {args.pair}   anos {args.years}   sin motor: solo precio y banderas")
@@ -121,6 +123,12 @@ def main() -> int:
         rows["__hold__"] = metrics(np.ones(len(step), dtype=bool), step)
         per_year[year] = rows
         print(f"  {year}: hold {hold:+8.1f} %   {len(rows) - 1} variantes", flush=True)
+
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump({str(y): rows for y, rows in per_year.items()}, fh)
+        print("")
+        print(f"[json] {args.out}")
 
     years = sorted(per_year)
     names = [
