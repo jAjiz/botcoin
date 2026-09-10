@@ -1774,7 +1774,8 @@ than left to chance. Range detection remains unsolved and is not what is paying.
 - **Whether anything predicts on a pair that trades enough.** Every predictiveness and
   persistence result in this file was measured on XBTEUR, where the winners make 3–7
   operations. USDCEUR with a pair-scaled threshold makes 11–45, which is the first setting
-  where the test could have power. **This is now the most informative thing left to run.**
+  where the test could have power. Still the most informative unrun experiment, and now
+  **deliberately deferred** — see the scope decision below.
 - **Whether the strategy can beat hold at all**, given that it needs a forward regime
   signal and the only candidate tested has none. See "The rally is the problem".
 - **What a non-zero `hodl_pct` would do.** Production can hold a fraction of the target
@@ -1807,8 +1808,9 @@ contradicted by later work that had only this document to go on.
   fits, and defect 5 explains structurally why. Dropping it hands the whole trial budget to
   `min_margin`. This is an experiment scope decision, not the strategy change in defect 5.
 - **Scoring is one continuous run, never restarted segments.** See the harness defect, now
-  Measured again, and the size is worth recording: chaining `bajo max`'s seven yearly factors gives +172 % of base asset where the continuous run gives +27.6 %. Restarting the position each January inflated the answer six-fold.
-  fixed in the engine.
+  fixed in the engine. Measured again, and the size is worth recording: chaining `bajo max`'s
+  seven yearly factors gives +172 % of base asset where the continuous run gives +27.6 %.
+  Restarting the position each January inflated the answer six-fold.
 - **The base asset, not euros, is the objective.** See the next section.
 - **The current optimizer is closed as a research tool, and free per-level stops with it.** The deployed AUTO search on the fixed engine returns four different answers from four seeds; see "Free per-level stops do not converge". Any remaining question goes through the exhaustive sweep and the forward-percentile test.
 - **Free per-level stops move the maximum and not the distribution.** On 2025 with the calibration schedule shared across groups, 600 random free-stop configs land at median +24.6 % against the 105 shared configs' +24.4 %, with the same quartiles and the same share beating hold; only the best moves (+73.5 % against +59.0 %), which is the order statistic of 600 draws from a superset. Whether that maximum survives forward is NOT settled. See "Immediate activation is closed; free stops move no distribution".
@@ -1826,6 +1828,10 @@ contradicted by later work that had only this document to go on.
 - **A detector that beats its own oracle ceiling is not approximating the oracle.** `bajo max` is positive in all seven years measured but exceeds the ceiling in 2019, 2020 and 2021 — the years with large falls — because it has no floor and trades them. Always report the ceiling beside the detector and treat any excess as a different strategy until decomposed.
 - **A causal gate that stops trading while the price makes new highs beats holding over 2023-2025 continuous.** `bajo max n=30 p=0.05 d=3` returns +27.6 % of base asset (+517.0 % EUR against holding's +383.56 %) where the production median is −76.0 % and 0 of 105 configs beat hold; `alcista m=0.10 k=10 d=0` returns +42.0 %. The rule predicts nothing and is three lines. This is the first positive multi-year continuous result in the document — the window is not held out, but the same rule earns +24.0 %, +13.4 % and +15.5 % in 2019, 2020 and 2022, which are. See "The first continuous multi-year run that beats holding".
 - **The best rule found is `alcista m=0.10 k=10 d=0`, and it wins both continuous windows.** Stop trading whenever today's close is 10 % or more above any close of the last ten days; trade otherwise, falls included. +95.2 % of base asset over 2019-2022 continuous and +42.0 % over 2023-2025, against holding's +376 % and +384 % in euros. It loses 6.0 % in 2023 scored alone and still wins the window containing it. Do not choose between candidates on a per-year win count. See "Two continuous windows, seven years, one rule that beats holding".
+- **XBTEUR only until the line is defined and built (owner, 2026-09-10).** The USDCEUR
+  external-validity check remains the most informative *unrun* experiment in the document, but
+  porting an undefined strategy to a second pair multiplies the search rather than validating
+  it. Deferred, not dropped: revisit it once the gate's production semantics are settled.
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -2182,39 +2188,79 @@ each was a hypothesis about where the edge lived, and none survived:
 | Holding by default and trading only confirmed ranges | the mechanism verifies on three years — masking the non-lateral bars takes the bot from 0/105 beating hold to 54/105 (2023) and 38/105 (2024) — and a config region (`mm` 0.02–0.03, wide stop) transfers to a held-out year at +23.5 % against a grid median of +0.7 %. But all of it rests on labels that see seven days forward. Replacing the oracle with 63 causal rules across three families, ranked on 2024+2025: on held-out 2023 every one lands between −27.3 % and +0.1 % against a +21.8 % ceiling, because their precision is 60–66 % and 20–28 % of their open bars fall inside rising segments. The detector problem is the prediction problem restated |
 | Buying rally precision with recall, and with a stateful ceiling-break rule | measured on both. Tightening a lagging rule reaches 7–10 % rally contamination only by collapsing to 6–18 % open time, where nothing is left to harvest. A stateful rule that fixes the range ceiling on entry and exits the instant price crosses it reaches the bench's best agreement — 78 % precision, 17 % rally contamination, at 41 % open time — and with the floor on (range harvest alone) still returns −1.1 % and −11.7 % on held-out 2022 and 2019 against ceilings of +15.8 % and +12.5 %. Residual rally exposure of 17 % costs more than 83 % of the harvest earns |
 
-…but every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. See
-USDCEUR below before treating them as settled properties of the strategy rather than of that
-sample size.
+The last two rows are closed **as range detection**, not as a gate. The same gating machinery,
+pointed at rallies only and with the falls left tradeable, is the one thing in this document
+that beats holding over a continuous multi-year run — see "Two continuous windows, seven years,
+one rule that beats holding".
 
-What is left is not a search for a better config. In order:
+…and every one of them was measured on XBTEUR, where a config makes 3–7 trades a run. The
+owner has decided (2026-09-10) that **nothing moves to another pair until the XBTEUR line is
+fully defined and built**, so the USDCEUR external-validity check below is deferred rather than
+dropped.
 
-1. **Decide whether to run the bot at all, and on what basis.** The strategy has a measured
-   conditional edge — it accumulates in flat and falling markets and loses in rallies — and no
-   way to tell which is coming. That makes deploying it a directional bet on the market, not
-   an edge, and that is a decision for the operator rather than a measurement. There is no
-   longer a config recommendation to attach to it: the `min_margin` 0.04–0.07 guidance failed
-   to replicate, and the resolution check shows the whole comparison lives inside the
-   simulator's own noise. Pick on operational grounds — operation count, fees, time out of the
-   asset — and treat the backtested return as an illustration, not a forecast.
-2. **Re-run the predictiveness test on USDCEUR.** Done as an external-validity check, it
-   turned into the most promising thread in the study: with the pivot threshold and the
-   `min_margin` ceiling scaled to the pair, configs make 11–45 operations instead of 3–7. Every
-   negative result in this file was measured where the sample was too small to detect an edge
-   even if one existed, so *repeat the enumeration and the forward-percentile test here before
-   concluding anything about the strategy*. It is cheap: the whole grid at three resolutions is
-   about six minutes.
-3. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
+### Where the line stands (2026-09-10)
+
+One configuration and one causal rule, fixed:
+
+- `min_margin = 0.020`, `stop_pct = 0.9` on all five levels, `k_act` disabled.
+- Gate `alcista m=0.10 k=10 d=0`: **stop trading whenever today's close is 10 % or more above
+  any close of the last ten days; hold the asset while it is.** No confirmation delay, no
+  floor, so falls are traded.
+
+Scored as one continuous run at 0.40 % per leg, position never reset:
+
+| window | rule (base asset) | rule (EUR) | hold (EUR) | production median |
+|---|---|---|---|---|
+| 2019-01..2022-12 | **+95.2 %** | +829.8 % | +376.4 % | — |
+| 2023-01..2025-12 | **+42.0 %** | +586.8 % | +383.6 % | −76.0 %, 0/105 beat hold |
+
+What that is and is not:
+
+- **It is not range detection.** The rule beats its own oracle ceiling by 66 points in
+  2019-2022. Most of the edge is the falling-market behaviour this document measured across
+  eight calendar years, now captured by a causal rule instead of left to chance.
+- **The rule's grid was fixed before running, but the choice among the four finalists saw
+  2023-2025.** 2019-2022 was not used to select it; its per-year components were visible.
+  Nothing in 2013-2018 has ever been shown to any detector.
+- **Unmeasured before this could ship:** slippage (every fill is at exactly `stop_px`), the
+  gate's evaluation semantics on a 15-minute engine driven by a daily-close rule, the
+  sensitivity of `(m, k)` around 0.10/10, and what happens when the gate closes while the bot
+  sits in cash.
+- **The 2023 loss (−6.0 % scored alone) has no explanation.** Confirmation delay makes it
+  worse, which refutes the flip-flop hypothesis.
+
+What is left, in order:
+
+1. **Run the gate on 2014-2018, which no detector has ever seen.** The archive starts in
+   September 2013 and every detector result in this document begins in 2019, so five calendar
+   years are a clean hold-out — the only one left. Then one continuous 2014-2025 run, position
+   never reset, which is the number that settles whether this is a strategy or two lucky
+   windows.
+2. **Map the sensitivity of `(m, k)` around 0.10 / 10 days.** A plateau is a mechanism; a spike
+   is a fitted parameter. This costs one sweep and decides how much of the rest is worth doing.
+3. **Decompose where the money comes from, by segment class.** The claim "it is the falls" is
+   inferred from the ceiling comparison, not measured directly. Report the rule's contribution
+   from rising, falling and lateral bars, as `lateral_gate_oracle.py --decompose` already does
+   for the oracle arm.
+4. **Stress the two unmeasured costs.** Re-run the winner at taker fee and with a slippage term
+   per exit, and report the breakeven slippage. The term is strictly negative and entirely
+   absent from every figure above.
+5. **Define the production semantics before writing any of it.** Which bar closes the gate on a
+   15-minute engine; what happens to a position that is in cash when the gate closes; whether
+   the gate can interrupt an owed exit (`stop_at` latched). These are design questions, not
+   measurements, and the answers change the simulation.
+6. **Implement the base-asset denomination** as a request flag (`objective: "EUR" | "BASE"`).
    Reporting only, until an objective compares across windows again — see that section for
    what it does and does not change.
-4. **Decide whether shared `stop_pct` ships to production.** If it does, the deployed space
+7. **Decide whether shared `stop_pct` ships to production.** If it does, the deployed space
    becomes enumerable and Optuna/TPE/seeds/AUTO can be removed — a large simplification of
    `trading/optimizer/`. That decision needs its own spec.
-5. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
+8. **Unify the activation branches** into one two-dimensional space (defect 5). Strategy
    change: it touches `activation_distance` in both `trading/engine.py` and
    `trading/positions_manager.py`, and needs its own validation. Lower priority now that
    `k_act` is out of the experiments, but it is still the reason the profitable region only
    exists in one branch.
-6. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
+9. **Decide the schedule anchoring** (harness defects). Frame-anchored is faithful;
    window-anchored is what ships.
 
 Do **not** revisit `MINIMUM_CHANGE_PCT` or chase pivot density; neither addresses any
