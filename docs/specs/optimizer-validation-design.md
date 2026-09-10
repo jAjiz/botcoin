@@ -1765,6 +1765,74 @@ last ten days", and most of what it earns comes from trading the falls** — the
 edge this document measured on eight calendar years, now harnessed by a causal rule rather
 than left to chance. Range detection remains unsolved and is not what is paying.
 
+### The gate at production fidelity: a real repair, and no plateau anywhere (2026-09-10)
+
+Two defects were removed at once. The engine resolves trailing once per 15-min bar — raising
+the trail to the bar's high and testing it against that same bar's low — and the daily flag was
+computed from a day's close and applied to that day from 00:00. `gate_live_fidelity.py` runs the
+price path at **1 minute** (production's `SLEEPING_INTERVAL`), with ATR still Wilder over 15-min
+bars projected forward and the calibration schedule built on the 15-min frame and remapped, so
+the volatility view is the one production stores. On 2024, holding +134.61 % in euros:
+
+| arm | 1 min | 15 min |
+|---|---|---|
+| no gate | −23.3 % | −42.4 % |
+| daily flag on its own day (look-ahead) | +38.6 % | +24.5 % |
+| daily flag lagged one day | −19.4 % | −27.9 % |
+| **continuous: current price vs the last k completed daily closes** | **+3.4 %** | −4.9 % |
+
+**Three things follow, and the third undoes the first.**
+
+**The look-ahead in the daily flag is worth 58 points** at this fidelity, confirming
+`gate_sensitivity.py` with a wider margin.
+
+**What killed the rule was staleness, not causality.** The lagged and the continuous arm are
+equally causal; the 23 points between them come from evaluating the rule when a bot could
+evaluate it instead of carrying yesterday's close for 24 hours. Daily granularity was a harness
+inheritance, never part of the hypothesis.
+
+**Simulating at 15 minutes was costing the bot 19 points, ungated.** The intrabar artefact runs
+*against* the bot: it manufactures exits the real bot would not take. Every negative measured at
+15-min resolution in this document is understated by an unknown amount — this window and this
+config put it at 19 points, while `execution_fidelity.py` found a median of +0.00 across 105
+configs on a 2025 window, so the effect is neither uniform nor negligible and cannot be applied
+as a blanket correction.
+
+**Then the surface says the +3.4 % is noise.** `gate_families_live.py` converts every family
+that ever ranked well to its continuous form — where the daily version used "today's close", the
+continuous one uses "this minute's price" against the last `n` *completed* days — and runs 154
+variants on 2024 at 1-min fidelity, one causal arm each, no look-ahead arm and no 15-min arm:
+
+| family | n | median | best | above hold |
+|---|---|---|---|---|
+| `alcista` (up impulse) | 70 | −3.8 % | +29.6 % | 15 |
+| `impulso` (symmetric) | 12 | −3.6 % | +22.7 % | 5 |
+| `caja` | 18 | −0.4 % | +12.7 % | 5 |
+| `er` (Kaufman) | 18 | −3.5 % | **+33.7 %** | 5 |
+| `rotura` (stateful ceiling) | 6 | −3.9 % | +14.9 % | 2 |
+| `bajo max` | 18 | −14.1 % | +2.3 % | 2 |
+| `sin max` | 6 | −14.4 % | −9.7 % | 0 |
+| `bajo ema` | 6 | −16.8 % | −13.9 % | 0 |
+| **all** | **154** | **−5.3 %** | +33.7 % | **34 (22 %)** |
+
+**The `alcista` surface has no plateau.** Its best point, `m=0.20 k=10` at +29.6 %, has four
+orthogonal neighbours averaging **−8.4 %**: an isolated spike. The previous finding
+`m=0.10 k=10` reproduces exactly at +3.4 % and sits in a mildly positive neighbourhood
+(+1.9 % mean), but the surface's own dispersion is σ = 9.9, so +3.4 is not distinguishable from
+zero. Across all 154, σ = 11.0 and the median is −5.3: **the maximum of 154 draws from that
+distribution is roughly +22 to +34, which is what the ranking's head actually contains.** The
+top two come from different families and both have poor neighbours. This is selection, not
+signal.
+
+**`bajo max n=30 p=0.05 d=3` is finished.** Positive in all seven years under the biased
+harness; at production fidelity its family medians −14.1 % with 2 of 18 above hold.
+
+**What is real, and it is not small.** Gating takes the bot from −23.3 % to a median of −5.3 %
+in a year where the ungated grid was 0/105 against hold — an 18-point repair from rules that
+predict nothing. The gate is a genuine filter. It is not a strategy: the median is still below
+holding, and no member of it can be selected in advance, because the surface that would let you
+choose one is noise.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -1827,11 +1895,20 @@ contradicted by later work that had only this document to go on.
 - **A regime gate is worth exactly what its precision on rallies is worth, and that is a forward question.** Recognising a range is easy causally (80–91 % recall from a trailing rule); knowing an impulse has *ended* is not, and that is the whole of the oracle's advantage. Do not propose another regime filter without first stating what causal quantity resolves the next seven days, because the signal screen measured that none in these data does.
 - **A detector that beats its own oracle ceiling is not approximating the oracle.** `bajo max` is positive in all seven years measured but exceeds the ceiling in 2019, 2020 and 2021 — the years with large falls — because it has no floor and trades them. Always report the ceiling beside the detector and treat any excess as a different strategy until decomposed.
 - **A causal gate that stops trading while the price makes new highs beats holding over 2023-2025 continuous.** `bajo max n=30 p=0.05 d=3` returns +27.6 % of base asset (+517.0 % EUR against holding's +383.56 %) where the production median is −76.0 % and 0 of 105 configs beat hold; `alcista m=0.10 k=10 d=0` returns +42.0 %. The rule predicts nothing and is three lines. This is the first positive multi-year continuous result in the document — the window is not held out, but the same rule earns +24.0 %, +13.4 % and +15.5 % in 2019, 2020 and 2022, which are. See "The first continuous multi-year run that beats holding".
+  **RETRACTED (2026-09-10)** for the same reason as the bullet above.
 - **The best rule found is `alcista m=0.10 k=10 d=0`, and it wins both continuous windows.** Stop trading whenever today's close is 10 % or more above any close of the last ten days; trade otherwise, falls included. +95.2 % of base asset over 2019-2022 continuous and +42.0 % over 2023-2025, against holding's +376 % and +384 % in euros. It loses 6.0 % in 2023 scored alone and still wins the window containing it. Do not choose between candidates on a per-year win count. See "Two continuous windows, seven years, one rule that beats holding".
+  **RETRACTED (2026-09-10).** Both windows were measured with a daily flag computed from a
+  day's close and applied to that day from 00:00 — up to 24 h of look-ahead, worth a median
+  of +42.9 points across the grid and +58 at 1-min fidelity. Shifted by one day, 0 of 70
+  grid points beat holding. See "The gate at production fidelity".
 - **XBTEUR only until the line is defined and built (owner, 2026-09-10).** The USDCEUR
   external-validity check remains the most informative *unrun* experiment in the document, but
   porting an undefined strategy to a second pair multiplies the search rather than validating
   it. Deferred, not dropped: revisit it once the gate's production semantics are settled.
+- **Any rule that reads a bar-derived series must state which bar it is applied to, and be tested one bar later.** A daily flag applied to its own day is 24 h of look-ahead and it was worth more than the entire measured edge. This is the third defect of this shape in the study, after the pivot-label leak and the mask leak; the common signature is that the number is large, clean, and arrives before anyone has audited the information boundary.
+- **A gate must be evaluated continuously, not on the grid of the series it reads.** The rule was written on daily closes and the harness therefore evaluated it once a day; that staleness alone was worth 23 points on 2024. The daily grid was never part of the hypothesis.
+- **Simulating at 15 minutes runs against the bot, by an amount that is neither uniform nor known.** The intrabar artefact manufactures exits: 19 points on 2024 with `mm=0.020`, against a median of +0.00 across 105 configs on a 2025 window. Any strategy conclusion drawn at 15-min resolution is provisional until re-run at 1 min.
+- **Gating is a real filter and not a strategy.** At production fidelity on 2024, 154 causal detectors median −5.3 % against the ungated bot's −23.3 % — an 18-point repair from rules that predict nothing — but still below holding, and the surface that would let you select one member is noise (σ = 11.0, best neighbours negative).
 - **The closed-form rebalancing premium (`0.5*w(1-w)*sigma^2`) is a driftless result and must not be quoted for this asset.** Measured, it is negative in every rising window; the drift term dominates it by an order of magnitude. Any allocation rule that sells strength is making the bot's bet. See "The rebalancing premium does not survive the drift either".
 
 ## The objective is asset accumulation
@@ -2198,7 +2275,10 @@ owner has decided (2026-09-10) that **nothing moves to another pair until the XB
 fully defined and built**, so the USDCEUR external-validity check below is deferred rather than
 dropped.
 
-### Where the line stands (2026-09-10)
+### Where the line stands (superseded — see "The gate at production fidelity")
+
+**The table below was measured with a daily flag that looked 24 h forward, and is retracted.**
+Kept as the record of what was believed before the fidelity run.
 
 One configuration and one causal rule, fixed:
 
@@ -2289,6 +2369,9 @@ what still answers a question no result has closed.
 | `scripts/analysis/side_margin_sweep.py` | **Does selling reluctantly and rebuying eagerly accumulate base asset?** Paired sweep: each symmetric config against its per-side `min_margin` neighbours at three δ in both directions, one continuous run each; reports the delta distribution. Takes the 15-minute CSV path. |
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
+| `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
+| `scripts/analysis/gate_families_live.py` | **Does any detector family survive at production fidelity, and is any of them a plateau?** Every family that ever ranked well, converted to its continuous form and run as a single causal arm on the 1-min path: 154 variants, the whole `alcista` surface among them. Reports the per-family distribution and the surface, because the head of a 154-row ranking on one year is an order statistic. Reuses the cached calibration schedule (`BOTC_POINT_CACHE`). |
+| `scripts/analysis/gate_sensitivity.py` | **Is `alcista m=0.10 k=10` a mechanism or a fitted parameter?** 10 moves x 7 looks over each continuous window, with a `--lags` arm that shifts the daily flag; the L0 - L1 difference is the look-ahead bias, printed point by point. This is the harness that found the defect. |
 | `scripts/analysis/lateral_detector.py` | **How much of the oracle gate survives a rule that only sees the past?** 63 causal detectors in three families (trailing impulse, box containment, Kaufman ER) with a shared confirmation filter, driving the gate for one fixed config, ranked on 2024+2025 with 2023 held out. Reports agreement with the oracle labels and splits the false positives by direction, since a false positive on a fall is not an error. `--local-top` re-runs the best few with calibration paired to the ceiling's. About 30 minutes for three years. |
 | `scripts/analysis/lateral_gate_oracle.py` | **What is the ceiling on holding by default and trading only the ranges?** `force_hold_bars` over every non-lateral bar with impulse labels, four arms (no gate; gate with the anchor left live; gate with `reset_on_unmask`; plus a calibration that only sees its own range), 105 configs each, scored in base asset against holding. Decomposes each arm's best config by segment class and counts the exits landing within a day of a gate opening, which is what exposes a leaking mask. About 15 minutes for one year. |
 | `scripts/analysis/capped_mm0_across_years.py` | **How does one configuration behave on intervals nobody chose?** A single config (`mm=0`, `stop=0.9`, capped re-anchor) over calendar years, scored in base asset against holding and nothing else, at two fee levels, with operation count and time in cash beside it. Deliberately has no grid and no median: it answers "what does this do", not "which is best". About 9 minutes per year, calibration-bound. |

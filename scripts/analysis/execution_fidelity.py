@@ -52,8 +52,10 @@ Uso (PYTHONPATH=. obligatorio; sin variables de entorno de BD):
 """
 
 import argparse
+import hashlib
 import itertools
 import os
+import pickle
 import statistics
 import time
 
@@ -163,8 +165,32 @@ def fine_frame(path: str, coarse: pd.DataFrame, t0: int, t1: int, minutes: int) 
 # --- calibración ------------------------------------------------------------
 
 
+def _schedule_cache_path(coarse: pd.DataFrame, recalib_bars: int) -> str | None:
+    """Ruta del cache en disco, o None si ``BOTC_POINT_CACHE`` no está puesta.
+
+    La clave identifica el marco entero (longitud, extremos y cadencia) porque cada punto
+    resume la historia hasta su propia vela: dos marcos distintos no pueden compartirlos.
+    """
+    root = os.environ.get("BOTC_POINT_CACHE")
+    if not root:
+        return None
+    key = f"ef|{len(coarse)}|{coarse.iloc[0]['time']}|{coarse.iloc[-1]['time']}|{recalib_bars}"
+    os.makedirs(root, exist_ok=True)
+    return os.path.join(root, f"sched_{hashlib.sha256(key.encode()).hexdigest()[:16]}.pkl")
+
+
 def build_schedule(coarse: pd.DataFrame, recalib_bars: int) -> list:
-    """Puntos de calibración cada ``recalib_bars`` velas de 15 min, cada uno con su historia previa."""
+    """Puntos de calibración cada ``recalib_bars`` velas de 15 min, cada uno con su historia previa.
+
+    Construirlo cuesta O(n^2) — cada punto reanaliza el ruido estructural sobre toda la historia
+    previa — así que con ``BOTC_POINT_CACHE`` apuntando a un directorio se paga una vez por marco.
+    """
+    path = _schedule_cache_path(coarse, recalib_bars)
+    if path and os.path.exists(path):
+        with open(path, "rb") as fh:
+            points = pickle.load(fh)
+        print(f"  {len(points)} puntos cada {recalib_bars} velas de 15m (cache: {os.path.basename(path)})")
+        return points
     t0 = time.perf_counter()
     points = []
     for idx in range(0, len(coarse), recalib_bars):
@@ -181,6 +207,10 @@ def build_schedule(coarse: pd.DataFrame, recalib_bars: int) -> list:
         if len(points) % 100 == 0:
             print(f"    ... {len(points)} puntos ({time.perf_counter() - t0:.0f}s)", flush=True)
     print(f"  {len(points)} puntos cada {recalib_bars} velas de 15m ({time.perf_counter() - t0:.0f}s)")
+    if path:
+        with open(path, "wb") as fh:
+            pickle.dump(points, fh)
+        print(f"  [cache] escrito {os.path.basename(path)}")
     return points
 
 
