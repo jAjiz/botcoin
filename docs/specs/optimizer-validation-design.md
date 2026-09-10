@@ -2314,6 +2314,63 @@ show — so every sharpening improves the artefact and nothing else. The quantit
 matter is the excess over a matched control, which `gate_structure_screen.py` maximised across
 154 variants; its best is 0.25 VR units and it does not pay.
 
+### Inverting the question: what the bot needs, and whether a gate can deliver it (2026-09-10)
+
+Five gates chosen five ways all returned 0/105, so the owner proposed inverting the design:
+measure what the admitted market has to look like for the bot to win, then look for a gate that
+delivers it. Run over all 154 catalogue variants x 8 years x 4 configs at 15-min fidelity —
+3988 points of "properties of the admitted market → the bot's result in base asset".
+
+**Step 1 says the bot needs the admitted market to fall, and says it monotonically.**
+
+| admitted drift | points | median | p90 | % > 0 | best |
+|---|---|---|---|---|---|
+| < −60 % | 2008 | −12.0 % | +19.8 % | **29 %** | +130.2 % |
+| −60 to −30 % | 468 | −17.7 % | +6.8 % | 18 % | +55.8 % |
+| −30 to −10 % | 396 | −17.0 % | +8.9 % | 22 % | +43.2 % |
+| −10 to +10 % | 244 | −22.4 % | +1.5 % | 12 % | +32.2 % |
+| +10 to +30 % | 208 | −24.3 % | +1.8 % | 12 % | +33.8 % |
+| +30 to +60 % | 228 | −34.4 % | −2.6 % | 8 % | +19.8 % |
+| +60 to +150 % | 328 | −41.0 % | −6.0 % | 4 % | +50.8 % |
+| > +150 % | 108 | −30.9 % | −9.0 % | **0 %** | −3.4 % |
+
+Eight buckets, monotone in both the median and the share positive. And **more variance is worse,
+not better** — inside the flat-drift band the share positive falls from 21 % at 30-45 %
+annualised volatility to 9 % above 80 %, with the median going from −16.7 % to −51.6 %. That is
+the "widen the gate so something exploitable gets in" hypothesis measured directly on the bot
+rather than through a variance ratio, and it points the other way.
+
+**Step 2 is the surprise: that requirement is deliverable, causally, eight years out of eight.**
+The winning region (10th-90th percentile of the positive points) is admitted drift between
+−99 % and −10 %, and fifteen variants land inside it in every one of 2018-2025:
+
+| variant | years in region | admitted drift, 2018 → 2025 |
+|---|---|---|
+| `alcista m=0.09 k=7` | 8/8 | −98 −84 −84 −98 −87 −12 −54 −41 |
+| `bajo max n=20 p=0.05 d=0` | 8/8 | −97 −95 −97 −96 −93 −87 −91 −80 |
+| `bajo max n=30 p=0.10 d=0` | 8/8 | −94 −96 −96 −98 −94 −90 −96 −95 |
+| `bajo max n=60 p=0.05 d=0` | 8/8 | −78 −78 −61 −92 −72 −62 −70 −51 |
+
+**This was expected to fail and did not.** The prediction going in was that the requirement
+would turn out to be forward drift, which no causal rule can supply. It is not: "the market
+while the price sits below its recent high" has negative drift *by construction*, so an up-only
+gate delivers it without forecasting anything. Selecting on a causal price condition and getting
+a stable directional property out of it is not the prediction problem.
+
+**And it still does not produce a profit, which is now the sharper question.** Two of those
+exact gates — `bajo max n=20 p=0.10` and `sin max n=10` — already went through the full 105-config
+sweep at 1-min fidelity and returned 0/105 on all three years. Even in the best drift bucket the
+median is −12.0 % and only 29 % of points clear holding. So negative admitted drift is
+**necessary and not sufficient**, and the reason is the same conditioning that makes it
+deliverable: the drift is negative *within* the admitted stretches because the stretches end
+when the price recovers, and the recovery is handed back at the boundary — which is exactly what
+the forced-rebuy measurement found landing on the loss side.
+
+**What this leaves.** The one test this map does not perform is the study's own standard: which
+specific (gate, config) pairs are positive in **all eight years**, rather than 29 % of points
+being positive somewhere. The script prints aggregates only; dumping per-cell results and
+crossing them is the next step and is cheap now that every calibration schedule is cached.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -2395,6 +2452,8 @@ contradicted by later work that had only this document to go on.
 - **The fees are not the binding constraint, and this is now measured at zero.** The slow contrarian, run as a long-or-flat bot and scored in base asset, loses 54-69 % of the base asset in its worst year **with the fee set to zero**; the whole fee bill is worth 5-15 points at 2 days and 1-3 points at 30. Taker-to-maker (0.40 % → 0.25 %) buys 2-6 points against a sixty-point gap. Any future "it would work with lower costs" claim goes through this measurement first.
 - **A signed bet's expectation is not reachable by a long-only bot, and must be converted before it is quoted.** `E[-sign(r_t) · r_{t+1}]` pays equally for calling a rise and calling a fall; the bot can only be long or flat, so the second half becomes sitting in cash, which in base asset is the dominant loss during a rise. The +0.742 % per operation at 5 days that looked like a near-miss becomes a −62 % worst year once converted. Convert first, then compare to the fee.
 - **Sharpening a gate to lower the measured VR optimises the artefact.** A tighter band truncates harder and lowers VR by construction, on real and shuffled paths alike. Only the excess over a matched control can be signal, and the catalogue's maximum excess does not pay.
+- **The bot needs the admitted market to fall, and more variance makes it worse.** Over 3988 (gate, year, config) points the share of cells beating holding falls monotonically from 29 % at admitted drift below −60 % to 0 % above +150 %; inside the flat-drift band it falls from 21 % at 30-45 % annualised volatility to 9 % above 80 %. Any proposal to widen a gate "so there is something to trade" is arguing against this table.
+- **Negative admitted drift is deliverable causally and is not sufficient.** Fifteen catalogue variants hold admitted drift between −99 % and −10 % in all eight years — "the price while below its recent high" drifts down by construction, so no forecast is involved. Two of those gates nonetheless returned 0/105 on the full sweep. The requirement the map identifies is necessary, not sufficient, and the conditioning that makes it deliverable is the same one that hands the recovery back at the stretch boundary.
 - **Selecting the gate for structure instead of flatness is closed.** Across 154 variants and eight years, gates exist that admit two to six times more genuine mean reversion than the incumbent (`er n=10 t=0.2` at −0.25 VR units of excess over a shuffled control, against ≈0). None pays: 0 of 108 variants has a positive worst year on the naive-bet screen, the best falling 55 bp short of the 0.80 % round trip, and the two most structured gates return 0/105 on the full config sweep with the same monotone "do not trade" surface. Variance is not the resource; predictability is, and the largest structure in the catalogue is worth about 25 bp against a cost of 80.
 - **`hodl_pct` is not worth modelling, and proposing it was wrong.** Scored in base asset, holding is 0 % by construction, so a permanently held fraction is a linear blend between the bot's result and zero: it can only move the result *toward* zero, never above it. It is a dilution control, not a lever, and its return is the asset's by definition. Owner's call, and the algebra agrees.
 - **A statistic computed inside a gate's open stretches is computed on a sample the gate selected.** `impulso` admits price only inside a band, and conditioning on staying in a band truncates long excursions, which is exactly what a variance ratio below 1 measures. A shuffled path with no serial dependence at all, run through the same gate, reproduces VR 0.65 / 0.46 / 0.40 / 0.33 at 1, 2, 3 and 5 days against the real 0.61 / 0.46 / 0.38 / 0.32. Any property measured inside a gate needs a synthetic control before it is believed. This is the fourth measurement defect in the study and the first that is not look-ahead.
@@ -2872,6 +2931,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
 | `scripts/analysis/forced_rebuy_cost.py` | **What does the mask's forced rebuy cost?** Splits every cycle by whether its closing buy landed on a masked bar (the only operation that can, since the sell is deferred) and prices the alternative of waiting for the gate to reopen. First-order decomposition, not a counterfactual — it does not re-simulate the displaced legs. |
 | `scripts/analysis/slow_contrarian.py` | **Is the fee what stands between the slow contrarian and a profit?** Runs the rule as a long-or-flat bot (never short), scores it in base asset against holding, averages over eight starting phases so no single lucky offset decides, and repeats the whole thing at 0.40 %, 0.25 % and 0 % per leg. The three blocks side by side are the answer. |
+| `scripts/analysis/gate_requirement.py` | **What must a gate admit for the bot to win, and can any gate deliver it?** Inverts the design: runs the bot over what all 154 variants admit across eight years and four configs, maps the result against the admitted market's drift, volatility and coverage, then checks which variants land in the winning region in *every* year rather than in some of them. 15-min fidelity, justified as a screen by the measured 1m-15m equivalence. |
 | `scripts/analysis/gate_structure_screen.py` | **Is there a gate that admits a market with real structure, not just a flat one?** Screens all 154 variants by VR *excess* over the same variant applied to a shuffled path, then converts that excess into money via the better of the two naive bets against the round-trip cost, ranked by worst year and printed beside admitted drift so the cost of changing the gate's objective is visible. |
 | `scripts/analysis/lateral_horizon.py` | **Is the day-scale mean reversion real, and does it pay?** Lo-MacKinlay VR counting only aggregation windows contained entirely in one open stretch, out to 30 days; the gross expectation of the naive contrarian on non-overlapping returns against the round-trip cost; and, decisively, a control arm that shuffles the returns and re-runs the same gate on the memoryless path. Three arms: gated, ungated, shuffled-gated. |
 | `scripts/analysis/gate_hysteresis.py` | **Does the gate's flicker start losing trades, and does a confirmation delay fix it?** Splits cycles by the duration of the open stretch their sell landed in, then sweeps an open-only confirmation delay reporting coverage, stretch count, admitted drift and result together — so a delay that buys return by letting trend back in is visible as such. |
