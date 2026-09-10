@@ -2033,6 +2033,50 @@ would need is not there at minute scale. And a large perfect-foresight ceiling s
 about causal reachability — the signal screen already measured a +406 % perfect pivot label in
 2025 that no causal feature predicts.
 
+### The forced rebuy is real, and it explains only the anomaly (2026-09-10)
+
+The strict up-only gate admits a market falling at −96 % annualised, so selling and rebuying
+should have positive *gross* expectation there — yet the sweep came in 10 to 14 points **below**
+the fee bill. The hypothesis was the forced rebuy: while the gate is shut the bot must hold the
+asset, so `if forced and side == "buy"` buys at market on that bar, and an up-only gate shuts
+precisely when the price *recovers*.
+
+The engine makes this measurable without touching it. The sell is deferred (`if forced:
+continue` before the exit is booked), so **the only operation that can land on a masked bar is
+the forced rebuy** — `op.idx in mask and op.side == "buy"` identifies it exactly.
+
+**Where the bot gets caught flat, the effect is large.** Splitting every cycle by whether its
+closing buy was forced, and pricing the alternative "wait for the gate to reopen":
+
+| year | config | cycles | forced | compounded, forced | compounded, free | B_alt / B_forced |
+|---|---|---|---|---|---|---|
+| 2023 | `mm=0.000 s=0.5` | 13 | **13** | −14.6 % | 0.0 % | **−53.3 %** |
+| 2024 | `mm=0.000 s=0.5` | 59 | **59** | −48.2 % | 0.0 % | **−100.0 %** |
+| 2024 | `mm=0.000 s=0.9` | 13 | **13** | −20.9 % | 0.0 % | −98.5 % |
+| 2024 | `mm=0.010 s=0.9` | 7 | **7** | −6.6 % | 0.0 % | −89.6 % |
+
+Compounded over the events, waiting to rebuy would have bought **12 % to 29 % cheaper per
+forced event** in 2024. And the reason is structural rather than bad luck: `bajo max n=20
+p=0.10` shuts when the price returns to within 10 % of its 20-day high and reopens when it falls
+10 % below it again, so the forced rebuy is pinned near a local top while the reopening price is
+pinned near a local bottom. **The gate's own reopening condition is a buy-low rule, and forcing
+the rebuy is what throws it away.**
+
+**But it explains nothing about the main result.** For the symmetric gate and the wide up-only
+gate, across all three years and every config tested, there are **zero forced rebuys**. With
+58-88 % coverage the bot completes its rebuy while the gate is still open; only the strict gate
+(7-18 % coverage) leaves it flat when the mask falls. So the 0/105 that closed the config search
+stands untouched — those losses are entirely the trailing stop's own, and they match the fee
+bill.
+
+**What this opens.** "Gate shut ⇒ force back into the asset" is a design choice, and for an
+up-only gate it is actively harmful. The alternative — hold whatever you have, and let the gate
+govern only new legs — is untested, and the figures above are a first-order decomposition, not a
+counterfactual: changing one rebuy displaces every later leg. Settling it needs an inert engine
+switch and a controlled comparison, exactly as `reset_on_unmask` settled the mask leak. Worth
+doing only if the up-only line is revived, since the gate selected on filter quality never
+triggers the branch.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -2109,6 +2153,7 @@ contradicted by later work that had only this document to go on.
 - **A gate must be evaluated continuously, not on the grid of the series it reads.** The rule was written on daily closes and the harness therefore evaluated it once a day; that staleness alone was worth 23 points on 2024. The daily grid was never part of the hypothesis.
 - **Resolution adds config-specific noise of up to 25 points, with no systematic direction — it does NOT favour or penalise the bot.** Corrected: the 19 points that `mm=0.020/0.9` gained on 2024 going from 15 min to 1 min looked like a systematic artefact and is not one. The full 105-config grid on both 2024 and 2025 puts the median delta 1m-15m at exactly **+0.00 %**, with a maximum absolute delta of 25-26 points, 0/105 and 1/105 sign changes, and rank correlations of +0.798 and +0.938 (top-10 overlap 7/10 in both). So the ordering largely survives and no closed avenue needs reopening on these grounds; what the resolution does add is a per-config term big enough to move a single config by a quarter of its result, which is one more reason a single-config number means nothing.
 - **Gating is a real filter and not a strategy, and the test that settles it is repetition across windows, not the median.** At production fidelity the same 154 causal detectors were run on 2023, 2024 and 2025 and crossed **per variant**: **0 of 154 beat holding in all three**, against a base rate of 0.4 if the years were independent draws. The win rate is set by the year, not by the detector — 3 % of variants win in 2023, 23 % in 2024, 42 % in 2025 — and the winners are not the same winners: 2024's champion `er n=30 t=0.4 d=0` (+33.7 %) returns −42.3 % in 2023, and the surface spike `alcista m=0.20 k=10` (+29.6 %) returns −35.3 %. The best variant by worst year is `impulso m=0.10 k=10` at −3.5 %.
+- **Forcing the rebuy when the gate shuts costs 12-29 % per event, but only where the bot is caught in cash.** An up-only gate shuts on recovery and reopens on a fall, so its reopening condition is a buy-low rule that the forced rebuy discards. It fires only at low coverage: the symmetric gate and the wide up-only gate produce zero forced rebuys across 2023-2025, so this explains the strict gate's anomaly and nothing about the 0/105. If the up-only line is ever revived, add an inert switch and compare properly before believing the first-order figure.
 - **Measure the market before searching it again.** After 154 detectors and 105 configs came back negative, the informative move was a variance ratio and a trade-capped perfect-foresight ceiling, not another sweep. They cost minutes and produced the mechanism-level reason: the admitted market is a random walk at minute scale, so a trailing stop has nothing to grip. Prefer a bound or a property over one more search.
 - **The opportunity is not the constraint; predictability is.** Fifty perfectly timed trades on the admitted bars are worth +393 % to +430 % of base asset in each of 2023, 2024 and 2025 at the real fee. The bot trades 27-33 times there and captures about 2.5 % of it.
 - **Select each component by its own objective, then fix it before choosing the next.** The gate is ranked by admitted drift against coverage (no engine, so eight years are affordable) and then held constant while `min_margin`/`stop_pct` are swept on the bars it admits. Choosing both with one return metric over 154 x 105 combinations is how this study produced three false discoveries.
@@ -2578,6 +2623,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
 | `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
+| `scripts/analysis/forced_rebuy_cost.py` | **What does the mask's forced rebuy cost?** Splits every cycle by whether its closing buy landed on a masked bar (the only operation that can, since the sell is deferred) and prices the alternative of waiting for the gate to reopen. First-order decomposition, not a counterfactual — it does not re-simulate the displaced legs. |
 | `scripts/analysis/lateral_market_structure.py` | **Does the market a gate admits have exploitable structure at all?** Trade-capped perfect-foresight ceiling (exact two-state DP with an operations dimension, so the bound answers "what could an N-trade mechanism get" rather than the useless uncapped infinity), Lo-MacKinlay variance ratios computed only inside contiguous open stretches, and the stretch-length distribution against the round-trip cost. No search, no configs. |
 | `scripts/analysis/gate_filter_quality.py` | **Which gate filters best, judged by the gate's own objective?** Admitted drift (annualised by coverage) against coverage, per year, for every variant, with no engine at all — so it runs over eight years in minutes. Groups variants by coverage band and ranks within the band by worst-year drift, because a Pareto-frontier count would rank the always-open gate top (nothing has more coverage, so it is never dominated). |
 | `scripts/analysis/gate_config_sweep.py` | **With the gate fixed, what does the trailing stop want?** The 105-config grid on the bars one named gate admits, 1-min path, ranked by worst year, with the full worst-year surface printed. The gate is a `--gate` choice made beforehand and is never re-picked from the output. |
