@@ -61,6 +61,11 @@ GATES = {
     # Casi la misma deriva (-83 % en su peor ano) con el triple de cobertura (85 %). La pareja
     # con la anterior aisla si lo que hace falta es mercado puro o materia prima.
     "alcista_amplia": lambda s: gfl.det_no_new_high(s, 10, 0),
+    # Elegidas en `gate_structure_screen.py` por lo contrario que las anteriores: por el EXCESO
+    # de reversion sobre un control barajado, es decir por dejar pasar estructura en vez de
+    # dejar pasar mercado plano. Pagan ese exceso admitiendo mucha mas deriva.
+    "estructura": lambda s: gfl.det_er(s, 20, 0.3, 0),
+    "estructura_max": lambda s: gfl.det_er(s, 10, 0.2, 0),
     "ninguna": lambda s: np.ones(len(s.price), dtype=bool),
 }
 
