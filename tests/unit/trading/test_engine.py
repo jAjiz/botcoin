@@ -447,6 +447,56 @@ def test_the_mask_does_not_re_enter_a_bot_that_already_holds_the_asset() -> None
     assert [(op.side, op.time) for op in masked] == [("buy", "t0")]
 
 
+def test_the_forced_rebuy_is_on_by_default() -> None:
+    # Production never gates, so the switch must reproduce today's behaviour unless turned off.
+    assert _cfg().force_hold_rebuy is True
+
+
+def test_without_the_forced_rebuy_a_masked_bar_leaves_the_bot_in_cash() -> None:
+    # The alternative design: the gate governs new legs only, and a cash leg waits for the lift.
+    forced = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [2]))
+    kept = engine.simulate_operations(
+        _df(_ROUND_TRIP), dataclasses.replace(_with_hold(_cfg(), [2]), force_hold_rebuy=False)
+    )
+
+    # Forcing buys at bar 2's own price; keeping the cash books nothing on that bar and rebuys
+    # once the mask lifts. Here that is dearer, which is the point: the switch is a design
+    # choice, not an improvement, and only measurement on real data can say which is better.
+    assert [(op.side, op.time, op.price) for op in forced][2] == ("buy", "t2", 95.0)
+    assert [(op.side, op.time) for op in kept] == [("buy", "t0"), ("sell", "t1"), ("buy", "t3")]
+    assert not [op for op in kept if op.time == "t2"]
+
+
+def test_without_the_forced_rebuy_the_buy_leg_resumes_after_the_lift() -> None:
+    # Staying in cash must not freeze the bot: the deferred rebuy has to be reachable later.
+    rows = [*_ROUND_TRIP, (121.0, 100.0, 105.0)]
+    cfg = dataclasses.replace(_with_hold(_cfg(), [2]), force_hold_rebuy=False)
+
+    ops = engine.simulate_operations(_df(rows), cfg)
+
+    # The rebuy is deferred, not cancelled: it lands after the lift and the cycle carries on.
+    assert [op.side for op in ops][:3] == ["buy", "sell", "buy"]
+    assert ops[2].time in {"t3", "t4"}
+
+
+def test_the_forced_rebuy_switch_changes_nothing_without_a_mask() -> None:
+    # No masked bar means the branch never runs, so a run with it off must match production.
+    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
+    switched = engine.simulate_operations(_df(_ROUND_TRIP), dataclasses.replace(_cfg(), force_hold_rebuy=False))
+
+    assert [(op.side, op.price) for op in switched] == [(op.side, op.price) for op in plain]
+
+
+def test_the_forced_rebuy_switch_does_not_touch_a_bot_holding_the_asset() -> None:
+    # It governs the cash leg only: masking a long stretch while long must behave identically.
+    on = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [1]))
+    off = engine.simulate_operations(
+        _df(_ROUND_TRIP), dataclasses.replace(_with_hold(_cfg(), [1]), force_hold_rebuy=False)
+    )
+
+    assert [(op.side, op.time, op.price) for op in off] == [(op.side, op.time, op.price) for op in on]
+
+
 # --- reset when the mask lifts ---------------------------------------------
 
 # Holding the asset through the mask leaves the stop trailing at the masked highs. These rows

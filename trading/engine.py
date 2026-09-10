@@ -39,6 +39,9 @@ class EngineConfig:
     force_hold_bars: frozenset[int] = frozenset()
     # When the mask lifts, reopen the leg at that bar so no anchor predates the gate. Off in production.
     reset_on_unmask: bool = False
+    # Whether a masked bar buys a cash leg back in. False lets the gate govern new legs only and
+    # leaves the cash where it is until the mask lifts. True in production, which never gates.
+    force_hold_rebuy: bool = True
     # Per-side overrides of ``min_margin``; ``None`` keeps the shared value. Unset in production.
     min_margin_sell: float | None = None
     min_margin_buy: float | None = None
@@ -351,6 +354,10 @@ def simulate_operations(
             stop_px = None
             stop_atr = None
         if forced and side == "buy":
+            if not cfg.force_hold_rebuy:
+                # The gate governs new legs only. An up-side gate shuts on a recovery, so buying
+                # back here pins the entry near a local top; the leg resumes when the mask lifts.
+                continue
             # In cash while the mask demands the asset: buy at this bar's price, then hold.
             cum_pnl = _record_stop_exit(ops, cal, "buy", price, dtime, vol, fee_rate, cum_pnl)
             if max_ops is not None and len(ops) >= max_ops:

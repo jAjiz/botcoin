@@ -13,9 +13,11 @@ compra a mercado en esa misma vela. Y una puerta solo alcista cierra exactamente
 precio SE RECUPERA (deja de estar un `pct` por debajo de su maximo de `n` dias), asi que la
 recompra forzada cae sistematicamente en el rebote: justo el peor momento.
 
-La venta no tiene este problema -- `if forced: continue` en la linea 421 la difiere -- asi que
-la UNICA operacion que puede caer en una vela enmascarada es la recompra forzada, y eso la hace
-identificable sin tocar el motor: `op.idx in mask and op.side == "buy"`.
+La venta no tiene este problema -- `if forced: continue` la difiere antes de contabilizar la
+salida -- asi que la UNICA operacion que puede caer en una vela enmascarada es la recompra
+forzada. CUIDADO al identificarla: `Operation.idx` es `len(ops) + 1`, el ORDINAL de la
+operacion, no el indice de la vela. Usar `op.idx in mask` compara un ordinal contra un conjunto
+de indices de vela y clasifica por casualidad. Hay que resolver la vela por su sello de tiempo.
 
 Dos medidas, y la segunda es la que responde:
 
@@ -25,10 +27,13 @@ Dos medidas, y la segunda es la que responde:
                 la hipotesis vive.
   ALTERNATIVA   Para cada recompra forzada, a que precio se habria recomprado esperando a que
                 la puerta REABRIERA. El cociente `B_alt / B_forzada` mayor que 1 significa que
-                forzar salio bien; menor que 1, que costo dinero. Es una descomposicion de
-                primer orden, NO un contrafactual completo: cambiar una recompra desplaza todas
-                las piernas siguientes. Si el efecto sale grande, hace falta un interruptor en
-                el motor y una comparacion controlada, como con `reset_on_unmask`.
+                forzar salio bien; menor que 1, que costo dinero. Es de PRIMER ORDEN: cambiar
+                una recompra desplaza todas las piernas siguientes, asi que no basta.
+
+  CONTROLADA    La corrida entera con `force_hold_rebuy=False`, que deja el efectivo donde esta
+                y reanuda la pierna de compra al levantarse la mascara. Un solo interruptor
+                cambia entre los dos brazos, igual que `reset_on_unmask` resolvio la fuga de la
+                mascara. Esta es la cifra que decide; la de primer orden solo orienta.
 
 Uso (PYTHONPATH=. obligatorio; sin variables de entorno de BD):
   PYTHONPATH=. python scripts/analysis/forced_rebuy_cost.py "C:/Dev/Kraken OHLCVT"
@@ -47,21 +52,31 @@ import execution_fidelity as ef
 import gate_config_sweep as gcs
 
 from core.config import ATR_DESV_LIMIT, RECALIBRATION_BARS
-from trading.engine import EngineConfig, simulate_operations
+from trading.engine import EngineConfig, mark_to_market, simulate_operations
 
 CONFIGS = ((0.0, 0.5), (0.0, 0.9), (0.01, 0.9), (0.02, 0.9))
 
 
-def cycles(ops: list, mask: frozenset[int], fee: float) -> tuple[list, list]:
-    """Pares (venta, recompra) separados por si la recompra fue forzada por la mascara."""
+def cycles(ops: list, mask: frozenset[int], fee: float, bar_of: dict[str, int]) -> tuple[list, list]:
+    """Pares (venta, recompra) separados por si la recompra fue forzada por la mascara.
+
+    `bar_of` resuelve el sello de tiempo de la operacion a su indice de vela. `Operation.idx` NO
+    sirve para esto: es el ordinal de la operacion.
+    """
     forced, free = [], []
     for i in range(len(ops) - 1):
         if ops[i].side != "sell" or ops[i + 1].side != "buy":
             continue
         sell, buy = ops[i], ops[i + 1]
         factor = (sell.price / buy.price) * (1.0 - fee) ** 2
-        (forced if buy.idx in mask else free).append((sell, buy, factor))
+        (forced if bar_of[buy.time] in mask else free).append((sell, buy, factor))
     return forced, free
+
+
+def _base(ops: list, final_price: float, hold: float) -> float:
+    """Activo base acumulado frente a mantener, que es 0 % por construccion."""
+    eur = mark_to_market(ops, final_price) if ops else 0.0
+    return ((1.0 + eur / 100.0) / (1.0 + hold / 100.0) - 1.0) * 100.0
 
 
 def compound(rows: list) -> float:
@@ -92,6 +107,9 @@ def main() -> int:
         price = fine["close"].to_numpy(dtype=float)
         times = fine["time"].to_numpy()
         scheduled = ef.remap(points, times)
+        final_price = float(fine.iloc[-1]["close"])
+        hold = (final_price / float(fine.iloc[0]["close"]) - 1.0) * 100.0
+        bar_of = {str(t): i for i, t in enumerate(fine["dtime"].tolist())}
 
         for gate in args.gates:
             is_open = gcs.GATES[gate](s)
@@ -109,7 +127,7 @@ def main() -> int:
             print(f"  puerta abierta {100 * is_open.mean():.1f} %")
             print(
                 f"  {'config':<16}{'ciclos':>8}{'forzados':>10}{'comp. forzados':>17}"
-                f"{'comp. libres':>15}{'B_alt/B_forz':>15}"
+                f"{'comp. libres':>15}{'B_alt/B_forz':>15}{'forzando':>12}{'sin forzar':>12}"
             )
             for mm, stop in CONFIGS:
                 cfg = EngineConfig(
@@ -122,18 +140,22 @@ def main() -> int:
                 )
                 cfg = dataclasses.replace(cfg, force_hold_bars=mask, reset_on_unmask=True)
                 ops = simulate_operations(fine, cfg, fee_rate=fee)
-                forced, free = cycles(ops, mask, fee)
+                kept = simulate_operations(fine, dataclasses.replace(cfg, force_hold_rebuy=False), fee_rate=fee)
+                base_on = _base(ops, final_price, hold)
+                base_off = _base(kept, final_price, hold)
+                forced, free = cycles(ops, mask, fee, bar_of)
                 if not forced and not free:
-                    print(f"  mm={mm:.3f} s={stop}      {0:>8}{0:>10}{'-':>17}{'-':>15}{'-':>15}")
+                    print(f"  mm={mm:.3f} s={stop}      {0:>8}{0:>10}{'-':>17}{'-':>15}{'-':>15}{'-':>12}{'-':>12}")
                     continue
                 ratio = 1.0
                 for _, buy, _ in forced:
-                    j = nxt[buy.idx]
+                    j = nxt[bar_of[buy.time]]
                     if j >= 0:
                         ratio *= price[j] / buy.price
                 print(
                     f"  mm={mm:.3f} s={stop}      {len(forced) + len(free):>8}{len(forced):>10}"
                     f"{compound(forced):>16.1f}%{compound(free):>14.1f}%{100 * (ratio - 1):>14.1f}%"
+                    f"{base_on:>11.1f}%{base_off:>11.1f}%"
                 )
         del fine, s
 
