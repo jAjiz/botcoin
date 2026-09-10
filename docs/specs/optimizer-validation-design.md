@@ -2387,6 +2387,54 @@ fail nearly anything. The informative output is therefore the worst-year ranking
 and it puts the ceiling of the whole gate-plus-trailing-stop construction at about −8.5 % of
 base asset in a bad year.
 
+### The oracle gate: fitting beats the market, on noise more than on the market (2026-09-10)
+
+Everything above searches *causal* gates from one catalogue, so the standing objection is that
+the catalogue is too small. `gate_ceiling.py` removes that objection from above rather than by
+searching harder: it represents the gate as one boolean per day and hill-climbs those 366 free
+parameters directly against the bot's result, **with the whole year visible**. That bounds every
+gate — catalogue, causal, fitted, anything — because no rule can beat the best labelling of the
+days it would have produced.
+
+**With hindsight the bot wins enormously.** 2024, 15-min fidelity, against holding's 0 %:
+
+| config | causal gate (`impulso m=0.07 k=7`) | **oracle gate** | open |
+|---|---|---|---|
+| `mm=0.00/0.9` | −29.5 % | **+113.1 %** | 42.3 % |
+| `mm=0.02/0.9` | −10.2 % | **+77.6 %** | 56.3 % |
+
+A 140-point swing from a per-day labelling. Taken alone this reads as "the gate is the whole
+problem and detection is where the work is".
+
+**The control says the opposite, and it is not close.** The same hill-climb on the same frame
+with the year's returns shuffled — memoryless by construction, OHLC ranges and Wilder ATR
+rebuilt so the bot sees a coherent world, and the year's start and end price preserved so
+holding is identical at +133.5 % in every arm:
+
+| config | real | shuffled 1 | shuffled 2 |
+|---|---|---|---|
+| `mm=0.00/0.9` | +113.1 % | **+173.5 %** | **+165.2 %** |
+| `mm=0.02/0.9` | +77.6 % | **+114.2 %** | **+162.9 %** |
+
+**Four of four, the memoryless path admits a better oracle gate than the real market does.** The
+entire +113 % is the capacity of 366 free binary parameters to fit one series, and the real
+market yields *less* of it than noise does. There is no excess to find, so there is no better
+gate to look for — the gap between the causal gate and the oracle is fitting capacity, not
+missing signal.
+
+**Two things this settles that the causal searches could not.**
+
+The catalogue is not the limitation. A gate chosen with perfect foresight, free of any
+parametric family, does not do better on the real market than on noise, so widening the search —
+finer grids, new families, machine-learned detectors — is optimising the same fitting capacity.
+
+And the first version of this measurement was wrong in a way worth recording: it shuffled over
+the whole frame including the warm-up, so the *year's* return was not preserved and a synthetic
+path that fell 99.9 % inside the year made everything look astronomically better than holding
+(one cell printed 5.957 × 10¹⁰ %). It also left the real path's ATR attached to the synthetic
+prices, so the bot sized its stops with another series' volatility. A control has to be
+controlled: same benchmark, same volatility construction, one thing changed.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -2469,6 +2517,8 @@ contradicted by later work that had only this document to go on.
 - **A signed bet's expectation is not reachable by a long-only bot, and must be converted before it is quoted.** `E[-sign(r_t) · r_{t+1}]` pays equally for calling a rise and calling a fall; the bot can only be long or flat, so the second half becomes sitting in cash, which in base asset is the dominant loss during a rise. The +0.742 % per operation at 5 days that looked like a near-miss becomes a −62 % worst year once converted. Convert first, then compare to the fee.
 - **Sharpening a gate to lower the measured VR optimises the artefact.** A tighter band truncates harder and lowers VR by construction, on real and shuffled paths alike. Only the excess over a matched control can be signal, and the catalogue's maximum excess does not pay.
 - **The bot needs the admitted market to fall, and more variance makes it worse.** Over 3988 (gate, year, config) points the share of cells beating holding falls monotonically from 29 % at admitted drift below −60 % to 0 % above +150 %; inside the flat-drift band it falls from 21 % at 30-45 % annualised volatility to 9 % above 80 %. Any proposal to widen a gate "so there is something to trade" is arguing against this table.
+- **No gate can fix this, including one built with hindsight.** Hill-climbing 366 free per-day booleans against the bot's result on 2024 takes it from −29.5 % to +113.1 %, and the same hill-climb on a shuffled, memoryless version of the same year reaches +173.5 % and +165.2 %. Four of four cells, noise admits a *better* oracle gate than the market does. The causal-to-oracle gap is fitting capacity, not missing signal, so widening the detector search — finer grids, new families, learned detectors — is optimising that capacity and nothing else.
+- **A control has to be controlled: same benchmark, same volatility construction, one thing changed.** The first oracle-gate control shuffled across the warm-up, so the year's return moved and one cell read 5.957 × 10¹⁰ % against a synthetic path that had fallen 99.9 %; it also left the real ATR attached to synthetic prices. Preserve the scored quantity's benchmark and rebuild every derived series before reading a single number.
 - **The gate-plus-trailing-stop construction tops out around −8.5 % of base asset in its worst year.** 0 of 452 (gate, config) pairs beat holding in all eight years, and the best worst-year is −8.5 %, itself the best of 452. Report the worst-year ranking rather than the 8/8 count here: the per-year positive rate ranges from 1 % (2023) to 34 % (2018), which makes an 8/8 count expect 0.00 by chance and therefore say nothing.
 - **Negative admitted drift is deliverable causally and is not sufficient.** Fifteen catalogue variants hold admitted drift between −99 % and −10 % in all eight years — "the price while below its recent high" drifts down by construction, so no forecast is involved. Two of those gates nonetheless returned 0/105 on the full sweep. The requirement the map identifies is necessary, not sufficient, and the conditioning that makes it deliverable is the same one that hands the recovery back at the stretch boundary.
 - **Selecting the gate for structure instead of flatness is closed.** Across 154 variants and eight years, gates exist that admit two to six times more genuine mean reversion than the incumbent (`er n=10 t=0.2` at −0.25 VR units of excess over a shuffled control, against ≈0). None pays: 0 of 108 variants has a positive worst year on the naive-bet screen, the best falling 55 bp short of the 0.80 % round trip, and the two most structured gates return 0/105 on the full config sweep with the same monotone "do not trade" surface. Variance is not the resource; predictability is, and the largest structure in the catalogue is worth about 25 bp against a cost of 80.
@@ -2948,6 +2998,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
 | `scripts/analysis/forced_rebuy_cost.py` | **What does the mask's forced rebuy cost?** Splits every cycle by whether its closing buy landed on a masked bar (the only operation that can, since the sell is deferred) and prices the alternative of waiting for the gate to reopen. First-order decomposition, not a counterfactual — it does not re-simulate the displaced legs. |
 | `scripts/analysis/slow_contrarian.py` | **Is the fee what stands between the slow contrarian and a profit?** Runs the rule as a long-or-flat bot (never short), scores it in base asset against holding, averages over eight starting phases so no single lucky offset decides, and repeats the whole thing at 0.40 %, 0.25 % and 0 % per leg. The three blocks side by side are the answer. |
+| `scripts/analysis/gate_ceiling.py` | **Could ANY gate make the bot profitable?** Represents the gate as one boolean per day and hill-climbs it against the bot's result with the whole year visible — a bound on every gate, not a strategy — beside the same hill-climb on a shuffled, memoryless version of the same year with OHLC, ATR and the holding benchmark all rebuilt to match. Only the real-minus-shuffled difference is interpretable. |
 | `scripts/analysis/gate_requirement.py` | **What must a gate admit for the bot to win, and can any gate deliver it?** Inverts the design: runs the bot over what all 154 variants admit across eight years and four configs, maps the result against the admitted market's drift, volatility and coverage, then checks which variants land in the winning region in *every* year rather than in some of them. 15-min fidelity, justified as a screen by the measured 1m-15m equivalence. |
 | `scripts/analysis/gate_structure_screen.py` | **Is there a gate that admits a market with real structure, not just a flat one?** Screens all 154 variants by VR *excess* over the same variant applied to a shuffled path, then converts that excess into money via the better of the two naive bets against the round-trip cost, ranked by worst year and printed beside admitted drift so the cost of changing the gate's objective is visible. |
 | `scripts/analysis/lateral_horizon.py` | **Is the day-scale mean reversion real, and does it pay?** Lo-MacKinlay VR counting only aggregation windows contained entirely in one open stretch, out to 30 days; the gross expectation of the naive contrarian on non-overlapping returns against the round-trip cost; and, decisively, a control arm that shuffles the returns and re-runs the same gate on the memoryless path. Three arms: gated, ungated, shuffled-gated. |
