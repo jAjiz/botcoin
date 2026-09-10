@@ -1977,6 +1977,62 @@ the trailing stop's expectation on whatever market it is given — flat, falling
 remaining lever is therefore not another parameterisation of this mechanism, and not another
 detector; both have now been searched with the other one held fixed and honestly selected.
 
+### What the admitted market actually is: a random walk with a day-scale wobble (2026-09-10)
+
+With `impulso m=0.07 k=7` fixed, the 105-config sweep returned 0/105 and a surface whose
+optimum is not trading. That says *this mechanism* loses, not that the admitted market is empty.
+`lateral_market_structure.py` measures the market instead of searching it again.
+
+**The pot is large and stable.** Perfect foresight on the admitted bars, at the real 0.40 %/leg
+fee, capped at a realistic number of trades:
+
+| trade cap | 2023 | 2024 | 2025 |
+|---|---|---|---|
+| 10 | +64.8 % | +59.0 % | +58.2 % |
+| 25 | +160.9 % | +156.6 % | +163.3 % |
+| **50** | **+405.6 %** | **+392.6 %** | **+430.1 %** |
+| 100 | +933.5 % | +990.6 % | +1062.4 % |
+
+The bot makes 27-33 operations a year on these bars and its best 2025 config returns +10.8 %,
+against a 50-trade ceiling of +430 %. **It captures about 2.5 % of what is available.** So the
+failure is not lack of opportunity, and not fees.
+
+**The flicker is harmless.** The gate has no hysteresis and produces 452-902 stretches a year,
+of which 375-745 last under an hour — but those hold only **0.8-2.2 % of open time**. The
+material is 10-16 stretches longer than a week holding 51-81 % of it, with a median internal
+range of 8.4-9.2 %, an order of magnitude above the 0.80 % round trip. Nothing needs fixing here.
+
+**And the structure says why nothing works.** Lo-MacKinlay variance ratios, computed only inside
+contiguous open stretches so no gap return is counted, with the heteroskedasticity-robust z:
+
+| horizon | 2023 | 2024 | 2025 |
+|---|---|---|---|
+| 5 min | 1.038 (z 3.0) | 1.024 (z 1.1) | 1.037 (z 3.9) |
+| 15 min | 1.039 (z 1.8) | 1.020 (z 0.7) | 1.035 (z 2.1) |
+| 60 min | 0.997 (z −0.1) | 1.014 (z 0.3) | 1.029 (z 1.0) |
+| 240 min | 0.942 (z −1.1) | 0.954 (z −0.8) | 1.004 (z 0.1) |
+| **1 day** | **0.853 (z −1.6)** | **0.753 (z −2.3)** | **0.846 (z −1.6)** |
+
+**At the horizon the bot operates on, the admitted market is a random walk**, and the only
+significant deviation is *positive* — mild momentum at 5-15 minutes, VR 1.02-1.04, far too small
+to pay 80 bp. There is no minute-scale oscillation to harvest, which is exactly what a trailing
+stop needs. That is the mechanism-level reason the config surface is monotone toward not
+trading, and it is not a tuning problem.
+
+**The one thing pointing somewhere is at the daily scale.** VR at 1 day is below 1 in all three
+years — 0.85, 0.75, 0.85 — with individually marginal z (−1.6, −2.3, −1.6) but a consistent sign
+across three independent windows. A VR of 0.8 means a day's variance is a fifth below its
+random-walk implication: genuine mean reversion, weak. **It is at a horizon the current
+mechanism does not address**: the trailing stop reacts to intraday extremes, and this is a
+day-to-day effect. Whether a reversion of that size survives 0.80 % round trip is unmeasured and
+is the one open question this section produces.
+
+**Honest bounds.** A variance ratio measures *linear* serial dependence; its absence does not
+prove there is nothing exploitable, only that the simplest thing a mean-reverting mechanism
+would need is not there at minute scale. And a large perfect-foresight ceiling says nothing
+about causal reachability — the signal screen already measured a +406 % perfect pivot label in
+2025 that no causal feature predicts.
+
 ### Still not established
 
 - **Whether any data this study does not hold predicts.** Order book, trades tape, funding
@@ -2053,6 +2109,8 @@ contradicted by later work that had only this document to go on.
 - **A gate must be evaluated continuously, not on the grid of the series it reads.** The rule was written on daily closes and the harness therefore evaluated it once a day; that staleness alone was worth 23 points on 2024. The daily grid was never part of the hypothesis.
 - **Resolution adds config-specific noise of up to 25 points, with no systematic direction — it does NOT favour or penalise the bot.** Corrected: the 19 points that `mm=0.020/0.9` gained on 2024 going from 15 min to 1 min looked like a systematic artefact and is not one. The full 105-config grid on both 2024 and 2025 puts the median delta 1m-15m at exactly **+0.00 %**, with a maximum absolute delta of 25-26 points, 0/105 and 1/105 sign changes, and rank correlations of +0.798 and +0.938 (top-10 overlap 7/10 in both). So the ordering largely survives and no closed avenue needs reopening on these grounds; what the resolution does add is a per-config term big enough to move a single config by a quarter of its result, which is one more reason a single-config number means nothing.
 - **Gating is a real filter and not a strategy, and the test that settles it is repetition across windows, not the median.** At production fidelity the same 154 causal detectors were run on 2023, 2024 and 2025 and crossed **per variant**: **0 of 154 beat holding in all three**, against a base rate of 0.4 if the years were independent draws. The win rate is set by the year, not by the detector — 3 % of variants win in 2023, 23 % in 2024, 42 % in 2025 — and the winners are not the same winners: 2024's champion `er n=30 t=0.4 d=0` (+33.7 %) returns −42.3 % in 2023, and the surface spike `alcista m=0.20 k=10` (+29.6 %) returns −35.3 %. The best variant by worst year is `impulso m=0.10 k=10` at −3.5 %.
+- **Measure the market before searching it again.** After 154 detectors and 105 configs came back negative, the informative move was a variance ratio and a trade-capped perfect-foresight ceiling, not another sweep. They cost minutes and produced the mechanism-level reason: the admitted market is a random walk at minute scale, so a trailing stop has nothing to grip. Prefer a bound or a property over one more search.
+- **The opportunity is not the constraint; predictability is.** Fifty perfectly timed trades on the admitted bars are worth +393 % to +430 % of base asset in each of 2023, 2024 and 2025 at the real fee. The bot trades 27-33 times there and captures about 2.5 % of it.
 - **Select each component by its own objective, then fix it before choosing the next.** The gate is ranked by admitted drift against coverage (no engine, so eight years are affordable) and then held constant while `min_margin`/`stop_pct` are swept on the bars it admits. Choosing both with one return metric over 154 x 105 combinations is how this study produced three false discoveries.
 - **With the gate fixed by filter quality, no configuration of the trailing stop beats holding.** 0 of 105 in all three of 2023-2025, on each of three independently selected gates, at 1-min fidelity. Every worst-year surface is monotone in `min_margin` and its optimum is the config that does not trade (−0.4 %, one operation). The per-operation expectation is negative on every market the bot has been handed.
 - **Fall-harvesting is refuted at its best case.** A gate that admits a market falling at ≤ −96 % annualised, run with the fastest config in the grid, returns −15.0 / −48.4 / −52.1 %. The eight-year `mm=0` result that suggested otherwise was measured ungated, at 15-min resolution, and does not reproduce.
@@ -2520,6 +2578,7 @@ what still answers a question no result has closed.
 | `scripts/analysis/run_optimizer_csv.py` | **The deployed optimizer, against the CSV archives.** Builds the same `OptimizerRequest` the route accepts and runs `OPTIMIZE` (the enumeration; AUTO is retired) in process with the OHLC loader and calibration cache patched; writes the result to `--out` before printing. |
 | `scripts/analysis/cycle_decomposition.py` | **Where does the loss of operating come from?** Pairs every sell with its rebuy across the 105 configs and scores each cycle in base asset with fees; reports wins and losses against the `mm − fees` floor per `min_margin`, plus time in cash. No new simulation beyond the sweep. Takes the 15-minute CSV path. |
 | `scripts/analysis/gate_live_fidelity.py` | **What is the gate worth when the bot is simulated as it actually runs?** 1-min price path (production's `SLEEPING_INTERVAL`), ATR still Wilder over 15-min bars projected forward, calibration schedule built on the 15-min frame and remapped. Four arms declared before running: no gate; the daily flag on its own day (look-ahead, kept only to size the bias); the daily flag lagged a day; and the rule evaluated at every bar against the last k *completed* daily closes. Also runs the 15-min path, so path resolution and flag freshness stop being confounded. Minutes per year. |
+| `scripts/analysis/lateral_market_structure.py` | **Does the market a gate admits have exploitable structure at all?** Trade-capped perfect-foresight ceiling (exact two-state DP with an operations dimension, so the bound answers "what could an N-trade mechanism get" rather than the useless uncapped infinity), Lo-MacKinlay variance ratios computed only inside contiguous open stretches, and the stretch-length distribution against the round-trip cost. No search, no configs. |
 | `scripts/analysis/gate_filter_quality.py` | **Which gate filters best, judged by the gate's own objective?** Admitted drift (annualised by coverage) against coverage, per year, for every variant, with no engine at all — so it runs over eight years in minutes. Groups variants by coverage band and ranks within the band by worst-year drift, because a Pareto-frontier count would rank the always-open gate top (nothing has more coverage, so it is never dominated). |
 | `scripts/analysis/gate_config_sweep.py` | **With the gate fixed, what does the trailing stop want?** The 105-config grid on the bars one named gate admits, 1-min path, ranked by worst year, with the full worst-year surface printed. The gate is a `--gate` choice made beforehand and is never re-picked from the output. |
 | `scripts/analysis/gate_families_cross.py` | **Do the variants that win here win there?** Crosses the per-variant JSON of several `gate_families_live.py` runs, ranks by windows won with the *worst* window as tiebreak, and prints the base rate that an "n of n" count would reach by chance. This is the test that replaces judging a family by its median. Seconds to run. |
