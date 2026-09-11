@@ -1,6 +1,6 @@
 # Optimizer Validation — Study State
 
-**Status (2026-09-11): closed as a line of work.** Twenty-two avenues were measured and none
+**Status (2026-09-11): closed as a line of work.** Twenty-three avenues were measured and none
 survived. The question this document exists to answer — *can a configuration of the
 trailing-stop strategy beat holding the base asset, out of sample?* — is answered **no** for
 every parameterisation, gate and objective tested on XBTEUR OHLCV data, including a gate built
@@ -11,9 +11,15 @@ successor needs: the decisions, the closed avenues with the number that closed e
 measurement traps that cost this study three false discoveries, and the surviving tools. The
 narrative of how each result was reached is in this file's git history.
 
-**Next line of work: a VWAP-based Z-score model, in a new session.** Read "Decisions taken",
-"Measurement traps" and "Tools" before writing any of it — most of this document's value to that
-work is negative knowledge and method, not results.
+**The VWAP Z-score model was that next line of work, and it is now measured and closed
+(2026-09-11).** It is the twenty-third avenue below. Two things make it worth reading rather
+than just counting: it is the first avenue where a causal feature left the null band against the
+*honest* label, and it still lost — and the number that closed it is a **break-even fee**, which
+is a more useful way to kill a high-frequency rule than a sweep.
+
+There is no next line of work queued. Read "Decisions taken", "Measurement traps" and "Tools"
+before starting one — most of this document's value to that work is negative knowledge and
+method, not results.
 
 ---
 
@@ -53,6 +59,14 @@ re-anchor) over the calendar years 2018-2025 beats holding in exactly the three 
 lost money and loses in exactly the five it made money. Time in cash is bimodal — 13-22 % in the
 winners, 77-99 % in the losers. It is a conditional instrument, not a strategy, and the condition
 is the year's direction.
+
+The VWAP Z-score rule lands on the same instrument from a fourth direction, and this is now the
+pattern to expect from anything long-or-flat: ungated and at zero fee, **24 of 24** arms lose in
+2024 (holding +133.5 % in euros) and **20 of 24** win in 2025 (holding −17.4 %), one arm swinging
+−41.4 % → +50.5 %. Any
+rule that can sit in cash is a bet on the year's direction until proven otherwise, so **a new
+rule must be scored on at least one rising and one falling year, or the result is a coin flip
+dressed as a measurement.**
 
 **Over three continuous years it loses 78 % of the base asset in four operations.** 2023-2025
 continuous, holding +384 % in euros: production median −76.0 %, **0 of 105 beat holding**.
@@ -179,6 +193,12 @@ recorded only open questions, lost two decisions, and had both contradicted by w
   ceiling, not another sweep. Prefer a bound or a property over one more search.
 - **Treat a difference below the harness's own dispersion as unresolved, not disproved.**
   Resolution alone moves a single config by up to 25 points.
+- **Report a frequent rule's break-even fee per leg, not its result at one fee schedule.** A rule
+  that trades hundreds of times a year has a cost that scales with its operation count while its
+  edge does not, so "loses at 0.40 %, wins at 0 %" says nothing about how far off it is. Invert
+  it instead: `f* = 1 − exp(−ln(1 + edge) / operations)`. The VWAP Z-score's best arm needs
+  **2.6 basis points** a leg — one number that settles it, where a fee sweep would have produced
+  a table and an argument. Print it beside any arm making more than ~50 operations a year.
 
 ### Search space and engine
 
@@ -227,7 +247,7 @@ recorded only open questions, lost two decisions, and had both contradicted by w
 
 ## Closed avenues
 
-Twenty-two, each a hypothesis about where the edge lived. None was a tuning question.
+Twenty-three, each a hypothesis about where the edge lived. None was a tuning question.
 
 | Avenue | What closed it |
 |---|---|
@@ -253,6 +273,7 @@ Twenty-two, each a hypothesis about where the edge lived. None was a tuning ques
 | Buying rally precision with recall, or with a stateful ceiling-break rule | the best rule reaches 78 % precision at 17 % rally contamination and still returns −1.1 % and −11.7 % on held-out years. Residual rally exposure of 17 % costs more than 83 % of the harvest earns |
 | Fall-harvesting (leaving the falls tradeable) | refuted at its best case: a gate admitting a market falling at ≤ −96 % annualised, run with the fastest config, returns −15.0 / −48.4 / −52.1 %. The symmetric gate that *blocks* falls wins 23 of 36 paired comparisons |
 | Any gate at all, including one fitted with hindsight | a shuffled, memoryless path admits a *better* oracle gate than the real market, 4 of 4 cells |
+| A VWAP Z-score rule inside the lateral gate | the edge is real, tiny and an order of magnitude below its own cost. The distance to VWAP is the *only* causal feature ever to leave the null band against the honest forward label (AUC 0.436 at 12 h, p = 0.00, 2025 held out) — but so do `ma_dist_1w`, `ret_3d` and `rsi_1d`, and the **unweighted, unnormalised** distance scores the same, so neither the volume weighting nor the z adds anything. Run as a long-or-flat rule over 24 pre-declared arms: at the real fee **0 of 24** positive in both 2024 and 2025, best worst-year −19.0 %; at **zero fee** 3 of 24, best worst-year +4.6 % against a shuffled control's 0 of 24. Those three arms trade 175-334 times a year, so their **break-even fee is 2.6 basis points per leg** — a tenth of Kraken's best maker rate, before any slippage. And the arms slow enough for the fee not to matter (20-34 operations) are negative at zero fee, so trading less does not rescue it |
 
 ---
 
@@ -370,7 +391,8 @@ a question, or is machinery a successor will need.
 | `lateral_horizon.py` | **Is there exploitable serial dependence, and does it pay?** Lo-MacKinlay VR counting only aggregation windows contained entirely inside one open stretch, out to 30 days; the naive contrarian's gross expectation on non-overlapping returns against the round-trip cost; and, decisively, a **shuffled-path control**. Three arms: gated, ungated, shuffled-gated. **Any mean-reversion model needs this control.** |
 | `lateral_market_structure.py` | **Is there anything to capture at all?** Trade-capped perfect-foresight ceiling (exact two-state DP with an operations dimension, so the bound answers "what could an N-trade mechanism get" rather than the useless uncapped infinity), plus the stretch-length distribution against the round-trip cost. Also provides `stretches`. |
 | `gate_ceiling.py` | **Could ANY signal make the bot profitable?** Represents the gate as one boolean per day and hill-climbs it against the bot's result with the whole year visible — a bound on every gate, not a strategy — beside the same hill-climb on a shuffled version of the year with OHLC, ATR and the holding benchmark all rebuilt to match. Only the real-minus-shuffled difference is interpretable. |
-| `signal_screen.py` | **Does anything visible at `t` predict, and is it worth money?** Three parts that must all pass: what the perfect label is worth traded, per-feature AUC against both that label and a fixed-horizon forward label, and the model's prediction run as an allocation in base asset at zero and maker fees. Circular-shift null, temporal split fixed in advance. **The first test any new signal should face.** |
+| `signal_screen.py` | **Does anything visible at `t` predict, and is it worth money?** Three parts that must all pass: what the perfect label is worth traded, per-feature AUC against both that label and a fixed-horizon forward label, and the model's prediction run as an allocation in base asset at zero and maker fees. Circular-shift null, temporal split fixed in advance. **The first test any new signal should face.** Twenty features in three families; the VWAP family carries the raw distance beside the z so any effect can be attributed to the volume weighting or to the normalisation, and part 3 prints its own null band — the first version did not, which left a 0.43 unreadable. |
+| `vwap_zscore_rule.py` | **Does a threshold rule on a signal actually pay, long-or-flat?** The step `signal_screen.py` cannot take: a hysteresis rule (sell at z ≥ +k, rebuy at −k or at the anchor) scored in base asset, at zero fee *and* the real one, with the shuffled control beside it and the operation count that sets the break-even fee. Gated and ungated, 24 pre-declared arms, whole distribution printed. The state path is a forward-fill of the last directive (the hysteresis is idempotent), so it vectorises and the fee is charged afterwards on the flips — the same path serves every fee. **The template for scoring any future signal as a rule.** |
 
 **Caching.** A calibration schedule over a long window costs 280-640 s to build (O(n²): each point
 re-analyses history up to its own bar). Set `BOTC_POINT_CACHE` to a directory and it is paid once

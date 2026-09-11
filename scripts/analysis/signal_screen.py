@@ -35,6 +35,11 @@ Caracteristicas estrictamente causales (datos hasta t inclusive), en dos familia
   * FLUJO: z-score del volumen y del numero de operaciones, tamano medio de operacion y
     desequilibrio de volumen con signo. Son las dos columnas del CSV que este estudio nunca
     habia usado, y lo unico que el resultado del ER no cubre.
+  * VWAP: distancia a la VWAP rodante, cruda y en desviaciones ponderadas por volumen, a
+    4 h / 1 d / 1 semana. Es el hueco que dejaban las dos anteriores: `ma_dist_*` es una media
+    SIN ponderar y SIN normalizar, y `_z` solo se habia aplicado a volumen y numero de
+    operaciones, nunca a una distancia de precio. La distancia cruda entra al lado de las tres
+    normalizadas para poder atribuir cualquier efecto al peso por volumen o a la division.
 
 El nulo es una PERMUTACION CIRCULAR de las etiquetas, no una barajada: estan muy
 autocorrelacionadas (rachas dentro de una tendencia) y barajarlas daria una banda nula
@@ -115,6 +120,25 @@ def _signed_er(close: pd.Series, n: int) -> pd.Series:
     return close.diff(n) / close.diff().abs().rolling(n).sum()
 
 
+def _vwap_z(df: pd.DataFrame, n: int) -> tuple[pd.Series, pd.Series]:
+    """(distancia a la VWAP rodante de `n` velas, esa distancia en desviaciones).
+
+    VWAP = suma(precio tipico x volumen) / suma(volumen) sobre las `n` velas hasta t inclusive,
+    y la desviacion es la PONDERADA POR VOLUMEN alrededor de esa misma VWAP -- la definicion
+    canonica de las bandas de VWAP, no una desviacion del cierre. Los CSV de Kraken no traen
+    columna VWAP, asi que se reconstruye desde (h+l+c)/3: es la VWAP de la vela aproximada, no
+    la real intravela. Todo con datos hasta t.
+    """
+    tp = (df["high"].astype(float) + df["low"].astype(float) + df["close"].astype(float)) / 3.0
+    vol = df["volume"].astype(float)
+    wsum = vol.rolling(n).sum()
+    vwap = (tp * vol).rolling(n).sum() / wsum
+    var = (tp.pow(2) * vol).rolling(n).sum() / wsum - vwap.pow(2)
+    sigma = np.sqrt(var.clip(lower=0.0))
+    dist = df["close"].astype(float) / vwap - 1.0
+    return dist, (df["close"].astype(float) - vwap) / sigma.replace(0.0, np.nan)
+
+
 def _rsi(close: pd.Series, n: int) -> pd.Series:
     delta = close.diff()
     up = delta.clip(lower=0).ewm(alpha=1 / n, adjust=False).mean()
@@ -144,6 +168,13 @@ def features(df: pd.DataFrame) -> pd.DataFrame:
     signed = volume * np.sign(close.diff())
     out["flow_imb_1d"] = signed.rolling(96).sum() / volume.rolling(96).sum()
     out["flow_imb_3d"] = signed.rolling(288).sum() / volume.rolling(288).sum()
+
+    # Ancla ponderada por volumen. `vwap_dist_1d` es la distancia SIN normalizar: separa si algo
+    # viene del peso por volumen o de dividir por la dispersion. Las tres ventanas se fijan aqui,
+    # antes de correr nada, para que esto no se convierta en una busqueda con otro nombre.
+    out["vwap_dist_1d"], out["vwap_z_1d"] = _vwap_z(df, 96)
+    _, out["vwap_z_4h"] = _vwap_z(df, 16)
+    _, out["vwap_z_1w"] = _vwap_z(df, 672)
     return out
 
 
@@ -152,6 +183,7 @@ PRICE_FEATURES = (
     "atr_ratio", "er_1d", "er_3d", "ma_dist_1w", "ma_dist_1m", "rsi_1d",
 )  # fmt: skip
 FLOW_FEATURES = ("vol_z", "cnt_z", "trade_size_z", "flow_imb_1d", "flow_imb_3d")
+VWAP_FEATURES = ("vwap_dist_1d", "vwap_z_1d", "vwap_z_4h", "vwap_z_1w")
 
 
 # --- metrica, nulo y ajuste -------------------------------------------------
@@ -272,26 +304,41 @@ def main() -> int:
     print("  La etiqueta vale una fortuna. Por eso el AUC contra ella, abajo, no dice lo que parece.")
 
     print("\n[2. AUC contra la etiqueta de pivote] TAUTOLOGICO — mide si se sabe en que tramo se esta, no el futuro")
-    for title, fam in (("precio/volatilidad — control", PRICE_FEATURES), ("flujo", FLOW_FEATURES)):
+    for title, fam in (
+        ("precio/volatilidad — control", PRICE_FEATURES),
+        ("flujo", FLOW_FEATURES),
+        ("vwap", VWAP_FEATURES),
+    ):
         sel = [names.index(n) for n in names if n in fam]
         _auc_table(title, [names[i] for i in sel], xs[test][:, sel], y[test], rng, args.n_null)
 
     print("\n[3. AUC contra la etiqueta honesta] signo del retorno futuro a horizonte fijo")
-    print(f"    {'caracteristica':<16}" + "".join(f"{h:>10}" for h in ("12h", "1d", "3d")))
+    print("    Con su banda nula, que la primera version de esta tabla no imprimia: un AUC lejos de 0.5")
+    print("    no dice nada si el nulo llega igual de lejos. Mismo nulo que la parte 2 -- permutacion")
+    print("    circular, porque la etiqueta esta autocorrelacionada. `p` es a dos colas.")
+    print(f"    {'caracteristica':<16}" + "".join(f"{h:>16}" for h in ("12h", "1d", "3d")))
     forwards = {h: label_forward(frame, b)[idx] for h, b in (("12h", 48), ("1d", 96), ("3d", 288))}
     for i, feat in enumerate(names):
         row = f"    {feat:<16}"
         for h in ("12h", "1d", "3d"):
             f_lab = forwards[h]
             m = test & ~np.isnan(f_lab) & (f_lab != 0)
-            row += f"{auc(xs[m][:, i], f_lab[m]):>10.3f}"
+            a = auc(xs[m][:, i], f_lab[m])
+            null = circular_null(xs[m][:, i], f_lab[m], args.n_null, rng)
+            pv = float(np.mean(np.abs(null - 0.5) >= abs(a - 0.5)))
+            row += f"{a:>10.3f}{pv:>6.2f}"
         print(row)
 
     print("\n[4. multivariante y prueba de dinero] logistica ajustada SOLO en el tramo de ajuste")
     print(
         f"    {'familia':<22} {'AUC aj.':>8} {'AUC pr.':>8} {'p':>6} {'base 0 %':>10} {'base maker':>11} {'cambios':>8}"
     )
-    for fam_name, cols in (("precio/volatilidad", PRICE_FEATURES), ("flujo", FLOW_FEATURES), ("todas", tuple(names))):
+    for fam_name, cols in (
+        ("precio/volatilidad", PRICE_FEATURES),
+        ("flujo", FLOW_FEATURES),
+        ("vwap", VWAP_FEATURES),
+        ("todas", tuple(names)),
+    ):
         sel = [names.index(n) for n in names if n in cols]
         w = fit_logistic(np.c_[np.ones(train.sum()), xs[train][:, sel]], (y[train] > 0).astype(float))
         score_in = np.c_[np.ones(train.sum()), xs[train][:, sel]] @ w
