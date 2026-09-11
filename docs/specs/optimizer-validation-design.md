@@ -1,10 +1,11 @@
 # Optimizer Validation — Study State
 
-**Status (2026-09-11): closed as a line of work.** Twenty-three avenues were measured and none
+**Status (2026-09-11): closed as a line of work.** Twenty-four avenues were measured and none
 survived. The question this document exists to answer — *can a configuration of the
 trailing-stop strategy beat holding the base asset, out of sample?* — is answered **no** for
 every parameterisation, gate and objective tested on XBTEUR OHLCV data, including a gate built
-with perfect hindsight.
+with perfect hindsight — and, for the one avenue that needed no prediction at all, on ETHEUR and
+SOLEUR as well.
 
 This is a condensed rewrite (2026-09-11) of a 3 100-line running log. What is kept is what a
 successor needs: the decisions, the closed avenues with the number that closed each, the
@@ -16,6 +17,15 @@ narrative of how each result was reached is in this file's git history.
 than just counting: it is the first avenue where a causal feature left the null band against the
 *honest* label, and it still lost — and the number that closed it is a **break-even fee**, which
 is a more useful way to kill a high-frequency rule than a sweep.
+
+**The grid is the twenty-fourth, and it is the only avenue here that never needed a prediction**
+(2026-09-11). A grid does not forecast anything; it only needs the price to travel out and back
+by more than the toll. That makes it the cleanest possible test of whether the market has
+anything at all, and it is also the first avenue run on more than one pair — ETHEUR and SOLEUR
+beside XBTEUR, because the toll is proportional and the amplitude is not, so a more volatile pair
+is the one structural reason to expect a different answer. It got one, and the answer is still no.
+Read it for two things: the gate turns out to select the *wrong variable* for this mechanism, and
+on ETHEUR the shuffled control beats the real market outright.
 
 There is no next line of work queued. Read "Decisions taken", "Measurement traps" and "Tools"
 before starting one — most of this document's value to that work is negative knowledge and
@@ -33,7 +43,9 @@ every figure here is measured against. Euros are a denomination, not the goal �
 because the euro sign has inverted on a run whose base-asset result was positive.
 
 Everything is XBTEUR, **0.40 % fee per leg** (Kraken taker; maker is 0.25 %), on Kraken's OHLCVT
-archives. Production fidelity means: **1-minute price path** (`SLEEPING_INTERVAL` = 60 s),
+archives — except the grid avenue, which also runs ETHEUR and SOLEUR at the same fee, and where
+the fee's other face matters: a round trip pays it **twice**, so no rule whose round trip is
+worth less than 0.8 % (0.5 % at maker) can clear it, whatever it predicts. Production fidelity means: **1-minute price path** (`SLEEPING_INTERVAL` = 60 s),
 **Wilder ATR over 15-minute bars** projected forward, and the calibration schedule built on the
 15-minute frame and remapped by timestamp. Anything measured at 15 minutes is a screen, not a
 result.
@@ -111,6 +123,25 @@ on a **shuffled, memoryless** version of the same year reaches +173.5 % and +165
 four cells, noise admits a *better* oracle gate than the market does. The causal-to-oracle gap is
 fitting capacity, not missing signal — so widening the detector search is optimising that
 capacity and nothing else.
+
+**And noise beats the market again, on a mechanism with no gate in it at all.** Running the grid
+ungated on ETHEUR over 2024-2025, the shuffled control is positive in both years in **5 of 24**
+arms — against the real market's **0 of 24** — with a best worst-year of +3.6 % against −15.9 %.
+On XBTEUR the same comparison falls short of crossing zero but runs the same way (control −1.0 %,
+real −7.7 %). In five of the six pair-by-mode tables the memoryless path is the better market for
+a grid. Whatever serial dependence XBTEUR and ETHEUR have at this scale is *persistence*, which is
+the opposite of what an oscillation harvester needs. This is an independent reproduction of the
+oracle result, by a method that shares no code with it.
+
+**The gate selects the wrong variable for anything that harvests oscillation.** `impulso` admits
+calm, and calm is cheap movement: the median per-bar excursion inside the gate is **below** the
+one outside it in all six pair-years measured — 0.111 % against 0.139 % on XBTEUR 2024, 0.126 %
+against 0.169 % on ETHEUR, 0.198 % against 0.265 % on SOLEUR — about a quarter less amplitude,
+while the 1-day efficiency ratio falls by roughly the same proportion (0.084 vs 0.097, 0.085 vs
+0.095, 0.073 vs 0.091). So the gate buys no improvement in the ratio that matters and gives up the
+amplitude that has to clear the fee. The consequence is measured, not inferred: **SOLEUR goes from
+6 of 24 arms positive ungated to 0 of 24 with the gate on.** A filter for *this* mechanism would
+have to select high amplitude at low efficiency, which is not what any gate in this document does.
 
 ### The market, measured rather than searched
 
@@ -238,6 +269,15 @@ recorded only open questions, lost two decisions, and had both contradicted by w
   external-validity check is the most informative *unrun* experiment in the document — configs
   make 11-45 operations there against 3-7 on XBTEUR, the first setting where a predictiveness test
   would have power — and is **deferred, not dropped**.
+- **Widened to ETHEUR and SOLEUR for the grid only (owner, 2026-09-11).** The one avenue that
+  needs no forecast is also the one where a different pair is a real hypothesis rather than a
+  robustness check: the fee is proportional and the amplitude is not, so a pair that moves more
+  clears the same toll more often. It measures, and the gain is **sub-linear** — SOLEUR's median
+  per-bar excursion is 1.8× XBTEUR's and buys only a 1.4× break-even fee (3.6 bp against 2.6),
+  because a larger amplitude also crosses more grid levels and so pays more tolls. One pair
+  is not a law, but the direction is the point: *volatility does not buy edge one for one, so
+  reaching for a more volatile pair is not a way to close a 10× gap.* Everything else stays
+  XBTEUR-only and the USDCEUR external-validity check stays deferred.
 - **Run a new experiment on one or two years first, and ask before widening (owner, 2026-09-11).**
   An eight-year run of the gate/config machinery costs over an hour of wall clock, most of it
   rebuilding the O(n²) calibration schedule. `BOTC_POINT_CACHE` makes a repeat on the same frame
@@ -247,7 +287,7 @@ recorded only open questions, lost two decisions, and had both contradicted by w
 
 ## Closed avenues
 
-Twenty-three, each a hypothesis about where the edge lived. None was a tuning question.
+Twenty-four, each a hypothesis about where the edge lived. None was a tuning question.
 
 | Avenue | What closed it |
 |---|---|
@@ -274,6 +314,7 @@ Twenty-three, each a hypothesis about where the edge lived. None was a tuning qu
 | Fall-harvesting (leaving the falls tradeable) | refuted at its best case: a gate admitting a market falling at ≤ −96 % annualised, run with the fastest config, returns −15.0 / −48.4 / −52.1 %. The symmetric gate that *blocks* falls wins 23 of 36 paired comparisons |
 | Any gate at all, including one fitted with hindsight | a shuffled, memoryless path admits a *better* oracle gate than the real market, 4 of 4 cells |
 | A VWAP Z-score rule inside the lateral gate | the edge is real, tiny and an order of magnitude below its own cost. The distance to VWAP is the *only* causal feature ever to leave the null band against the honest forward label (AUC 0.436 at 12 h, p = 0.00, 2025 held out) — but so do `ma_dist_1w`, `ret_3d` and `rsi_1d`, and the **unweighted, unnormalised** distance scores the same, so neither the volume weighting nor the z adds anything. Run as a long-or-flat rule over 24 pre-declared arms: at the real fee **0 of 24** positive in both 2024 and 2025, best worst-year −19.0 %; at **zero fee** 3 of 24, best worst-year +4.6 % against a shuffled control's 0 of 24. Those three arms trade 175-334 times a year, so their **break-even fee is 2.6 basis points per leg** — a tenth of Kraken's best maker rate, before any slippage. And the arms slow enough for the fee not to matter (20-34 operations) are negative at zero fee, so trading less does not rescue it |
+| A grid harvesting oscillation, on three pairs | the mechanism is sound, the market does not feed it, and the gate feeds it the wrong thing. A grid needs no forecast — only a round trip worth more than two fees, which fixes the minimum viable spacing at **0.8 % taker / 0.5 % maker** before any measurement. 24 pre-declared arms (3 widths × 4 spacings × 2 shapes) rebalancing toward a weekly-median anchor, scored in base asset **with the inventory marked**, on XBTEUR / ETHEUR / SOLEUR over 2024-2025. **Inside the lateral gate: 0 of 24 positive in both years, on all three pairs, at zero fee.** Ungated: 0/24 on XBTEUR and ETHEUR, **6/24 on SOLEUR** (best worst-year +6.5 %) — the volatility argument is real, and it buys a **break-even fee of 3.6 basis points per leg** against the VWAP rule's 2.6. A factor of 1.4 where a factor of 10 was needed, on the pair with the worst spread, at 814-2 543 operations a year. At the real fee, 0 of 24 everywhere, best worst-year −23.8 % |
 
 ---
 
@@ -327,6 +368,22 @@ And three about what a number means:
   becomes sitting in cash, which in base asset is the dominant loss during a rise. A +0.742 % per
   operation that looked like a near-miss became a −62 % worst year once converted. **Convert
   first, then compare to the fee.**
+- **How a gate is applied to a *sized* rule is a free parameter, and it can manufacture the
+  result.** A long-or-flat rule has an obvious reading of a closed gate — hold the asset — but a
+  rule that holds *fractions* does not, and forcing it back to 100 % on every close is a trade.
+  `impulso` switches 567 times in 2024, which fabricated **287 units of turnover against the 24
+  the grid itself generates** — 92 % of the fee bill — and was directionally biased on top: the
+  forced repurchases kept dragging the rule back into a rising asset, moving XBTEUR 2024's best
+  zero-fee arm from −35.0 % to +0.8 % and 0 of 24 arms to 2 of 24. What gave it away was that the
+  average trade moved 44 % of the portfolio where the grid's own step is 8 %. **Freeze on a closed
+  gate; never rebalance into one**, and print turnover beside the operation count so the ratio is
+  visible.
+- **A shuffled control keeps the drift, so its level is not a zero to read against.** The
+  permutation does not change the sum of the returns, so the control path ends at the same price
+  as the real one and carries the same structural cash drag — a grid sitting at 50 % through a year
+  that multiplies by 2.3 prints −29 % having done nothing wrong, in *both* columns. Only the
+  **distance** between real and control is interpretable, because serial dependence is the only
+  thing the shuffle destroys.
 - **A detector that beats its own oracle ceiling is not approximating the oracle.** Report the
   ceiling beside the detector and treat any excess as a different strategy until decomposed.
 - **Resolution adds a config-specific term of up to 25 points with no systematic direction.** The
@@ -393,6 +450,7 @@ a question, or is machinery a successor will need.
 | `gate_ceiling.py` | **Could ANY signal make the bot profitable?** Represents the gate as one boolean per day and hill-climbs it against the bot's result with the whole year visible — a bound on every gate, not a strategy — beside the same hill-climb on a shuffled version of the year with OHLC, ATR and the holding benchmark all rebuilt to match. Only the real-minus-shuffled difference is interpretable. |
 | `signal_screen.py` | **Does anything visible at `t` predict, and is it worth money?** Three parts that must all pass: what the perfect label is worth traded, per-feature AUC against both that label and a fixed-horizon forward label, and the model's prediction run as an allocation in base asset at zero and maker fees. Circular-shift null, temporal split fixed in advance. **The first test any new signal should face.** Twenty features in three families; the VWAP family carries the raw distance beside the z so any effect can be attributed to the volume weighting or to the normalisation, and part 3 prints its own null band — the first version did not, which left a 0.43 unreadable. |
 | `vwap_zscore_rule.py` | **Does a threshold rule on a signal actually pay, long-or-flat?** The step `signal_screen.py` cannot take: a hysteresis rule (sell at z ≥ +k, rebuy at −k or at the anchor) scored in base asset, at zero fee *and* the real one, with the shuffled control beside it and the operation count that sets the break-even fee. Gated and ungated, 24 pre-declared arms, whole distribution printed. The state path is a forward-fill of the last directive (the hysteresis is idempotent), so it vectorises and the fee is charged afterwards on the flips — the same path serves every fee. **The template for scoring any future signal as a rule.** |
+| `grid_roundtrip.py` | **Is there oscillation worth harvesting, and on which pair?** The only test here that needs no forecast: a grid rebalancing toward a weekly-median anchor, scored in base asset **with the inventory marked** — scoring only the realised round trips is the whole illusion — gated and ungated, at zero fee and the real one, with the shuffled control beside it and the break-even fee solved by bisection. 24 pre-declared arms across three pairs. Trade times are fee-independent (after a rebalance the actual fraction equals the target regardless of what was paid), so the expensive scan runs once per arm and every fee is charged on the same path. Also prints the two diagnostics that explain any result it produces: median per-bar amplitude and the Kaufman efficiency ratio, inside the gate against outside it. **Use this before proposing any mean-reversion mechanism; it is cheaper than the rule that implements one.** |
 
 **Caching.** A calibration schedule over a long window costs 280-640 s to build (O(n²): each point
 re-analyses history up to its own bar). Set `BOTC_POINT_CACHE` to a directory and it is paid once
