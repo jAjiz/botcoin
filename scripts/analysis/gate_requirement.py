@@ -45,7 +45,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import execution_fidelity as ef
 import gate_families_live as gfl
-import gate_live_fidelity as glf
 import lateral_horizon as lh
 import lateral_market_structure as lms
 
@@ -128,7 +127,7 @@ def main() -> int:
         sched_pts = ([prior[-1]] if prior else []) + [p for p in sched_pts if p["time"] > t0]
         scheduled = ef.remap(sched_pts, year_df["time"].to_numpy())
 
-        days, dclose = glf.daily_closes_from(coarse)
+        days, dclose = ef.daily_closes_from(coarse)
         day = coarse["dtime"].dt.floor("D")
         s_full = gfl.Series(
             coarse,

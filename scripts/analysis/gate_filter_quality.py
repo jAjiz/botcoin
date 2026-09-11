@@ -55,7 +55,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import execution_fidelity as ef
 import gate_families_live as gfl
-import gate_live_fidelity as glf
 
 BARS_PER_YEAR = 365 * 1440
 
@@ -101,7 +100,7 @@ def main() -> int:
     t0 = int(pd.Timestamp(f"{min(args.years) - 1}-07-01").timestamp())
     t1 = int(pd.Timestamp(f"{max(args.years)}-12-31").timestamp()) + 86_399
     coarse = ef.coarse_frame(os.path.join(args.data_dir, f"{args.pair}_15.csv"), t0, t1, 15)
-    days, dclose = glf.daily_closes_from(coarse)
+    days, dclose = ef.daily_closes_from(coarse)
     day = coarse["dtime"].dt.floor("D")
     dhigh = coarse.groupby(day)["high"].max().to_numpy(dtype=float)
     dlow = coarse.groupby(day)["low"].min().to_numpy(dtype=float)

@@ -145,6 +145,17 @@ def coarse_frame(path: str, t0: int, t1: int, minutes: int) -> pd.DataFrame:
     return df.dropna(subset=["atr"]).sort_values("time").reset_index(drop=True)
 
 
+def daily_closes_from(coarse: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Cierre de cada dia natural UTC del marco de 15 min, y el dia al que pertenece cada vela.
+
+    Los cierres diarios que alimentan cualquier senal salen del marco de 15 min, no del de
+    1 min: es la serie que el bot tiene almacenada en `ohlc_data`.
+    """
+    day = coarse["dtime"].dt.floor("D")
+    closes = coarse.groupby(day)["close"].last()
+    return closes.index.to_numpy(), closes.to_numpy(dtype=float)
+
+
 def fine_frame(path: str, coarse: pd.DataFrame, t0: int, t1: int, minutes: int) -> pd.DataFrame:
     """Marco fino con el ATR de 15 min proyectado hacia adelante.
 

@@ -49,7 +49,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import execution_fidelity as ef
 import gate_families_live as gfl
-import gate_live_fidelity as glf
 
 HORIZONS = (5, 15, 60, 240, 1440)
 
@@ -133,7 +132,7 @@ def main() -> int:
         t0 = int(pd.Timestamp(f"{year}-01-01").timestamp())
         t1 = int(pd.Timestamp(f"{year}-12-31").timestamp()) + 86_399
         coarse = ef.coarse_frame(os.path.join(args.data_dir, f"{args.pair}_15.csv"), cal_t0, t1, 15)
-        days, dclose = glf.daily_closes_from(coarse)
+        days, dclose = ef.daily_closes_from(coarse)
         day = coarse["dtime"].dt.floor("D")
         fine = ef.fine_frame(os.path.join(args.data_dir, f"{args.pair}_1.csv"), coarse, t0, t1, 1)
         s = gfl.Series(

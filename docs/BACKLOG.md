@@ -144,4 +144,4 @@ Reopening this needs a new mechanism, not a better classifier: the loss in a
 rally is selling and rebuying higher, and the oracle already prices out every
 way of not selling.
 
-- Study: [`specs/optimizer-validation-design.md`](specs/optimizer-validation-design.md) § Trend filtering is dead
+- Study: [`specs/optimizer-validation-design.md`](specs/optimizer-validation-design.md) § Closed avenues

@@ -47,16 +47,17 @@ Uso (PYTHONPATH=. obligatorio; sin variables de entorno de BD):
 """
 
 import argparse
+import dataclasses
 import json
 import os
 import time
 
 import execution_fidelity as ef
-import gate_live_fidelity as glf
 import numpy as np
 import pandas as pd
 
-from core.config import RECALIBRATION_BARS
+from core.config import ATR_DESV_LIMIT, RECALIBRATION_BARS
+from trading.engine import EngineConfig, mark_to_market, simulate_operations
 
 # --- rejillas, fijadas antes de correr --------------------------------------
 
@@ -76,6 +77,44 @@ BREAK = [
 ]
 
 BARS_PER_DAY = 1440
+
+
+# La configuracion del trailing-stop se mantiene FIJA en todo el banco: lo unico que varia
+# entre variantes es la puerta, para que la comparacion tenga un solo grado de libertad.
+MIN_MARGIN = 0.020
+STOP_PCT = 0.9
+
+
+def run(df: pd.DataFrame, points: list, mask: frozenset[int], label: str, fee: float) -> dict:
+    """Una corrida continua del config fijo sobre `df`, con la puerta dada."""
+    times = df["time"].to_numpy()
+    scheduled = ef.remap(points, times)
+    final_price = float(df.iloc[-1]["close"])
+    hold = (final_price / float(df.iloc[0]["close"]) - 1.0) * 100.0
+
+    cfg = EngineConfig(
+        pair="XBTEUR",
+        calibration=ef._calibration(scheduled[0][1], STOP_PCT),
+        k_act=None,
+        min_margin=MIN_MARGIN,
+        atr_desv_limit=ATR_DESV_LIMIT,
+        calibration_schedule=tuple((at, ef._calibration(p, STOP_PCT)) for at, p in scheduled),
+    )
+    # `reset_on_unmask` es obligatorio en cualquier experimento con puerta: sin el, el trailing
+    # sigue corriendo bajo la mascara y la salida se ancla a un maximo que la puerta ya tapo.
+    cfg = dataclasses.replace(cfg, force_hold_bars=mask, reset_on_unmask=True)
+
+    t0 = time.perf_counter()
+    ops = simulate_operations(df, cfg, fee_rate=fee / 100.0)
+    eur = mark_to_market(ops, final_price) if ops else 0.0
+    base = ((1.0 + eur / 100.0) / (1.0 + hold / 100.0) - 1.0) * 100.0
+    open_pct = 100.0 * (len(df) - len(mask)) / len(df)
+    print(
+        f"  {label:<22} activo base {base:>+8.1f} %   EUR {eur:>+8.1f} %   "
+        f"{len(ops):>4} ops   puerta abierta {open_pct:>5.1f} %   ({time.perf_counter() - t0:.0f}s)",
+        flush=True,
+    )
+    return {"label": label, "base": base, "eur": eur, "ops": len(ops), "open": open_pct}
 
 
 def _roll(values: np.ndarray, n: int, fn) -> np.ndarray:
@@ -250,9 +289,7 @@ def main() -> int:
     sim_t0 = int(pd.Timestamp(args.start).timestamp())
     t1 = int(pd.Timestamp(args.end).timestamp()) + 86_399
 
-    print(
-        f"[datos] {args.pair}   comision {args.fee} %/pierna   config fija mm={glf.MIN_MARGIN:.3f} stop={glf.STOP_PCT}"
-    )
+    print(f"[datos] {args.pair}   comision {args.fee} %/pierna   config fija mm={MIN_MARGIN:.3f} stop={STOP_PCT}")
     print(f"  camino de 1 min, ATR de 15 min, {args.start}..{args.end} (calibra desde {cal_start})")
 
     coarse = ef.coarse_frame(os.path.join(args.data_dir, f"{args.pair}_15.csv"), cal_t0, t1, 15)
@@ -261,7 +298,7 @@ def main() -> int:
     prior = [p for p in points if p["time"] <= sim_t0]
     points = ([prior[-1]] if prior else []) + [p for p in points if p["time"] > sim_t0]
 
-    day_index, dclose = glf.daily_closes_from(coarse)
+    day_index, dclose = ef.daily_closes_from(coarse)
     day = coarse["dtime"].dt.floor("D")
     dhigh = coarse.groupby(day)["high"].max().to_numpy(dtype=float)
     dlow = coarse.groupby(day)["low"].min().to_numpy(dtype=float)
@@ -275,7 +312,7 @@ def main() -> int:
     s = Series(fine, day_index, dclose, dhigh, dlow)
 
     print("")
-    ref = glf.run(fine, points, frozenset(), "sin puerta", args.fee)
+    ref = run(fine, points, frozenset(), "sin puerta", args.fee)
 
     t0 = time.perf_counter()
     dets = families(s)
@@ -285,7 +322,7 @@ def main() -> int:
     t0 = time.perf_counter()
     for i, (name, is_open) in enumerate(dets.items(), 1):
         mask = frozenset(np.flatnonzero(~is_open).tolist())
-        rows.append(glf.run(fine, points, mask, name, args.fee))
+        rows.append(run(fine, points, mask, name, args.fee))
         if i % 25 == 0:
             print(f"    ... {i}/{len(dets)} ({time.perf_counter() - t0:.0f}s)", flush=True)
 

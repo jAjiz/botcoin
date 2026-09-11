@@ -43,7 +43,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import execution_fidelity as ef
 import gate_families_live as gfl
-import gate_live_fidelity as glf
 
 from core.config import ATR_DESV_LIMIT, RECALIBRATION_BARS
 from trading.engine import EngineConfig, mark_to_market, simulate_operations
@@ -81,7 +80,7 @@ def build(data_dir: str, pair: str, year: int, lead: int, recalib: int):
     prior = [p for p in points if p["time"] <= sim_t0]
     points = ([prior[-1]] if prior else []) + [p for p in points if p["time"] > sim_t0]
 
-    days, dclose = glf.daily_closes_from(coarse)
+    days, dclose = ef.daily_closes_from(coarse)
     day = coarse["dtime"].dt.floor("D")
     dhigh = coarse.groupby(day)["high"].max().to_numpy(dtype=float)
     dlow = coarse.groupby(day)["low"].min().to_numpy(dtype=float)

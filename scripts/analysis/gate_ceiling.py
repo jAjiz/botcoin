@@ -40,7 +40,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import execution_fidelity as ef
 import gate_families_live as gfl
-import gate_live_fidelity as glf
 import lateral_horizon as lh
 
 from core.config import ATR_DESV_LIMIT, RECALIBRATION_BARS
@@ -147,7 +146,7 @@ def shuffled_frame(coarse: pd.DataFrame, keep: np.ndarray, seed: int) -> tuple[p
 def causal_gate(coarse: pd.DataFrame, keep: np.ndarray, close: np.ndarray) -> np.ndarray:
     """La puerta simetrica actual sobre un camino cualquiera, como punto de partida."""
     frame = coarse.assign(close=close)
-    days, dclose = glf.daily_closes_from(frame)
+    days, dclose = ef.daily_closes_from(frame)
     s = gfl.Series(frame, days, dclose, dclose, dclose)
     return gfl.det_impulse(s, 0.07, 7)[keep]
 
