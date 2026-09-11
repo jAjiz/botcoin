@@ -109,16 +109,6 @@ def base_asset(price: np.ndarray, state: np.ndarray, fee: float) -> tuple[float,
     return (final - 1.0) * 100.0, len(flips)
 
 
-def shuffle_path(logp: np.ndarray, volume: np.ndarray, seed: int) -> tuple[np.ndarray, np.ndarray]:
-    """Retornos barajados con SU volumen viajando en la misma permutacion."""
-    rng = np.random.default_rng(seed)
-    r = np.diff(logp)
-    perm = rng.permutation(len(r))
-    fake = np.concatenate(([logp[0]], logp[0] + np.cumsum(r[perm])))
-    fake_vol = np.concatenate(([volume[0]], volume[1:][perm]))
-    return fake, fake_vol
-
-
 def arms() -> list[tuple[int, float, str]]:
     return [(n, k, re) for n in WINDOWS for k in KS for re in REENTRIES]
 
@@ -138,10 +128,10 @@ def run_year(data_dir: str, pair: str, year: int, args) -> dict:
         "controls": [],
     }
     for s in range(args.shuffles):
-        fake_logp, fake_vol = shuffle_path(logp, volume, 1000 * year + s)
-        fake_price = np.exp(fake_logp)
-        fake_gate = lh.gate_on(coarse, fake_price, args.move, args.look, args.delay) & inside
-        out["controls"].append((fake_price, fake_vol, fake_gate, inside))
+        fake_logp, fake_gate, fake_vol = lh.shuffled(
+            coarse, logp, inside, args.move, args.look, args.delay, 1000 * year + s, volume
+        )
+        out["controls"].append((np.exp(fake_logp), fake_vol, fake_gate, inside))
     del coarse
     return out
 

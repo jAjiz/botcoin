@@ -92,7 +92,16 @@ def build(data_dir: str, pair: str, year: int, move: float, look: int, delay: in
     return coarse, np.log(close), gate_on(coarse, close, move, look, delay) & inside, inside
 
 
-def shuffled(coarse: pd.DataFrame, logp: np.ndarray, inside: np.ndarray, move: float, look: int, delay: int, seed: int):
+def shuffled(
+    coarse: pd.DataFrame,
+    logp: np.ndarray,
+    inside: np.ndarray,
+    move: float,
+    look: int,
+    delay: int,
+    seed: int,
+    volume: np.ndarray | None = None,
+):
     """Control: el MISMO camino con sus retornos barajados, y la misma puerta encima.
 
     Barajar conserva la distribucion marginal de los retornos y su volatilidad agregada, y
@@ -101,11 +110,22 @@ def shuffled(coarse: pd.DataFrame, logp: np.ndarray, inside: np.ndarray, move: f
     solo mientras se mantiene dentro de una banda alrededor de los cierres recientes, y
     condicionar a permanecer en una banda TRUNCA los recorridos largos, que es exactamente lo
     que un VR por debajo de 1 detecta.
+
+    Cuidado al leer el nivel de un control: la permutacion NO cambia la suma de los retornos, asi
+    que el camino falso termina en el mismo precio que el real y conserva su deriva entera. Lo
+    unico que se destruye es la dependencia serial, de modo que solo la DISTANCIA entre el brazo
+    real y el control es interpretable, nunca el nivel de ninguno de los dos.
+
+    Con `volume`, cada vela viaja con SU volumen en la misma permutacion, de modo que la relacion
+    contemporanea precio-volumen se conserva y una regla ponderada por volumen se puede puntuar
+    sobre el control con la misma construccion que sobre el mercado. Devuelve `None` si no se pide.
     """
     rng = np.random.default_rng(seed)
     r = np.diff(logp)
-    fake = np.concatenate(([logp[0]], logp[0] + np.cumsum(rng.permutation(r))))
-    return fake, gate_on(coarse, np.exp(fake), move, look, delay) & inside
+    perm = rng.permutation(len(r))
+    fake = np.concatenate(([logp[0]], logp[0] + np.cumsum(r[perm])))
+    fake_vol = None if volume is None else np.concatenate(([volume[0]], volume[1:][perm]))
+    return fake, gate_on(coarse, np.exp(fake), move, look, delay) & inside, fake_vol
 
 
 def stretch_ids(is_open: np.ndarray) -> np.ndarray:

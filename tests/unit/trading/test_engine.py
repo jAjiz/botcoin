@@ -447,56 +447,6 @@ def test_the_mask_does_not_re_enter_a_bot_that_already_holds_the_asset() -> None
     assert [(op.side, op.time) for op in masked] == [("buy", "t0")]
 
 
-def test_the_forced_rebuy_is_on_by_default() -> None:
-    # Production never gates, so the switch must reproduce today's behaviour unless turned off.
-    assert _cfg().force_hold_rebuy is True
-
-
-def test_without_the_forced_rebuy_a_masked_bar_leaves_the_bot_in_cash() -> None:
-    # The alternative design: the gate governs new legs only, and a cash leg waits for the lift.
-    forced = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [2]))
-    kept = engine.simulate_operations(
-        _df(_ROUND_TRIP), dataclasses.replace(_with_hold(_cfg(), [2]), force_hold_rebuy=False)
-    )
-
-    # Forcing buys at bar 2's own price; keeping the cash books nothing on that bar and rebuys
-    # once the mask lifts. Here that is dearer, which is the point: the switch is a design
-    # choice, not an improvement, and only measurement on real data can say which is better.
-    assert [(op.side, op.time, op.price) for op in forced][2] == ("buy", "t2", 95.0)
-    assert [(op.side, op.time) for op in kept] == [("buy", "t0"), ("sell", "t1"), ("buy", "t3")]
-    assert not [op for op in kept if op.time == "t2"]
-
-
-def test_without_the_forced_rebuy_the_buy_leg_resumes_after_the_lift() -> None:
-    # Staying in cash must not freeze the bot: the deferred rebuy has to be reachable later.
-    rows = [*_ROUND_TRIP, (121.0, 100.0, 105.0)]
-    cfg = dataclasses.replace(_with_hold(_cfg(), [2]), force_hold_rebuy=False)
-
-    ops = engine.simulate_operations(_df(rows), cfg)
-
-    # The rebuy is deferred, not cancelled: it lands after the lift and the cycle carries on.
-    assert [op.side for op in ops][:3] == ["buy", "sell", "buy"]
-    assert ops[2].time in {"t3", "t4"}
-
-
-def test_the_forced_rebuy_switch_changes_nothing_without_a_mask() -> None:
-    # No masked bar means the branch never runs, so a run with it off must match production.
-    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
-    switched = engine.simulate_operations(_df(_ROUND_TRIP), dataclasses.replace(_cfg(), force_hold_rebuy=False))
-
-    assert [(op.side, op.price) for op in switched] == [(op.side, op.price) for op in plain]
-
-
-def test_the_forced_rebuy_switch_does_not_touch_a_bot_holding_the_asset() -> None:
-    # It governs the cash leg only: masking a long stretch while long must behave identically.
-    on = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [1]))
-    off = engine.simulate_operations(
-        _df(_ROUND_TRIP), dataclasses.replace(_with_hold(_cfg(), [1]), force_hold_rebuy=False)
-    )
-
-    assert [(op.side, op.time, op.price) for op in off] == [(op.side, op.time, op.price) for op in on]
-
-
 # --- reset when the mask lifts ---------------------------------------------
 
 # Holding the asset through the mask leaves the stop trailing at the masked highs. These rows
@@ -549,7 +499,7 @@ def test_the_reset_changes_nothing_without_a_mask() -> None:
     assert [(op.side, op.price) for op in switched] == [(op.side, op.price) for op in plain]
 
 
-# --- re-anchor switches ----------------------------------------------------
+# --- the activation re-anchor ----------------------------------------------
 
 # k_act=0 puts the activation at the entry price, so any move away from it re-anchors.
 _RALLY_AFTER_SELL = [
@@ -566,106 +516,28 @@ _FALL_AFTER_BUY = [
 ]
 
 
-def test_both_sides_re_anchor_by_default() -> None:
-    # Production never sets them, so the live path keeps following a price that runs away.
-    assert _cfg().reanchor_sell is True and _cfg().reanchor_buy is True
-
-
-def test_with_the_buy_re_anchor_the_rebuy_chases_the_rally() -> None:
+def test_the_buy_re_anchor_chases_the_rally() -> None:
     ops = engine.simulate_operations(_df(_RALLY_AFTER_SELL), _cfg())
 
     # Bar 2 re-anchors the buy activation to 128, activates on its low and rebuys at 127.
     assert [(op.side, op.price) for op in ops][:3] == [("buy", 100.0), ("sell", 108.0), ("buy", 127.0)]
 
 
-def test_without_the_buy_re_anchor_the_rebuy_waits_for_the_price_to_come_back() -> None:
-    cfg = dataclasses.replace(_cfg(), reanchor_buy=False)
-    ops = engine.simulate_operations(_df(_RALLY_AFTER_SELL), cfg)
-
-    # The activation stays at 108: bar 2 never crosses it, bar 3 does and rebuys at 102.
-    assert [(op.side, op.time, op.price) for op in ops] == [
-        ("buy", "t0", 100.0),
-        ("sell", "t1", 108.0),
-        ("buy", "t3", 102.0),
-    ]
-
-
-def test_without_the_sell_re_anchor_the_sell_waits_for_the_price_to_come_back() -> None:
+def test_the_sell_re_anchor_follows_a_price_that_runs_away() -> None:
+    # The mirror case: the activation must track a price falling away from it, not sit where the
+    # entry left it. Bar 1 re-anchors to 87, so the sell lands at 97 instead of waiting for 102.
     plain = engine.simulate_operations(_df(_FALL_AFTER_BUY), _cfg(k_act=1.0))
-    kept = engine.simulate_operations(_df(_FALL_AFTER_BUY), dataclasses.replace(_cfg(k_act=1.0), reanchor_sell=False))
 
-    # Plain re-anchors to 87 on bar 1 and sells at 97; kept waits for the high to reach 102 and sells at 101.
     assert [(op.side, op.time, op.price) for op in plain][:2] == [("buy", "t0", 100.0), ("sell", "t1", 97.0)]
-    assert [(op.side, op.time, op.price) for op in kept][:2] == [("buy", "t0", 100.0), ("sell", "t2", 101.0)]
 
 
-def test_the_buy_switch_leaves_the_sell_side_alone() -> None:
-    plain = engine.simulate_operations(_df(_FALL_AFTER_BUY), _cfg(k_act=1.0))
-    buy_off = engine.simulate_operations(_df(_FALL_AFTER_BUY), dataclasses.replace(_cfg(k_act=1.0), reanchor_buy=False))
+# --- the shared min_margin -------------------------------------------------
 
-    assert [(op.side, op.price) for op in buy_off] == [(op.side, op.price) for op in plain]
-
-
-# k_act=1 (distance 2): sell @108 leaves a buy activation at 106; the rally re-anchors it.
-_RALLY_THEN_DIP_TO_THE_SELL = [
-    (100.0, 100.0, 100.0),  # buy @100
-    (110.0, 105.0, 108.0),  # trailing 110, stop 108; low 105 <= 108 -> sell @108
-    (130.0, 125.0, 128.0),  # in cash; re-anchor would put the activation at 126
-    (112.0, 107.0, 110.0),  # dips to the sell price, not below the original 106 activation
-]
-
-
-def test_the_cap_is_off_by_default() -> None:
-    assert _cfg().reanchor_cap_at_entry is False
-
-
-def test_the_capped_re_anchor_rebuys_at_the_sell_level_not_above_it() -> None:
-    plain = engine.simulate_operations(_df(_RALLY_THEN_DIP_TO_THE_SELL), _cfg(k_act=1.0))
-    capped = engine.simulate_operations(
-        _df(_RALLY_THEN_DIP_TO_THE_SELL), dataclasses.replace(_cfg(k_act=1.0), reanchor_cap_at_entry=True)
-    )
-    never = engine.simulate_operations(
-        _df(_RALLY_THEN_DIP_TO_THE_SELL), dataclasses.replace(_cfg(k_act=1.0), reanchor_buy=False)
-    )
-
-    # Plain chases to 126 and rebuys at 127 on bar 2; capped holds the activation at 108 and rebuys at 109
-    # on bar 3; without any re-anchor the 106 activation is never reached.
-    assert [(op.time, op.price) for op in plain][2] == ("t2", 127.0)
-    assert [(op.time, op.price) for op in capped][2] == ("t3", 109.0)
-    assert len(never) == 2
-
-
-# --- per-side min_margin ---------------------------------------------------
 
 # k_act=None so activation goes through K_STOP * ATR + min_margin * price; with ATR 2.0 and
 # K 1.0 the shared 0.05 margin puts a sell barrier at 107 and a buy barrier at 93.
-_SHARED = dict(k_act=None, min_margin=0.05)
-
-
-def test_without_overrides_both_sides_use_the_shared_margin() -> None:
-    cfg = _cfg(**_SHARED)
-
-    assert cfg.min_margin_sell is None and cfg.min_margin_buy is None
-    assert engine.activation_price(cfg, "sell", 100.0, 2.0, 100.0) == pytest.approx(107.0)
-    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(93.0)
-
-
-def test_a_sell_override_moves_only_the_sell_barrier() -> None:
-    cfg = dataclasses.replace(_cfg(**_SHARED), min_margin_sell=0.10)
-
-    assert engine.activation_price(cfg, "sell", 100.0, 2.0, 100.0) == pytest.approx(112.0)
-    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(93.0)
-
-
-def test_a_buy_override_moves_only_the_buy_barrier() -> None:
-    cfg = dataclasses.replace(_cfg(**_SHARED), min_margin_buy=0.01)
+def test_both_sides_use_the_shared_margin() -> None:
+    cfg = _cfg(k_act=None, min_margin=0.05)
 
     assert engine.activation_price(cfg, "sell", 100.0, 2.0, 100.0) == pytest.approx(107.0)
-    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(97.0)
-
-
-def test_a_zero_override_is_an_override_not_a_fallback() -> None:
-    # 0.0 is a legitimate "no margin" choice and must not be mistaken for "unset".
-    cfg = dataclasses.replace(_cfg(**_SHARED), min_margin_buy=0.0)
-
-    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(98.0)
+    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(93.0)

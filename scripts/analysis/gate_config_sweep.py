@@ -3,7 +3,7 @@
 Read-only y temporal. Lee los CSV OHLCVT de Kraken directamente, sin base de datos.
 
 Division de responsabilidades, que es lo que hace utilizable este barrido. La puerta se eligio
-por su PROPIO objetivo en `gate_filter_quality.py` -- dejar la tendencia fuera y admitir el
+por su PROPIO objetivo -- dejar la tendencia fuera y admitir el
 maximo de mercado sin deriva, medido sobre ocho anos y sin tocar el motor -- y no se vuelve a
 tocar aqui. Lo unico que se elige en este script es la configuracion del trailing-stop, sobre
 las velas que la puerta ya decidio. Elegir las dos cosas a la vez con la misma metrica es como
@@ -52,7 +52,7 @@ MIN_MARGINS = tuple(round(0.01 * i, 3) for i in range(0, 21))
 STOPS = (0.5, 0.6, 0.7, 0.8, 0.9)
 
 GATES = {
-    # Elegidas en `gate_filter_quality.py` sobre 2018-2025, por calidad de filtro y nada mas.
+    # Elegidas sobre 2018-2025 por calidad de filtro (deriva admitida contra cobertura) y nada mas.
     "simetrica": lambda s: gfl.det_impulse(s, 0.07, 7),
     # Deriva admitida <= -96 % los ocho anos: el mercado mas puramente bajista que se filtra,
     # a costa de abrir solo el 29 % del tiempo.

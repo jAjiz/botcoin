@@ -139,7 +139,9 @@ def trade_indices(f_target: np.ndarray, step: float, allowed: np.ndarray) -> np.
     return np.asarray(idx, dtype=np.int64)
 
 
-def replay(price: np.ndarray, f_target: np.ndarray, idx: np.ndarray, fee: float, p0: float) -> tuple[float, float, float]:
+def replay(
+    price: np.ndarray, f_target: np.ndarray, idx: np.ndarray, fee: float, p0: float
+) -> tuple[float, float, float]:
     """(activo base en % contra mantener, euros en %, rotacion) de ejecutar esas operaciones.
 
     Se empieza con 1 moneda y 0 euros, asi que mantener es 0 % por construccion. El calendario de
@@ -222,7 +224,7 @@ def run_year(data_dir: str, pair: str, year: int, args) -> dict:
         "controls": [],
     }
     for s in range(args.shuffles):
-        fake_logp, fake_gate = lh.shuffled(coarse, logp, inside, args.move, args.look, args.delay, 1000 * year + s)
+        fake_logp, fake_gate, _ = lh.shuffled(coarse, logp, inside, args.move, args.look, args.delay, 1000 * year + s)
         fake_price = np.exp(fake_logp)
         out["controls"].append(
             {
@@ -274,9 +276,7 @@ def table(pair: str, mode: str, data: dict, years: list[int], fee: float) -> Non
             free_y.append(r["free"])
             paid_y.append(r["paid"])
             be_y.append(r["be"])
-            ctrl_y.append(
-                float(np.median([evaluate(c, mode, w, sp, shape, fee)["free"] for c in d["controls"]]))
-            )
+            ctrl_y.append(float(np.median([evaluate(c, mode, w, sp, shape, fee)["free"] for c in d["controls"]])))
             row += f"{r['free']:>+10.1f}%{r['paid']:>+10.1f}%{r['ops']:>7}"
         worst_free, worst_paid, worst_ctrl = min(free_y), min(paid_y), min(ctrl_y)
         be = min(be_y) if worst_free > 0 and not any(np.isnan(b) for b in be_y) else float("nan")
@@ -308,8 +308,10 @@ def mirage(pair: str, data: dict, years: list[int], fee: float) -> None:
             best, best_eur = (w, sp, shape, rs), e
     w, sp, shape, rs = best
     print("")
-    print(f"[{pair} -- el espejismo]  el brazo con puerta que mejor queda en euros: W={100 * w:.0f}% s={100 * sp:.1f}% {shape}")
-    for year, r in zip(years, rs):
+    print(
+        f"[{pair} -- el espejismo]  el brazo con puerta que mejor queda en euros: W={100 * w:.0f}% s={100 * sp:.1f}% {shape}"
+    )
+    for year, r in zip(years, rs, strict=True):
         print(
             f"  {year}: en EUROS {r['eur_paid']:+.1f} %   mantener {data[year]['hold_eur']:+.1f} %   "
             f"en ACTIVO BASE contra mantener {r['paid']:+.1f} %"

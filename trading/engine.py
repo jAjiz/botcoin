@@ -39,17 +39,6 @@ class EngineConfig:
     force_hold_bars: frozenset[int] = frozenset()
     # When the mask lifts, reopen the leg at that bar so no anchor predates the gate. Off in production.
     reset_on_unmask: bool = False
-    # Whether a masked bar buys a cash leg back in. False lets the gate govern new legs only and
-    # leaves the cash where it is until the mask lifts. True in production, which never gates.
-    force_hold_rebuy: bool = True
-    # Per-side overrides of ``min_margin``; ``None`` keeps the shared value. Unset in production.
-    min_margin_sell: float | None = None
-    min_margin_buy: float | None = None
-    # Whether the activation follows a price that runs away from it, per side. Both true in production.
-    reanchor_sell: bool = True
-    reanchor_buy: bool = True
-    # A re-anchored activation never crosses the leg's entry price (a rebuy at most at the sell). Off in production.
-    reanchor_cap_at_entry: bool = False
 
 
 @dataclass(frozen=True)
@@ -134,12 +123,6 @@ def lookup_k_stop(
     return _k_for_level(cal, side, vol)
 
 
-def _min_margin_for(cfg: EngineConfig, side: str) -> float:
-    """The side's own margin when one is set, else the shared ``min_margin``."""
-    override = cfg.min_margin_sell if side == "sell" else cfg.min_margin_buy
-    return cfg.min_margin if override is None else float(override)
-
-
 def activation_distance(
     cfg: EngineConfig,
     side: str,
@@ -152,7 +135,7 @@ def activation_distance(
     if cfg.k_act is not None:
         return float(cfg.k_act) * atr_val
     k_stop = lookup_k_stop(cfg, side, atr_val, close, cal) or 0.0
-    return float(k_stop) * atr_val + (_min_margin_for(cfg, side) * reference_price)
+    return float(k_stop) * atr_val + (cfg.min_margin * reference_price)
 
 
 def activation_price(
@@ -354,10 +337,6 @@ def simulate_operations(
             stop_px = None
             stop_atr = None
         if forced and side == "buy":
-            if not cfg.force_hold_rebuy:
-                # The gate governs new legs only. An up-side gate shuts on a recovery, so buying
-                # back here pins the entry near a local top; the leg resumes when the mask lifts.
-                continue
             # In cash while the mask demands the asset: buy at this bar's price, then hold.
             cum_pnl = _record_stop_exit(ops, cal, "buy", price, dtime, vol, fee_rate, cum_pnl)
             if max_ops is not None and len(ops) >= max_ops:
@@ -387,12 +366,8 @@ def simulate_operations(
             # Mirrors positions_manager.reanchor_activation_price: stored ATR, not the bar ATR.
             exp_dist = activation_distance(cfg, side, price, activation_atr, price, cal)
             gap = (activation_px - price) if side == "sell" else (price - activation_px)
-            if gap > exp_dist and (cfg.reanchor_sell if side == "sell" else cfg.reanchor_buy):
+            if gap > exp_dist:
                 activation_px = activation_price(cfg, side, price, activation_atr, price, cal)
-                if cfg.reanchor_cap_at_entry:
-                    activation_px = (
-                        max(activation_px, entry_price) if side == "sell" else min(activation_px, entry_price)
-                    )
 
             # A sell activates on the high crossing up, then trails the highs; a buy mirrors it.
             crossed = high >= activation_px if side == "sell" else low <= activation_px
