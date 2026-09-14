@@ -66,7 +66,7 @@ docker compose down                # stop all services
 
 BoTCoin reached its goal of a production-grade backend service, and that milestone is closed — see the archived [V2 roadmap](docs/v2/ROADMAP.md) for the full delivered scope.
 
-The strategy line is closed too, and with it the project. The backlog at [docs/BACKLOG.md](docs/BACKLOG.md) records what shipped, and why every remaining card was closed rather than built. Nothing is planned.
+The strategy line is closed too, and with it the project. The backlog at [docs/BACKLOG.md](docs/BACKLOG.md) records what shipped, and the one card that closed it. Nothing is planned.
 
 ---
 
@@ -78,7 +78,7 @@ The strategy line is closed too, and with it the project. The backlog at [docs/B
 | [docs/trading-strategy.md](docs/trading-strategy.md) | ATR classification, K_STOP calibration, position lifecycle |
 | [docs/operations.md](docs/operations.md) | Local dev, production deploy, rollback, monitoring, troubleshooting |
 | [docs/specs/optimizer-validation-design.md](docs/specs/optimizer-validation-design.md) | **The study** — 24 avenues, the measurement traps, and the surviving tools |
-| [docs/BACKLOG.md](docs/BACKLOG.md) | Feature backlog — stock of planned, shipped, and deferred features |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | Feature backlog — what shipped, and the card that closed the project |
 | [docs/v2/ROADMAP.md](docs/v2/ROADMAP.md) | Archived V2 roadmap (closed) and phase plans |
 | [CLAUDE.md](CLAUDE.md) | Architecture, conventions, and the **Design choices** list |
 
