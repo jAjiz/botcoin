@@ -36,6 +36,8 @@ def _setup_common(monkeypatch, sample_dataframe) -> None:
         "TRADING_PARAMS",
         {_PAIR: {"K_ACT": None, "MIN_MARGIN": 0.0}},
     )
+    # Ambient config is empty without a local .env, so the pair's percentiles must be explicit.
+    monkeypatch.setattr(backtest, "STOP_PERCENTILES", {_PAIR: dict.fromkeys(_LEVELS, 0.9)})
 
 
 def test_run_backtest_uses_cache_when_no_slicing(monkeypatch, sample_dataframe) -> None:
@@ -143,7 +145,6 @@ def test_run_backtest_hands_the_engine_one_calibration_per_recalibration_bar(mon
     """The simulator must see the cadence the live bot recalibrates at, not one fixed calibration."""
     _setup_common(monkeypatch, sample_dataframe)
     monkeypatch.setattr(backtest, "analyze_structural_noise", lambda _df: ([], []))
-    monkeypatch.setattr(backtest, "STOP_PERCENTILES", {_PAIR: dict.fromkeys(_LEVELS, 0.9)})
     seen = {}
     real = backtest.simulate_operations
 
