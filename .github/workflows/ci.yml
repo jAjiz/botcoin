@@ -61,7 +61,8 @@ jobs:
   build-and-push:
     name: Build and push image
     needs: [test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Disabled 2026-09-14: the bot is decommissioned; kept as a record of the pipeline.
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -101,7 +102,8 @@ jobs:
   deploy:
     name: Deploy to VPS
     needs: [build-and-push]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Disabled 2026-09-14: the bot is decommissioned; kept as a record of the pipeline.
+    if: false
     runs-on: ubuntu-latest
     steps:
       - name: SSH and roll out
