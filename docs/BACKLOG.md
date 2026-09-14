@@ -1,5 +1,9 @@
 # BoTCoin – Feature Backlog
 
+> **Closed on 2026-09-14.** The strategy was measured and does not work, so the
+> project is closed and nothing is planned. This file is kept as the record of
+> what shipped, and of why every remaining card was closed rather than built.
+
 The working backlog of features for BoTCoin. Each entry is independent and
 self-contained — there is no fixed delivery order. Cards are grouped by status
 and kept brief: the design and the reasoning behind it live in the linked spec.
@@ -86,9 +90,35 @@ pass removes the duplication that has already left `operations.md` stale.
 
 ## 📋 Planned
 
+Nothing. The project is closed.
 
 
 ## 💤 Deferred
+
+Nothing. Both cards moved to Closed on 2026-09-14.
+
+
+## ❌ Closed
+
+### The Trailing-Stop Strategy
+
+The strategy itself, and with it the project's first goal. **Closed 2026-09-14:
+measured, not abandoned.** Twenty-four avenues on XBTEUR at production fidelity,
+and none beat holding the base asset out of sample — including a gate fitted with
+perfect hindsight, which noise beats in four cells of four.
+
+Over 2023-2025 the production median is −76.0 % of base asset in four operations,
+0 of 105 configurations positive, against holding's +384 % in euros. A run returns
+roughly `−drift × time in cash + convexity − fees`, and at those drifts the first
+term dwarfs the other two. No configuration, re-anchor, frequency or fee level
+changes it.
+
+Reopening this needs data the study does not hold — order book, trades tape,
+funding rates, cross-asset — not a better parameterisation. The four *Production
+consequences, unimplemented* listed at the end of the study serve this closed
+strategy and are not planned either.
+
+- Study: [`specs/optimizer-validation-design.md`](specs/optimizer-validation-design.md)
 
 ### Auto-Lookback Window for K_STOP Calibration
 
@@ -99,7 +129,11 @@ volatility regime rather than the entire price history.
 **Note:** the plateau heuristic needs a meaningful history range to produce a
 stable signal — more than 60 days of OHLC data are required.
 
-- Spec: _to be written_
+**Closed 2026-09-14: it tunes a strategy that has no edge.** A lookback window
+changes how `K_STOP` is sized; the study shows the loss is `−drift × time in cash`,
+an order of magnitude larger than anything stop sizing moves. The calibration
+*schedule* — which does matter, and reorders candidates rather than shifting them —
+shipped with the study instead.
 
 ### Portfolio-vs-Hold Benchmark
 
@@ -114,11 +148,11 @@ Deferred on cost, not on value: nothing records portfolio value over time
 needs a time series, and external deposits and withdrawals must be modelled or
 the comparison silently lies the first time the operator moves EUR.
 
-- Spec: _to be written_
-
-
-## ❌ Closed
-
+**Closed 2026-09-14: the study answered it, and the answer is no.** The benchmark
+this card asked for was built offline instead of in production: scoring in base
+asset against holding, with the open position marked to market. Over 2023-2025 the
+bot returns a median −76.0 % of base asset, 0 of 105 configurations positive. There
+is no live bot left to instrument.
 ### Trend/Chop Regime Filter
 
 A Choppiness Index–based regime classifier (`TREND`/`MIXED`/`CHOP`) that would

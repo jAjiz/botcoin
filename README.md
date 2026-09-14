@@ -1,10 +1,16 @@
 # BoTCoin — Autonomous Trading Bot Backend
 
+> **Status: closed — September 2026.** The bot no longer runs and the production
+> stack is decommissioned. Twenty-four strategy avenues were measured and none
+> beat holding the base asset out of sample, so live trading was stopped. The
+> repository is kept as it was on the last day it ran, because the engineering is
+> the point and **the negative result is part of it** — see [The result](#the-result).
+
 [![CI](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A580%25-brightgreen.svg)](https://github.com/jAjiz/BoTCoin/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 
-BoTCoin is a production-grade backend service built using modern Python engineering practices. It runs an ATR-based trailing-stop strategy against Kraken's EUR pairs, persists all state in PostgreSQL, exposes a REST control surface via FastAPI, ships a Grafana observability layer, and is operated through a Telegram bot controller for monitoring and on-the-fly control. The entire stack starts with a single `docker compose up`.
+BoTCoin is a production-grade backend service built using modern Python engineering practices. It ran an ATR-based trailing-stop strategy against Kraken's EUR pairs, persisted all state in PostgreSQL, exposed a REST control surface via FastAPI, shipped a Grafana observability layer, and was operated through a Telegram bot controller. The whole stack still starts with a single `docker compose up`, against your own credentials.
 
 <table>
   <tr>
@@ -12,6 +18,37 @@ BoTCoin is a production-grade backend service built using modern Python engineer
     <td><img src="docs/images/telegram.png" alt="Telegram bot — market and position commands"></td>
   </tr>
 </table>
+
+---
+
+## The result
+
+Most trading bots in a portfolio show a backtest and claim an edge. This one asked
+whether the edge exists, measured it, and published the answer.
+
+The question was not "is it profitable". In a rising market anything long is
+profitable. The question was whether the bot **accumulates more of the base asset
+than holding it**, so holding scores 0 % by construction and is the bar every
+figure is measured against. The answer is **no**, for every parameterisation, gate
+and objective tested.
+
+- **In-sample selection has no forward value.** Median percentile 50 of the
+  forward distribution, over nine decision dates enumerating the whole
+  105-configuration space.
+- **The market period decides, not the parameters.** In one 60-day period 0 of 105
+  configurations beat holding; in the next, 100 of 105 do.
+- **Over three continuous years it loses 78 % of the base asset in four
+  operations.** 2023-2025, while holding returned +384 % in euros. 0 of 105 beat
+  holding.
+- **No gate fixes it, including one fitted with hindsight.** Hill-climbing 366 free
+  per-day booleans against the bot's own 2024 result reaches +113.1 %. The same
+  climb on a **shuffled, memoryless** year reaches +173.5 %. In four cells of four,
+  noise admits a better oracle gate than the real market does.
+
+The full study — 24 avenues, the decisions taken, the measurement traps and the
+surviving tools — is in
+[`docs/specs/optimizer-validation-design.md`](docs/specs/optimizer-validation-design.md).
+Read "Measurement traps" first if you read nothing else.
 
 ---
 
@@ -70,7 +107,7 @@ Each decision links to its phase in the roadmap — execution plans and design r
 | ruff | One Rust-fast tool replaces flake8 + black + isort for lint, format, and import sorting, configured solely in `pyproject.toml`. | [Roadmap](docs/v2/ROADMAP.md#phase-6--code-quality-linting--type-safety-completed) |
 | GitHub Actions + GHCR | Build the image once in CI and deploy by tag; the VPS pulls from GHCR and holds only `.env` + compose files — no source clone or on-host build. | [Roadmap](docs/v2/ROADMAP.md#phase-7--cicd-pipeline-completed) |
 | Grafana | A ready-made observability dashboard that reads the bot's Postgres tables directly with plain SQL, so market data, positions, and performance are visible without building a custom UI. | [Roadmap](docs/v2/ROADMAP.md#phase-8--observability-grafana-dashboard-completed) |
-| Optuna | The original optimizer tried every parameter combination one by one (an exhaustive grid scan), which was slow and didn't scale. Optuna searches intelligently for good parameters instead, and now runs as an API endpoint in a background process with its jobs saved in Postgres. | [Roadmap](docs/v2/ROADMAP.md#phase-10--trading-tools-integration-backtest--optimizer-completed) |
+| `ProcessPoolExecutor` | The optimizer enumerates a 105-candidate space and evaluates every point exactly once, so an identical request returns an identical ranking. The work is CPU-bound, so it runs in a spawned process pool behind an API endpoint with its jobs saved in Postgres. Optuna was removed on the way: with no sampler, there is nothing for seeds to disagree about. | [Spec](docs/specs/optimizer-simplification-design.md) |
 
 Full design rationale is in [CLAUDE.md](CLAUDE.md) under **Design choices**.
 
@@ -78,7 +115,7 @@ Full design rationale is in [CLAUDE.md](CLAUDE.md) under **Design choices**.
 
 ## Data model
 
-Five PostgreSQL tables managed by a single Alembic migration chain (`scripts/migrations/versions/`):
+Seven PostgreSQL tables managed by a single Alembic migration chain (`scripts/migrations/versions/`):
 
 ```mermaid
 erDiagram
@@ -129,6 +166,27 @@ erDiagram
         jsonb pair_data
         text log_messages
     }
+
+    pair_config {
+        text pair PK
+        numeric target_pct
+        numeric hodl_pct
+        numeric k_act
+        numeric min_margin
+        numeric stop_pct_ll
+        numeric stop_pct_hh
+        timestamptz updated_at
+    }
+
+    optimizer_jobs {
+        bigint id PK
+        text pair
+        text mode
+        text status
+        jsonb request
+        jsonb result
+        timestamptz created_at
+    }
 ```
 
 **Data flow for a completed trade:**
@@ -147,18 +205,18 @@ tick_position() × N sessions
 close_position()
   →  trailing_state  (UPDATE: closing_order_id, approximate closing_price)
 
-is_closing_complete()  — Kraken QueryOrders confirms fill
+manage_close_position() → finalize_close()  — Kraken confirms the fill
   →  closed_positions  (INSERT: real fill price, pnl_percent)
   →  trailing_state  (DELETE)
 ```
 
 ---
 
-## Roadmap & future work
+## Project status
 
-BoTCoin reached its goal of a production-grade backend service and that milestone is now closed — see the archived [V2 roadmap](docs/v2/ROADMAP.md) for the full delivered scope.
+BoTCoin reached its goal of a production-grade backend service, and that milestone is closed — see the archived [V2 roadmap](docs/v2/ROADMAP.md) for the full delivered scope.
 
-Active and planned work lives in the feature backlog at [docs/BACKLOG.md](docs/BACKLOG.md) — a stock of independent features grouped by status.
+The strategy line is closed too, and with it the project. The backlog at [docs/BACKLOG.md](docs/BACKLOG.md) records what shipped, and why every remaining card was closed rather than built. Nothing is planned.
 
 ---
 
@@ -169,7 +227,7 @@ Active and planned work lives in the feature backlog at [docs/BACKLOG.md](docs/B
 | [docs/configuration.md](docs/configuration.md) | Every `.env` variable, its default, and its effect |
 | [docs/trading-strategy.md](docs/trading-strategy.md) | ATR classification, K_STOP calibration, position lifecycle |
 | [docs/operations.md](docs/operations.md) | Local dev, production deploy, rollback, monitoring, troubleshooting |
-| [docs/CHANGELOG.md](docs/CHANGELOG.md) | Phase-by-phase change history |
+| [docs/specs/optimizer-validation-design.md](docs/specs/optimizer-validation-design.md) | **The study** — 24 avenues, the measurement traps, and the surviving tools |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | Feature backlog — stock of planned, shipped, and deferred features |
 | [docs/v2/ROADMAP.md](docs/v2/ROADMAP.md) | Archived V2 roadmap (closed) and phase plans |
 
@@ -177,7 +235,7 @@ Active and planned work lives in the feature backlog at [docs/BACKLOG.md](docs/B
 
 ## Contributing
 
-Issues and pull requests are welcome. See [CLAUDE.md](CLAUDE.md) for coding conventions, design decisions, and testing requirements.
+The repository is closed and takes no further changes. [CLAUDE.md](CLAUDE.md) documents the coding conventions, the design decisions and the testing requirements it was built under.
 
 ---
 
