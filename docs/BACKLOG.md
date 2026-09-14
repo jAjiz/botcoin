@@ -4,12 +4,11 @@
 > project is closed and nothing is planned. This file is kept as the record of
 > what shipped, and of the one card that closed the project.
 
-The working backlog of features for BoTCoin. Each entry is independent and
-self-contained — there is no fixed delivery order. Cards are grouped by status
-and kept brief: the design and the reasoning behind it live in the linked spec.
-A card being implemented also links a plan, which is deleted once it ships.
+The feature backlog of BoTCoin. Each entry is independent and self-contained.
+Cards are grouped by status and kept brief: the design and the reasoning behind
+it live in the linked spec.
 
-**Status legend:** ✅ Shipped · 📋 Planned · 💤 Deferred · ❌ Closed
+**Status legend:** ✅ Shipped · ❌ Closed
 
 
 
@@ -86,17 +85,6 @@ pass removes the duplication that has already left `operations.md` stale.
 
 - Spec: [`specs/strategy-review-followups-design.md`](specs/strategy-review-followups-design.md)
 
-
-
-## 📋 Planned
-
-Nothing. The project is closed.
-
-
-## 💤 Deferred
-
-Nothing. Both cards were dropped on 2026-09-14: each tuned or measured a
-strategy the study had already closed.
 
 
 ## ❌ Closed
