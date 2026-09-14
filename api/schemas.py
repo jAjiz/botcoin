@@ -102,6 +102,8 @@ class BacktestRequest(BaseModel):
     end: str | None = None
     max_ops: int | None = None
     use_live_config: bool = False
+    # Candles between simulated recalibrations; null follows the live cadence, 0 calibrates once.
+    recalibration_bars: int | None = Field(default=None, ge=0)
 
     _check_window = field_validator("start", "end")(_require_iso_datetime)
 
@@ -146,21 +148,23 @@ class GridSpec(BaseModel):
 
 
 class SearchSpace(BaseModel):
-    """Search grids for an OPTIMIZE/AUTO run. All three grids must be informed
-    (no defaults). A ``null`` activation grid disables that whole branch — ``k_act``
-    null runs only the min_margin branch and vice versa; at least one must be set.
-    To *fix* (rather than disable) a dimension, pass ``start == end``."""
+    """Search grids for an OPTIMIZE run. A ``null`` activation grid disables that whole
+    branch — ``k_act`` null runs only the min_margin branch and vice versa; at least one
+    must be set. To *fix* (rather than disable) a dimension, pass ``start == end``.
 
-    stop_pcts: GridSpec
-    k_act: GridSpec | None
-    min_margin: GridSpec | None
+    Defaults are the study's 105-candidate grid; ``stop_pcts`` is capped at 0.9.
+    See docs/specs/optimizer-simplification-design.md."""
+
+    stop_pcts: GridSpec = GridSpec(start=0.5, end=0.9, step=0.1)
+    k_act: GridSpec | None = None
+    min_margin: GridSpec | None = GridSpec(start=0.0, end=0.20, step=0.01)
 
     @model_validator(mode="after")
     def _validate(self) -> SearchSpace:
         if self.k_act is None and self.min_margin is None:
             raise ValueError("at least one of k_act / min_margin must be provided")
-        if self.stop_pcts.start < 0.0 or self.stop_pcts.end > 1.0:
-            raise ValueError("stop_pcts grid must lie within [0, 1]")
+        if self.stop_pcts.start < 0.0 or self.stop_pcts.end > 0.9:
+            raise ValueError("stop_pcts grid must lie within [0, 0.9]; 1.0 is a sample maximum, not a percentile")
         if self.k_act is not None and self.k_act.start < 0.0:
             raise ValueError("k_act grid must be >= 0")
         if self.min_margin is not None and self.min_margin.start < 0.0:
@@ -168,19 +172,9 @@ class SearchSpace(BaseModel):
         return self
 
 
-class AutoSettings(BaseModel):
-    """AUTO-mode convergence knobs (ignored for OPTIMIZE/CURRENT). Unlike
-    SearchSpace they keep defaults, so AUTO works without spelling them out."""
-
-    n_seeds: int = Field(default=4, ge=2, le=8)
-    min_agree: int = Field(default=3, ge=2, le=8)
-    trial_step: int = Field(default=500, ge=100, le=2_000)
-    max_trials: int = Field(default=9_000, ge=500, le=20_000)
-
-
 class CurrentParams(BaseModel):
     """CURRENT-mode evaluation knobs (ignored by OPTIMIZE/AUTO). Each field set
-    replaces the value read from the live .env, allowing sensitivity runs against
+    replaces the value read from the configuration, allowing sensitivity runs against
     any config without touching the running bot."""
 
     stop_pcts: dict[str, float] | None = None
@@ -207,15 +201,13 @@ class OptimizerRequest(BaseModel):
     # for the same reason as search_space below.
     start: str | None = None
     end: str | None = None
-    train_split: float = Field(default=0.8, ge=0.5, le=1.0)
+    # 1.0 = no inner split: a window that influences the selection is training, not test.
+    train_split: float = Field(default=1.0, ge=0.5, le=1.0)
     min_ops: int = 0
     min_test_ops: int = 0
-    n_trials: int = Field(default=1_000, ge=1, le=10_000)
-    seed: int = 42
-    # Mode applicability of each group is documented on its class. search_space is
-    # required for OPTIMIZE/AUTO, but enforced at the route so this model can still
-    # echo back historical jobs that predate the field.
-    auto_settings: AutoSettings | None = None
+    # Candles between simulated recalibrations; null follows the live cadence, 0 calibrates once.
+    recalibration_bars: int | None = Field(default=None, ge=0)
+    # Mode rules are enforced at the route, not here, so historical jobs still echo back — AUTO included.
     search_space: SearchSpace | None = None
     current_params: CurrentParams | None = None
 
@@ -242,11 +234,17 @@ class CandidateResult(BaseModel):
     robust_pnl_pct: float | None = None
     train_ops: int | None = None
     test_ops: int | None = None
+    # Hold and base-asset figures. Reported, never ranked on; absent on jobs predating the field.
+    hold_pct: float | None = None
+    train_hold_pct: float | None = None
+    test_hold_pct: float | None = None
+    in_sample_base_pct: float | None = None
+    train_base_pct: float | None = None
+    test_base_pct: float | None = None
 
 
 class AutoResult(BaseModel):
-    """AUTO-only consensus outcome. Comparing the winner against the live config
-    is a separate concern (CURRENT mode)."""
+    """Consensus outcome of a historical AUTO job; survives only so stored results read back."""
 
     converged: bool = False
     n_seeds_agreed: int = 0
@@ -262,11 +260,12 @@ _AUTO_RESULT_KEYS = (
 
 class OptimizerResultResponse(BaseModel):
     """Typed optimizer result. pair/mode are dropped (shown once at the top level);
-    the AUTO-only fields are nested under ``auto`` (null for OPTIMIZE/CURRENT)."""
+    ``n_trials_run``/``auto`` are historical AUTO fields, current jobs report ``n_candidates``."""
 
     top_candidates: list[CandidateResult] = Field(default_factory=list)
     suggested_env_lines: list[str] = Field(default_factory=list)
-    n_trials_run: int = 0
+    n_candidates: int = 0
+    n_trials_run: int | None = None
     auto: AutoResult | None = None
 
     @model_validator(mode="before")

@@ -10,12 +10,19 @@ from api.schemas import CurrentParams as ApiCurrentParams
 from api.schemas import GridSpec as ApiGridSpec
 from api.schemas import OptimizerRequest as ApiOptimizerRequest
 from api.schemas import SearchSpace as ApiSearchSpace
-from trading.optimizer.search import AutoSettings, CurrentParams, GridSpec, OptimizerRequest, SearchSpace
+from trading.optimizer.search import (
+    CurrentParams,
+    GridSpec,
+    OptimizerRequest,
+    SearchSpace,
+    _search_space_from_dict,
+    enumerate_candidates,
+)
 
 
 def _api_space() -> dict:
     return {
-        "stop_pcts": {"start": 0.20, "end": 0.95, "step": 0.25},
+        "stop_pcts": {"start": 0.15, "end": 0.90, "step": 0.25},
         "k_act": {"start": 0.0, "end": 4.0, "step": 1.0},
         "min_margin": {"start": 0.0, "end": 0.01, "step": 0.002},
     }
@@ -50,7 +57,7 @@ def test_gridspec_allows_fixed_value() -> None:
 
 def test_searchspace_requires_at_least_one_branch() -> None:
     with pytest.raises(ValidationError, match="at least one"):
-        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.2, end=0.95, step=0.25), k_act=None, min_margin=None)
+        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.15, end=0.9, step=0.25), k_act=None, min_margin=None)
 
 
 def test_searchspace_rejects_stop_out_of_bounds() -> None:
@@ -62,19 +69,24 @@ def test_searchspace_rejects_stop_out_of_bounds() -> None:
         )
 
 
-def test_searchspace_branches_are_required_fields() -> None:
-    """k_act/min_margin have no defaults — they must be informed (even as null)."""
-    with pytest.raises(ValidationError):
-        ApiSearchSpace(stop_pcts=ApiGridSpec(start=0.2, end=0.95, step=0.25))
+def test_searchspace_defaults_to_the_validation_study_grid() -> None:
+    """105 candidates: min_margin 0.00-0.20 step 0.01 against one shared stop_pct 0.5-0.9
+    step 0.1, k_act off. The grid every published figure in the study was measured on."""
+    space = ApiSearchSpace()
+
+    assert space.k_act is None
+    assert (space.min_margin.start, space.min_margin.end, space.min_margin.step) == (0.0, 0.20, 0.01)
+    assert (space.stop_pcts.start, space.stop_pcts.end, space.stop_pcts.step) == (0.5, 0.9, 0.1)
+    assert len(enumerate_candidates(_search_space_from_dict(space.model_dump()))) == 105
 
 
 # --- OptimizerRequest mode/search_space interaction ------------------------
 
 
 def test_request_model_allows_missing_search_space() -> None:
-    """The model itself does NOT require search_space (the OPTIMIZE/AUTO rule is
-    enforced at the route). This lets the same model echo historical requests back.
-    See the route tests for the 422-on-submit behaviour."""
+    """The model itself does NOT require search_space (the OPTIMIZE rule is enforced at
+    the route). This lets the same model echo historical requests back — including the
+    AUTO jobs the route no longer accepts. See the route tests for the 422 behaviour."""
     for mode in ("OPTIMIZE", "AUTO", "CURRENT"):
         req = ApiOptimizerRequest(pair="XBTEUR", mode=mode)
         assert req.search_space is None
@@ -110,22 +122,6 @@ def test_dataclass_search_space_asdict_round_trips() -> None:
     assert req2.search_space.min_margin.step == 0.002
 
 
-def test_dataclass_coerces_dict_auto_settings() -> None:
-    """auto_settings, like search_space, accepts the plain dict round-trip."""
-    req = OptimizerRequest(
-        pair="XBTEUR",
-        mode="AUTO",
-        search_space=_api_space(),
-        auto_settings={"n_seeds": 5, "min_agree": 4, "trial_step": 250, "max_trials": 3000},
-    )
-    assert isinstance(req.auto_settings, AutoSettings)
-    assert req.auto_settings.n_seeds == 5
-    assert asdict(req)["auto_settings"]["max_trials"] == 3000
-
-
-# --- CurrentParams validation + round-trip ----------------------------------
-
-
 def test_current_params_rejects_incomplete_stop_pcts() -> None:
     with pytest.raises(ValidationError, match="exactly the keys"):
         ApiCurrentParams(stop_pcts={"LL": 0.5, "LV": 0.5})
@@ -159,3 +155,57 @@ def test_dataclass_current_params_all_none_is_default() -> None:
     assert req.current_params.k_act == 1.0
     assert req.current_params.min_margin is None
     assert req.current_params.stop_pcts is None
+
+
+# --- decisions from the validation study -----------------------------------
+
+
+def test_searchspace_rejects_stop_ceiling_above_0_9() -> None:
+    """1.0 is a sample maximum, not a percentile: the stop would be set by one observation."""
+    with pytest.raises(ValidationError, match=r"0.9"):
+        ApiSearchSpace(
+            stop_pcts=ApiGridSpec(start=0.5, end=1.0, step=0.1),
+            k_act=None,
+            min_margin=ApiGridSpec(start=0.0, end=0.01, step=0.002),
+        )
+
+
+def test_searchspace_accepts_stop_ceiling_at_0_9() -> None:
+    space = ApiSearchSpace(
+        stop_pcts=ApiGridSpec(start=0.5, end=0.9, step=0.1),
+        k_act=None,
+        min_margin=ApiGridSpec(start=0.0, end=0.01, step=0.002),
+    )
+    assert space.stop_pcts.end == 0.9
+
+
+def test_train_split_defaults_to_the_whole_window() -> None:
+    """A window that influences the selection is training, not test; the honest test is forward."""
+    assert ApiOptimizerRequest(pair="XBTEUR", mode="OPTIMIZE").train_split == 1.0
+    assert OptimizerRequest(pair="XBTEUR", mode="OPTIMIZE").train_split == 1.0
+
+
+# --- base-asset reporting --------------------------------------------------
+
+
+def test_base_asset_pct_is_zero_when_the_bot_matches_hold() -> None:
+    """Holding is 0 % by construction, in any regime — that is what makes it comparable."""
+    from trading.optimizer.search import _base_asset_pct
+
+    assert _base_asset_pct(-17.41, -17.41) == 0.0
+    assert _base_asset_pct(+20.0, +20.0) == 0.0
+
+
+def test_base_asset_pct_inverts_the_sign_of_a_losing_euro_result_in_a_falling_market() -> None:
+    """The case that nearly hid a real result: -5.19 % in euros over 2025 accumulated base asset."""
+    from trading.optimizer.search import _base_asset_pct
+
+    assert _base_asset_pct(-5.19, -17.41) == pytest.approx(14.80, abs=0.01)
+
+
+def test_base_asset_pct_is_none_when_undefined() -> None:
+    """No euro figure, or an asset that went to zero: undefined, not infinite."""
+    from trading.optimizer.search import _base_asset_pct
+
+    assert _base_asset_pct(None, -17.41) is None
+    assert _base_asset_pct(-5.0, -100.0) is None

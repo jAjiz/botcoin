@@ -261,3 +261,62 @@ def test_detect_pivots_terminates_on_flat_data():
     pivots = market_analyzer.detect_pivots(df, order=5)
     assert isinstance(pivots, list)
     assert len(pivots) <= 1
+
+
+# --- calibration schedule ---------------------------------------------------
+
+
+def _frame(n: int) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "dtime": pd.date_range("2026-01-01", periods=n, freq="15min"),
+            "close": [100.0 + i for i in range(n)],
+            "high": [101.0 + i for i in range(n)],
+            "low": [99.0 + i for i in range(n)],
+            "atr": [2.0] * n,
+        }
+    )
+
+
+def test_k_values_by_level_keeps_every_level_even_when_no_event_reached_it() -> None:
+    events = [{"volatility_levels": {"MV": {"k_value": 3.0}, "HV": {"k_value": None}}}]
+
+    by_level = market_analyzer.k_values_by_level(events)
+
+    assert set(by_level) == {"LL", "LV", "MV", "HV", "HH"}
+    assert by_level["MV"].tolist() == [3.0]
+    assert by_level["HV"].size == 0
+
+
+def test_build_calibration_inputs_places_a_point_every_cadence_starting_at_bar_zero() -> None:
+    df = _frame(20)
+
+    points = market_analyzer.build_calibration_inputs(df, df, recalib_bars=5)
+
+    assert [p.at for p in points] == [0, 5, 10, 15]
+
+
+def test_build_calibration_inputs_calibrates_each_point_from_the_past_only(monkeypatch) -> None:
+    df_full = _frame(20)
+    df = df_full.iloc[10:].reset_index(drop=True)
+    seen: list[int] = []
+    monkeypatch.setattr(market_analyzer, "analyze_structural_noise", lambda d: (seen.append(len(d)), ([], []))[1])
+
+    points = market_analyzer.build_calibration_inputs(df_full, df, recalib_bars=5)
+
+    # A slice starting at bar 10 still calibrates over all 11, then 16 bars of history up to its own bar.
+    assert [p.at for p in points] == [0, 5]
+    assert seen == [11, 16]
+
+
+@pytest.mark.parametrize("recalib_bars", [0, -1])
+def test_build_calibration_inputs_is_empty_when_recalibration_is_disabled(recalib_bars: int) -> None:
+    df = _frame(10)
+
+    assert market_analyzer.build_calibration_inputs(df, df, recalib_bars) == ()
+
+
+def test_build_calibration_inputs_is_empty_for_an_empty_window() -> None:
+    df = _frame(10)
+
+    assert market_analyzer.build_calibration_inputs(df, df.iloc[0:0], recalib_bars=5) == ()

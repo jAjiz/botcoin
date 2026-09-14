@@ -1,9 +1,6 @@
-"""Behavioral tests for the pure engine.
+"""Behavioral tests for the pure engine, one behavior per test."""
 
-Each test pins one hand-reasoned behavior on the smallest fixture that can show it:
-the pure helpers are called directly, and only the loop behaviors that need a
-sequence of bars build a frame. A failure names the behavior that changed.
-"""
+import dataclasses
 
 import pandas as pd
 import pytest
@@ -26,11 +23,10 @@ def _df(
     atr: float | list[float] = 2.0,
     price_column: str | None = "close",
 ) -> pd.DataFrame:
-    """Build an OHLC frame from (high, low, price) rows.
+    """Build an OHLC frame from (high, low, price) rows; ``price_column`` names the price column.
 
-    Prices sit around 100, so an ATR of 2.0 reads as a 0.02 ATR/close ratio against
-    the ratio percentiles ``_cfg`` supplies. ``price_column`` names the column the
-    engine reads the bar's reference price from (``None`` omits it)."""
+    Prices sit near 100, so the default ATR of 2.0 reads as a 0.02 ratio: level LV under ``_cfg``.
+    """
     data: dict[str, list] = {
         "dtime": [f"t{i}" for i in range(len(rows))],
         "high": [r[0] for r in rows],
@@ -152,11 +148,11 @@ def test_round_trip_alternates_sides_and_compounds_cum_pnl() -> None:
         (3, "buy", 92.0),
         (4, "sell", 118.0),
     ]
-    # A buy leg closes a short: PnL is entry - exit, the mirror of the sell leg.
-    assert [op.pnl_abs for op in ops] == pytest.approx([0.0, 8.0, 16.0, 26.0])
-    assert [op.pnl_pct for op in ops] == pytest.approx([0.0, 8.0, 16 / 108 * 100, 26 / 92 * 100])
-    # cum_pnl compounds the per-leg returns: 1.08 * (124/108) * (118/92) - 1.
-    assert [op.cum_pnl for op in ops] == pytest.approx([0.0, 8.0, 24.0, 59.0434783])
+    # A buy leg closes a cash leg: euros held do not move, so it books nothing.
+    assert [op.pnl_abs for op in ops] == pytest.approx([0.0, 8.0, 0.0, 26.0])
+    assert [op.pnl_pct for op in ops] == pytest.approx([0.0, 8.0, 0.0, 26 / 92 * 100])
+    # cum_pnl compounds the long legs only: 1.08 * (118/92) - 1.
+    assert [op.cum_pnl for op in ops] == pytest.approx([0.0, 8.0, 8.0, 38.5217391])
 
 
 def test_an_exit_row_reports_the_k_stop_of_its_own_level() -> None:
@@ -278,3 +274,270 @@ def test_bar_price_falls_back_to_open_then_to_the_high_low_midpoint(price_column
 
     assert ops[0].price == 100.0
     assert ops[1].price == 108.0
+
+
+# --- calibration schedule --------------------------------------------------
+
+
+def _cal(k: float, percentiles: tuple[float, float, float, float] = (0.01, 0.03, 0.05, 0.07)):
+    """A calibration whose every level, both sides, carries the same K_STOP."""
+    return engine.PairCalibration(
+        atr_ratio_p20=percentiles[0],
+        atr_ratio_p50=percentiles[1],
+        atr_ratio_p80=percentiles[2],
+        atr_ratio_p95=percentiles[3],
+        k_stop_buy=dict.fromkeys(_LEVELS, k),
+        k_stop_sell=dict.fromkeys(_LEVELS, k),
+    )
+
+
+def _with_schedule(cfg: engine.EngineConfig, schedule) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, calibration_schedule=tuple(schedule))
+
+
+def test_calibration_at_returns_the_last_entry_at_or_before_the_bar() -> None:
+    # The schedule is a step function: an entry holds until the next one starts.
+    second, third = _cal(2.0), _cal(3.0)
+    cfg = _with_schedule(_cfg(), [(2, second), (5, third)])
+    base = cfg.calibration
+
+    assert engine._calibration_at(cfg, 0) is base
+    assert engine._calibration_at(cfg, 1) is base
+    assert engine._calibration_at(cfg, 2) is second
+    assert engine._calibration_at(cfg, 4) is second
+    assert engine._calibration_at(cfg, 5) is third
+    assert engine._calibration_at(cfg, 99) is third
+
+
+def test_a_scheduled_recalibration_widens_the_stop_from_its_bar_on() -> None:
+    # K_STOP 1.0 -> 2.0 at bar 2: the short exits at 94, and the wider stop survives bar 3.
+    df = _df(_ROUND_TRIP)
+    cfg = _cfg()
+
+    plain = engine.simulate_operations(df, cfg)
+    scheduled = engine.simulate_operations(df, _with_schedule(cfg, [(2, _cal(2.0))]))
+
+    assert [op.price for op in plain] == [100.0, 108.0, 92.0, 118.0]
+    assert [op.price for op in scheduled] == [100.0, 108.0, 94.0]
+    assert [op.k_stop for op in scheduled] == [1.0, 1.0, 2.0]
+
+
+def test_a_recalibration_does_not_reprice_a_stop_already_resting() -> None:
+    # Mirrors tick_position: only ATR drift or a new extreme re-prices a stop, never a recalibration.
+    rows = [(100.0, 100.0, 100.0), (100.0, 99.0, 100.0), (100.0, 97.0, 99.0)]
+    cfg = _cfg()
+
+    ops = engine.simulate_operations(_df(rows), _with_schedule(cfg, [(1, _cal(3.0))]))
+
+    # Bar 0 priced the stop at 98.0 with K=1.0; K=3.0 would have put it at 94.0.
+    assert ops[1].price == 98.0
+    # k_stop names the level of the exit bar, not the K that priced the stop.
+    assert ops[1].k_stop == 3.0
+
+
+def test_a_schedule_entry_due_on_a_skipped_bar_applies_at_the_next_usable_one() -> None:
+    # Bar 2 has no usable ATR, yet bar 3 already buys on the K_STOP scheduled for bar 2.
+    rows = [(100.0, 100.0, 100.0), (110.0, 105.0, 108.0), (109.0, 90.0, 95.0), (120.0, 100.0, 105.0)]
+    df = _df(rows, atr=[2.0, 2.0, 0.0, 2.0])
+    cfg = _cfg()
+
+    plain = engine.simulate_operations(df, cfg)
+    scheduled = engine.simulate_operations(df, _with_schedule(cfg, [(2, _cal(2.0))]))
+
+    assert [op.price for op in plain] == [100.0, 108.0, 102.0]
+    assert [op.price for op in scheduled] == [100.0, 108.0, 104.0]
+
+
+def test_the_first_operation_uses_the_calibration_of_its_own_bar() -> None:
+    # The opening BUY lands on bar 1, so a recalibration scheduled at bar 1 applies to it.
+    df = _df(_ROUND_TRIP, atr=[0.0, 2.0, 2.0, 2.0])
+    cfg = _cfg()
+
+    ops = engine.simulate_operations(df, _with_schedule(cfg, [(1, _cal(4.0))]))
+
+    assert ops[0].time == "t1"
+    assert ops[0].k_stop == 4.0
+
+
+# --- mark_to_market --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("rows", "final", "expected"),
+    [
+        # Ends long from 100 (only the opening buy): +20% unrealized.
+        pytest.param([(100.0, 100.0, 100.0)], 120.0, 20.0, id="open-long-gains"),
+        pytest.param([(100.0, 100.0, 100.0)], 80.0, -20.0, id="open-long-loses"),
+        # Ends holding euros after the round trip's first exit: nothing left to value.
+        pytest.param(_ROUND_TRIP[:2], 120.0, 8.0, id="open-cash-adds-nothing"),
+    ],
+)
+def test_mark_to_market_values_the_position_the_run_ended_on(
+    rows: list[tuple[float, float, float]], final: float, expected: float
+) -> None:
+    ops = engine.simulate_operations(_df(rows), _cfg())
+
+    assert engine.mark_to_market(ops, final) == pytest.approx(expected)
+
+
+def test_mark_to_market_of_a_run_with_no_operations_is_zero() -> None:
+    assert engine.mark_to_market([], 120.0) == 0.0
+
+
+def test_mark_to_market_of_a_priceless_operation_keeps_the_realized_total() -> None:
+    # A zero price has no base to compute a return against, so report only what was booked.
+    priceless = engine.Operation(1, "t0", "buy", 0.0, "LV", 1.0, 0.0, None, None, 7.5)
+
+    assert engine.mark_to_market([priceless], 120.0) == 7.5
+
+
+# --- forced-hold mask ------------------------------------------------------
+
+
+def _with_hold(cfg: engine.EngineConfig, bars) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, force_hold_bars=frozenset(bars))
+
+
+def test_the_hold_mask_is_empty_by_default() -> None:
+    # Production never sets it, so the live path must carry no mask at all.
+    assert _cfg().force_hold_bars == frozenset()
+
+
+def test_a_masked_bar_does_not_fire_the_sell_stop() -> None:
+    # Holding the asset is what the mask is for, so the owed exit is deferred, not taken.
+    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [1]))
+
+    assert [(op.side, op.time) for op in plain][:2] == [("buy", "t0"), ("sell", "t1")]
+    assert [(op.side, op.time) for op in masked][:2] == [("buy", "t0"), ("sell", "t2")]
+
+
+def test_the_stop_keeps_trailing_under_the_mask() -> None:
+    # A frozen stop would exit at a stale level once the mask lifts; it must track the new high.
+    rows = [(100.0, 100.0, 100.0), (110.0, 105.0, 108.0), (120.0, 118.0, 119.0), (121.0, 110.0, 115.0)]
+    masked = engine.simulate_operations(_df(rows), _with_hold(_cfg(), [1]))
+
+    # Bar 1 would have sold at 108; bar 2 trails to 120 and the deferred exit lands at 118.
+    assert [op.price for op in masked] == [100.0, 118.0, 112.0]
+
+
+def test_a_masked_bar_forces_an_entry_when_the_bot_holds_cash() -> None:
+    # The whole point of (a): a bot in cash when a rally opens must be put back into the asset.
+    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [2]))
+
+    # Plain rebuys at the stop, 92; the mask buys at bar 2's own price, 95 — worse, and honest.
+    assert [op.price for op in plain] == [100.0, 108.0, 92.0, 118.0]
+    assert [op.price for op in masked] == [100.0, 108.0, 95.0, 118.0]
+
+
+def test_the_forced_entry_pays_the_entry_fee() -> None:
+    # It is a real trade, so it is charged like one — a free forced entry would flatter the bound.
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [2]), fee_rate=0.01)
+
+    forced = masked[2]
+    assert forced.side == "buy"
+    assert forced.fee_abs == pytest.approx(95.0 * 0.01)
+
+
+def test_the_mask_does_not_re_enter_a_bot_that_already_holds_the_asset() -> None:
+    # Only a cash leg is forced in; masking a long stretch must not book an operation per bar.
+    masked = engine.simulate_operations(_df(_ROUND_TRIP), _with_hold(_cfg(), [1, 2, 3]))
+
+    assert [(op.side, op.time) for op in masked] == [("buy", "t0")]
+
+
+# --- reset when the mask lifts ---------------------------------------------
+
+# Holding the asset through the mask leaves the stop trailing at the masked highs. These rows
+# make that visible: bars 1-2 run the price up under the mask, bar 3 lifts it without reaching
+# a fresh activation, and bar 4 rises again.
+_GATE_LIFT = [
+    (100.0, 100.0, 100.0),  # entry; k_act=1 puts the sell activation at 102
+    (130.0, 128.0, 129.0),  # masked: activates, trails 130, stop 128, exit deferred
+    (131.0, 129.0, 130.0),  # masked: trails 131, stop 129, exit deferred
+    (121.0, 120.0, 121.0),  # mask lifts here
+    (140.0, 139.0, 140.0),
+]
+
+
+def _with_reset(cfg: engine.EngineConfig, bars) -> engine.EngineConfig:
+    return dataclasses.replace(cfg, force_hold_bars=frozenset(bars), reset_on_unmask=True)
+
+
+def test_the_unmask_reset_is_off_by_default() -> None:
+    # Production never gates, so the switch must be inert unless an experiment turns it on.
+    assert _cfg().reset_on_unmask is False
+
+
+def test_without_the_reset_the_lifted_mask_sells_at_a_stop_anchored_under_it() -> None:
+    # The rally-gate result: the exit lands at 129, a level trailed while the gate was shut.
+    ops = engine.simulate_operations(_df(_GATE_LIFT), _with_hold(_cfg(k_act=1.0), [1, 2]))
+
+    assert [(op.side, op.price) for op in ops] == [("buy", 100.0), ("sell", 129.0)]
+
+
+def test_the_reset_reopens_the_leg_at_the_bar_the_mask_lifts() -> None:
+    # With the anchor moved to bar 3's price the activation sits at 123, which bar 3 never reaches.
+    ops = engine.simulate_operations(_df(_GATE_LIFT), _with_reset(_cfg(k_act=1.0), [1, 2]))
+
+    assert [(op.side, op.price) for op in ops] == [("buy", 100.0)]
+
+
+def test_the_reset_books_no_operation_of_its_own() -> None:
+    # Re-anchoring is bookkeeping, not a trade: the bot already holds the asset across the lift.
+    ops = engine.simulate_operations(_df(_GATE_LIFT), _with_reset(_cfg(k_act=1.0), [1, 2]), fee_rate=0.01)
+
+    assert [op.side for op in ops] == ["buy"]
+
+
+def test_the_reset_changes_nothing_without_a_mask() -> None:
+    # No masked bar means no lift, so a run with the switch on must match production exactly.
+    plain = engine.simulate_operations(_df(_ROUND_TRIP), _cfg())
+    switched = engine.simulate_operations(_df(_ROUND_TRIP), dataclasses.replace(_cfg(), reset_on_unmask=True))
+
+    assert [(op.side, op.price) for op in switched] == [(op.side, op.price) for op in plain]
+
+
+# --- the activation re-anchor ----------------------------------------------
+
+# k_act=0 puts the activation at the entry price, so any move away from it re-anchors.
+_RALLY_AFTER_SELL = [
+    (100.0, 100.0, 100.0),  # buy @100
+    (110.0, 105.0, 108.0),  # trailing 110, stop 108; low 105 <= 108 -> sell @108
+    (130.0, 125.0, 128.0),  # in cash; price runs 20 above the 108 activation
+    (109.0, 100.0, 105.0),  # back below it
+]
+# k_act=1 (distance 2) so the sell does not activate on the entry bar itself.
+_FALL_AFTER_BUY = [
+    (100.0, 100.0, 100.0),  # buy @100; sell activation at 102
+    (99.0, 80.0, 85.0),  # holding; price runs 17 below the activation
+    (103.0, 95.0, 98.0),  # back above it
+]
+
+
+def test_the_buy_re_anchor_chases_the_rally() -> None:
+    ops = engine.simulate_operations(_df(_RALLY_AFTER_SELL), _cfg())
+
+    # Bar 2 re-anchors the buy activation to 128, activates on its low and rebuys at 127.
+    assert [(op.side, op.price) for op in ops][:3] == [("buy", 100.0), ("sell", 108.0), ("buy", 127.0)]
+
+
+def test_the_sell_re_anchor_follows_a_price_that_runs_away() -> None:
+    # The mirror case: the activation must track a price falling away from it, not sit where the
+    # entry left it. Bar 1 re-anchors to 87, so the sell lands at 97 instead of waiting for 102.
+    plain = engine.simulate_operations(_df(_FALL_AFTER_BUY), _cfg(k_act=1.0))
+
+    assert [(op.side, op.time, op.price) for op in plain][:2] == [("buy", "t0", 100.0), ("sell", "t1", 97.0)]
+
+
+# --- the shared min_margin -------------------------------------------------
+
+
+# k_act=None so activation goes through K_STOP * ATR + min_margin * price; with ATR 2.0 and
+# K 1.0 the shared 0.05 margin puts a sell barrier at 107 and a buy barrier at 93.
+def test_both_sides_use_the_shared_margin() -> None:
+    cfg = _cfg(k_act=None, min_margin=0.05)
+
+    assert engine.activation_price(cfg, "sell", 100.0, 2.0, 100.0) == pytest.approx(107.0)
+    assert engine.activation_price(cfg, "buy", 100.0, 2.0, 100.0) == pytest.approx(93.0)

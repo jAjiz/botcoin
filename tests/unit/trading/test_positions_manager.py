@@ -504,11 +504,22 @@ def test_finalize_close_returns_true_and_updates_pos_when_order_filled() -> None
     assert pos["pnl_percent"] == round((69099.7 - 68000.0) / 68000.0 * 100, 4)
 
 
-def test_finalize_close_pnl_for_buy_side() -> None:
+def test_finalize_close_books_no_euro_result_for_a_buy_leg() -> None:
+    # Buying back cheaper buys more base, but the euro balance does not move: the gain
+    # lands on the next SELL leg, which now measures from the lower entry.
     state = OrderState(status=OrderStatus.CLOSED, avg_price=67000.0, vol_exec=0.01)
     pos = {"closing_order_id": "ORD001", "entry_price": 68000.0, "side": "buy"}
     assert positions_manager.finalize_close(pos, state) is True
-    assert pos["pnl_percent"] == round((68000.0 - 67000.0) / 68000.0 * 100, 4)
+    assert pos["pnl_percent"] == 0.0
+
+
+def test_finalize_close_still_charges_a_buy_leg_its_fee() -> None:
+    pos = {"side": "buy", "entry_price": 100.0, "volume": 1.0, "closing_order_id": "TX1"}
+    state = OrderState(status=OrderStatus.CLOSED, avg_price=90.0, vol_exec=1.0, vol=1.0, fee=2.0)
+
+    assert positions_manager.finalize_close(pos, state) is True
+    # No euro move, so the 2.0 EUR fee on a 100.0 EUR notional is the whole result.
+    assert pos["pnl_percent"] == -2.0
 
 
 def test_finalize_close_nets_the_fee_into_pnl(monkeypatch) -> None:
